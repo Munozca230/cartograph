@@ -52,27 +52,48 @@ The npm package [`@munozca230/cartograph`](https://www.npmjs.com/package/@munozc
 runs the prebuilt binary for your platform (Windows x86_64, Linux x86_64 with glibc, macOS
 arm64 and x86_64). It needs Node.js 18 or newer, and nothing else.
 
-Run it without installing:
+Install it globally, which puts `cartograph` on your `PATH`:
 
 ```sh
-npx -y @munozca230/cartograph --help
+npm i -g @munozca230/cartograph
+cartograph --help
 ```
 
-Register it as an MCP server in your MCP client, for the repository the client starts in:
+Then register `cartograph mcp .` as a stdio MCP server in your MCP client, for the
+repository the client starts in. The server starts from the installed binary: no network
+access and no npx at each start.
 
 ```json
 {
   "mcpServers": {
-    "cartograph": { "command": "npx", "args": ["-y", "@munozca230/cartograph", "mcp", "."] }
+    "cartograph": { "command": "cartograph", "args": ["mcp", "."] }
   }
 }
 ```
 
-Or install it globally, which puts `cartograph` on your `PATH`:
+For clients whose `mcp add` command takes `--` before the server's command line:
 
 ```sh
-npm i -g @munozca230/cartograph
+<client> mcp add cartograph -- cartograph mcp .
 ```
+
+To try it without installing, run `npx -y @munozca230/cartograph --help`. A server
+registered as `npx -y @munozca230/cartograph mcp .` works too, but npx checks the registry
+at every start.
+
+**Windows.**
+
+- PowerShell drops a bare `--` when it calls a native program, so the client never sees it
+  and takes `cartograph mcp .` as its own options. Quote it:
+
+  ```powershell
+  <client> mcp add cartograph '--' cartograph mcp .
+  ```
+
+- On native Windows `npx` and the global `cartograph` are `.cmd` scripts, which a client
+  that starts the server without a shell cannot run. Start them through `cmd /c`:
+  `"command": "cmd"`, `"args": ["/c", "cartograph", "mcp", "."]` (or
+  `["/c", "npx", "-y", "@munozca230/cartograph", "mcp", "."]`).
 
 npm installs only the platform package that matches your system
 (`@munozca230/cartograph-<platform>-<arch>`, an optional dependency), so do not install
@@ -121,8 +142,8 @@ and defaults to the current directory. Add `.cartograph/` to `.gitignore`, or pa
 `--data-dir DIR` to keep the index outside the repository so that nothing is written
 inside it. `cartograph <command> --help` lists every option.
 
-To use the MCP server, register it in your client as a stdio server, either through npx
-(see [With npm](#with-npm)) or with the path of the binary:
+To use the MCP server, register it in your client as a stdio server: `cartograph mcp .`
+after a global npm install (see [With npm](#with-npm)), or the path of the binary:
 
 ```json
 {

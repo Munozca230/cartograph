@@ -27,19 +27,25 @@ cartograph query overview
 
 ## MCP server
 
-`cartograph mcp <repo>` is a stdio MCP server. Register it in your MCP client:
+`cartograph mcp <repo>` is a stdio MCP server. After `npm i -g @munozca230/cartograph`,
+register it in your MCP client; it then starts with no network access and no npx:
 
 ```json
 {
   "mcpServers": {
-    "cartograph": { "command": "npx", "args": ["-y", "@munozca230/cartograph", "mcp", "."] }
+    "cartograph": { "command": "cartograph", "args": ["mcp", "."] }
   }
 }
 ```
 
+For clients whose `mcp add` command takes `--`: `<client> mcp add cartograph -- cartograph mcp .`
+(in PowerShell, quote it: `'--'`, or PowerShell drops it). Without a global install, use
+`"command": "npx"` with `"args": ["-y", "@munozca230/cartograph", "mcp", "."]`.
+
 `"."` is the directory the client starts the server in; put an absolute path to the
-repository there otherwise. On Windows, a client that does not start commands through a
-shell may need `"command": "cmd"` with `"args": ["/c", "npx", "-y", "@munozca230/cartograph", "mcp", "."]`.
+repository there otherwise. On native Windows `cartograph` and `npx` are `.cmd` scripts: a
+client that does not start commands through a shell needs `"command": "cmd"` with
+`"args": ["/c", "cartograph", "mcp", "."]` (or `["/c", "npx", "-y", "@munozca230/cartograph", "mcp", "."]`).
 
 The index goes to `<repo>/.cartograph/` (add it to `.gitignore`), or elsewhere with
 `--data-dir DIR`.

@@ -96,9 +96,34 @@ URL with a one-line description of what it shows.
 configuration as a stdio server; most clients accept the shapes below (some call the
 top-level key `servers` instead of `mcpServers`).
 
-With npx, nothing has to be installed first beyond Node.js 18 or newer: npx downloads the
-npm package [`@munozca230/cartograph`](https://www.npmjs.com/package/@munozca230/cartograph),
-which runs the prebuilt binary for the platform (stdio passes through it untouched):
+With the npm package [`@munozca230/cartograph`](https://www.npmjs.com/package/@munozca230/cartograph)
+installed globally (Node.js 18 or newer), the server starts from the installed binary, with
+no network access at each start:
+
+```sh
+npm i -g @munozca230/cartograph
+```
+
+```json
+{
+  "mcpServers": {
+    "cartograph": {
+      "command": "cartograph",
+      "args": ["mcp", "."]
+    }
+  }
+}
+```
+
+For clients whose `mcp add` command takes `--` before the server's command line:
+
+```sh
+<client> mcp add cartograph -- cartograph mcp .
+<client> mcp add cartograph -- cartograph mcp . --data-dir /tmp/cartograph-data
+```
+
+Without installing anything, npx downloads the package and runs the prebuilt binary for
+the platform (stdio passes through it untouched), but checks the registry at every start:
 
 ```json
 {
@@ -113,10 +138,24 @@ which runs the prebuilt binary for the platform (stdio passes through it untouch
 
 - `-y` skips npx's install prompt, which would otherwise wait on the stdin the protocol
   uses. Pin a version with `@munozca230/cartograph@<version>`.
-- On Windows `npx` is a `.cmd` script; a client that starts the command without a shell
-  needs `"command": "cmd"` and `"args": ["/c", "npx", "-y", "@munozca230/cartograph", "mcp", "."]`.
-- After `npm i -g @munozca230/cartograph`, `"command": "cartograph"` with
-  `"args": ["mcp", "."]` skips npx's registry check at every start.
+
+On Windows:
+
+- **PowerShell drops a bare `--`** when it calls a native program (`<client> mcp add
+  cartograph -- cartograph mcp .` reaches the client without the `--`, which then reads
+  `mcp .` as its own options). Quote it as `'--'`:
+
+  ```powershell
+  <client> mcp add cartograph '--' cartograph mcp .
+  ```
+
+  `cmd.exe`, Git Bash and WSL pass `--` through unchanged.
+- **`.cmd` scripts need a shell.** On native Windows `npx` and the `cartograph` of a global
+  npm install are `.cmd` scripts; a client that starts the command without a shell cannot
+  run them. Use `cmd /c`: `"command": "cmd"` with `"args": ["/c", "cartograph", "mcp", "."]`,
+  or `"args": ["/c", "npx", "-y", "@munozca230/cartograph", "mcp", "."]`; on the command
+  line, `<client> mcp add cartograph '--' cmd /c npx -y @munozca230/cartograph mcp .`. A
+  release archive's `cartograph.exe` runs directly.
 
 With a binary from a release archive or built from source:
 
