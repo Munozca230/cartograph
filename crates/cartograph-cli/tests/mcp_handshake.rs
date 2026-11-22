@@ -61,6 +61,7 @@ fn handshake_lists_and_calls_every_tool() {
             "hierarchy",
             "hotspots",
             "impact",
+            "open_map",
             "overview",
             "path",
             "symbols"
@@ -71,7 +72,9 @@ fn handshake_lists_and_calls_every_tool() {
         assert!(d.len() > 80 && d.len() < 600, "{}: {d}", t["name"]);
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
         let read_only = t["annotations"]["readOnlyHint"].as_bool();
-        assert_eq!(read_only, Some(t["name"] != "annotate"), "{t}");
+        // annotate writes a note; open_map starts the web map and opens a browser.
+        let writes = t["name"] == "annotate" || t["name"] == "open_map";
+        assert_eq!(read_only, Some(!writes), "{t}");
     }
     // No vendor-specific metadata on any tool.
     assert!(tools.iter().all(|t| t.get("_meta").is_none()), "{tools:?}");

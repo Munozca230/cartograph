@@ -22,6 +22,7 @@ pub mod annotations;
 pub mod base;
 pub mod engine;
 pub mod guard;
+pub mod map;
 pub mod stats;
 pub mod tools;
 
@@ -47,6 +48,7 @@ pub fn run_stdio(opts: Options) -> Result<(), String> {
             .map_err(|e| format!("MCP handshake failed: {e}"))?;
         let reason = service.waiting().await;
         tracing::info!(?reason, "client gone; stopping");
+        engine.map.stop().await;
         Ok(())
     });
     // A running index stops at its next check; a blocked stdin read or a query thread is

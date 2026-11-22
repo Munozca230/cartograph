@@ -14,9 +14,9 @@
 use crate::annotations::{self, FileHashes};
 use cartograph_core::{Graph, History, Store, Symbols};
 use cartograph_index::{DB_FILE, IndexOptions, Progress};
-use cartograph_query::{Config, Repo};
+use cartograph_query::{Config, ConfigError, Repo};
 use cartograph_server::scheduler::{Job, Reason, Scheduler};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -84,6 +84,9 @@ pub struct Loaded {
     /// When the run that produced it started (files changed after this may be stale).
     pub started: SystemTime,
     pub config_error: Option<String>,
+    /// The paths the run was asked for (the watcher's or a request's; empty for a startup
+    /// run, a git-only update or a state read from disk).
+    pub changed: BTreeSet<String>,
 }
 
 impl Loaded {
@@ -124,6 +127,7 @@ impl Loaded {
             from_disk,
             started,
             config_error,
+            changed: BTreeSet::new(),
         }
     }
 }
@@ -164,6 +168,8 @@ pub struct Engine {
     pub notes_lock: Mutex<()>,
     /// Usage stats, unless turned off.
     pub stats: Option<crate::stats::Recorder>,
+    /// The web map that `open_map` starts on demand (see [`crate::map`]).
+    pub map: crate::map::Map,
     /// Held for the server's lifetime (released by the OS when the process dies).
     _lock: Option<File>,
     _watcher: Mutex<Option<cartograph_server::watch::Watcher>>,
@@ -251,6 +257,7 @@ impl Engine {
             status: Mutex::new(Status::default()),
             generation,
             notes_lock: Mutex::new(()),
+            map: crate::map::Map::default(),
             _watcher: Mutex::new(None),
         }))
     }
@@ -281,6 +288,14 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// Whether the file watcher runs (it may have failed to start).
+    pub fn watching(&self) -> bool {
+        self._watcher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
     }
 
     /// Stop any running index at its next check.
@@ -336,11 +351,27 @@ impl Engine {
     }
 
     fn config(&self) -> Result<Config, String> {
+        self.load_config().map_err(|e| e.to_string())
+    }
+
+    /// The architecture rules: `--config`, else `<root>/cartograph.toml`.
+    pub fn load_config(&self) -> Result<Config, ConfigError> {
         match &self.opts.config {
             Some(p) => Config::load_file(p, false),
             None => Config::load(&self.root),
         }
-        .map_err(|e| e.to_string())
+    }
+
+    /// Follow the published states: the value is the generation, and every publication
+    /// (a new index, a git update, the index read from disk) marks the receiver changed.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.generation.subscribe()
+    }
+
+    /// Ask for a full re-index (the web map's "reindex" button), as a request naming a
+    /// changed file would.
+    pub fn request_reindex(&self) {
+        self.mark_changed(Reason::Manual, std::iter::empty());
     }
 
     fn load_from_disk(&self, db: &Path) {
@@ -409,7 +440,7 @@ impl Engine {
             };
             let ms = t0.elapsed().as_millis() as u64;
             let index = match outcome {
-                Ok((l, graph, symbols)) => {
+                Ok((mut l, graph, symbols)) => {
                     tracing::info!(
                         ms,
                         reason = job.reason.as_str(),
@@ -417,6 +448,7 @@ impl Engine {
                         "index finished"
                     );
                     let started = l.started;
+                    l.changed = job.changed.clone();
                     self.set_loaded(Arc::new(l));
                     // Served: requests stop waiting here, not after the history.
                     let mut st = self.status();
