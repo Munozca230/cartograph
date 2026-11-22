@@ -217,6 +217,9 @@ enum Command {
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
+        /// Where the temporary indexes go (default: the system temp dir). Removed afterwards.
+        #[arg(long, value_name = "DIR")]
+        data_dir: Option<PathBuf>,
     },
     /// Check that cartograph can run here: database, grammars, write access.
     Doctor {
@@ -324,10 +327,12 @@ fn main() -> ExitCode {
             answers,
             all_answers,
             json,
+            data_dir,
         } => eval::cmd_eval(&eval::EvalOpts {
             cases,
             filter,
             json,
+            data_dir,
             answers: match (all_answers, answers) {
                 (true, _) => eval::Answers::All,
                 (false, true) => eval::Answers::Failing,

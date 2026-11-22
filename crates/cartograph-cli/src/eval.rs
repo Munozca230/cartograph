@@ -1,16 +1,18 @@
 //! `cartograph eval`: a deterministic eval suite of the MCP tools. Each case is a question
-//! an agent would ask, the tool call it would make, facts the answer must (or must not)
+//! an agent would ask, the tool calls it would make, facts the answers must (or must not)
 //! contain, and a token budget. The runner serves every repo of the suite with the real
 //! `cartograph mcp` server over stdio (this same binary) and checks the text the agent
 //! would read. No model is involved.
 //!
-//! Repos of a suite (`[repos.<name>]`, paths relative to the cases file):
-//! - `path`: a directory served in place (this repository's working tree);
+//! Repos of a suite (`[repos.<name>]`, paths relative to the cases file, or absolute):
+//! - `path`: a directory served in place, read-only (this repository's working tree, or
+//!   any other repository on disk);
 //! - `fixture`: a directory copied to a temp dir outside any git repository first;
 //! - `commits` (+ `worktree`): a git repository built at run time, one commit per entry
 //!   with fixed dates and people, then uncommitted files on top.
 //!
-//! The index of every repo goes to a temp data dir, never into the repo.
+//! The index of every repo goes to a temp data dir (under `--data-dir` when given), never
+//! into the repo.
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -67,10 +69,17 @@ pub struct Case {
     pub repo: String,
     /// What the agent wants to know (documentation; not sent).
     pub question: String,
-    pub tool: String,
+    /// The one tool call of the case (or give `calls`).
+    pub tool: Option<String>,
     /// The tool arguments, as the agent would send them.
     #[serde(default)]
     pub args: toml::Table,
+    /// Several tool calls, made in order; the checks apply to all their answers together.
+    #[serde(default)]
+    pub calls: Vec<CallSpec>,
+    /// Features the case depends on (free-form tags); the report counts passes per tag.
+    #[serde(default)]
+    pub needs: Vec<String>,
     /// Substrings the answer must contain.
     #[serde(default)]
     pub contains: Vec<String>,
@@ -81,9 +90,63 @@ pub struct Case {
     #[serde(default)]
     pub in_order: bool,
     /// The call must be a tool error with this code (`unknown_node`, `ambiguous`, …).
+    /// Only for a case with one call.
     pub error: Option<String>,
-    /// Token budget of the answer; default: the tool's contract.
+    /// Token budget of the answer (of all answers together); default: the tools' contracts.
     pub budget: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallSpec {
+    pub tool: String,
+    #[serde(default)]
+    pub args: toml::Table,
+    /// The repo this call goes to; default: the case's.
+    pub repo: Option<String>,
+}
+
+impl Case {
+    /// The calls of the case: `(repo, tool, args)`.
+    fn calls(&self) -> Vec<(&str, &str, &toml::Table)> {
+        match &self.tool {
+            Some(t) => vec![(self.repo.as_str(), t.as_str(), &self.args)],
+            None => self
+                .calls
+                .iter()
+                .map(|c| {
+                    (
+                        c.repo.as_deref().unwrap_or(&self.repo),
+                        c.tool.as_str(),
+                        &c.args,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn validate(&self, repos: &BTreeMap<String, RepoSpec>) -> Result<()> {
+        match (&self.tool, self.calls.is_empty()) {
+            (Some(_), false) => bail!("case {}: give tool or calls, not both", self.id),
+            (None, true) => bail!("case {}: no tool and no calls", self.id),
+            (None, false) if !self.args.is_empty() => {
+                bail!("case {}: args go inside each of calls", self.id)
+            }
+            (None, false) if self.error.is_some() => {
+                bail!("case {}: error needs a single tool call", self.id)
+            }
+            _ => {}
+        }
+        for (repo, _, _) in self.calls() {
+            if !repos.contains_key(repo) {
+                bail!("case {}: unknown repo {repo:?}", self.id);
+            }
+        }
+        if !repos.contains_key(&self.repo) {
+            bail!("case {}: unknown repo {:?}", self.id, self.repo);
+        }
+        Ok(())
+    }
 }
 
 /// The outcome of one case.
@@ -92,8 +155,14 @@ pub struct CaseResult {
     pub id: String,
     pub question: String,
     pub repo: String,
+    /// The tools called, joined with `,`.
     pub tool: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<String>,
     pub pass: bool,
+    /// Number of tool calls.
+    pub calls: usize,
+    /// Tokens of all answers together.
     pub tokens: usize,
     pub budget: Option<usize>,
     pub ms: u64,
@@ -102,11 +171,22 @@ pub struct CaseResult {
     pub answer: Option<String>,
 }
 
+/// Passes among the cases carrying one `needs` tag (`-` for cases with none).
+#[derive(Debug, Serialize)]
+pub struct NeedSummary {
+    pub need: String,
+    pub passed: usize,
+    pub total: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub passed: usize,
     pub failed: usize,
     pub cases: Vec<CaseResult>,
+    /// Empty when no case has `needs`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub by_need: Vec<NeedSummary>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +202,8 @@ pub struct EvalOpts {
     pub json: bool,
     /// Print the answer of failing cases (or of every case).
     pub answers: Answers,
+    /// Parent of the temp dir that holds the indexes (default: the system temp dir).
+    pub data_dir: Option<PathBuf>,
 }
 
 pub fn cmd_eval(o: &EvalOpts) -> Result<ExitCode> {
@@ -143,17 +225,29 @@ pub fn cmd_eval(o: &EvalOpts) -> Result<ExitCode> {
         bail!("no case matches");
     }
     for c in &cases {
-        if !suite.repos.contains_key(&c.repo) {
-            bail!("case {}: unknown repo {:?}", c.id, c.repo);
-        }
+        c.validate(&suite.repos)?;
     }
-    let tmp = tempfile::Builder::new()
-        .prefix("cartograph-eval-")
-        .tempdir()
-        .context("creating a temp dir")?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("cartograph-eval-");
+    let tmp = match &o.data_dir {
+        Some(d) => {
+            std::fs::create_dir_all(d).with_context(|| format!("creating {}", d.display()))?;
+            builder.tempdir_in(d)
+        }
+        None => builder.tempdir(),
+    }
+    .context("creating a temp dir")?;
     let exe = std::env::current_exe().context("locating the cartograph binary")?;
+    let mut servers = Servers {
+        suite: &suite,
+        base: &base,
+        tmp: tmp.path(),
+        exe: &exe,
+        running: BTreeMap::new(),
+    };
     let mut results = Vec::new();
-    // One server per repo, in the order of first use.
+    // Cases grouped by repo, in the order of first use; a server starts at its first call
+    // and stays up until the end (a case may call several repos).
     let mut order: Vec<&str> = Vec::new();
     for c in &cases {
         if !order.contains(&c.repo.as_str()) {
@@ -161,21 +255,18 @@ pub fn cmd_eval(o: &EvalOpts) -> Result<ExitCode> {
         }
     }
     for name in order {
-        let spec = &suite.repos[name];
-        let root = prepare(name, spec, &base, tmp.path())
-            .with_context(|| format!("preparing repo {name}"))?;
-        let data = tmp.path().join(format!("{name}.data"));
-        let mut server = Server::start(&exe, &root, &data)
-            .with_context(|| format!("starting the MCP server on repo {name}"))?;
         for c in cases.iter().filter(|c| c.repo == name) {
-            results.push(run_case(&mut server, c, o.answers)?);
+            results.push(run_case(&mut servers, c, o.answers)?);
         }
-        server.stop();
+    }
+    for (_, s) in std::mem::take(&mut servers.running) {
+        s.stop();
     }
     let passed = results.iter().filter(|r| r.pass).count();
     let report = Report {
         passed,
         failed: results.len() - passed,
+        by_need: by_need(&results),
         cases: results,
     };
     let mut out = std::io::stdout().lock();
@@ -193,21 +284,72 @@ pub fn cmd_eval(o: &EvalOpts) -> Result<ExitCode> {
     })
 }
 
+/// The MCP servers of a run, started on first use.
+struct Servers<'a> {
+    suite: &'a Suite,
+    base: &'a Path,
+    tmp: &'a Path,
+    exe: &'a Path,
+    running: BTreeMap<String, Server>,
+}
+
+impl Servers<'_> {
+    fn get(&mut self, name: &str) -> Result<&mut Server> {
+        if !self.running.contains_key(name) {
+            let spec = &self.suite.repos[name];
+            let root = prepare(name, spec, self.base, self.tmp)
+                .with_context(|| format!("preparing repo {name}"))?;
+            let data = self.tmp.join(format!("{name}.data"));
+            let server = Server::start(self.exe, &root, &data)
+                .with_context(|| format!("starting the MCP server on repo {name}"))?;
+            self.running.insert(name.to_string(), server);
+        }
+        Ok(self.running.get_mut(name).expect("started above"))
+    }
+}
+
+fn by_need(results: &[CaseResult]) -> Vec<NeedSummary> {
+    if results.iter().all(|r| r.needs.is_empty()) {
+        return Vec::new();
+    }
+    let mut m: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for r in results {
+        let tags: Vec<&str> = if r.needs.is_empty() {
+            vec!["-"]
+        } else {
+            r.needs.iter().map(String::as_str).collect()
+        };
+        for t in tags {
+            let e = m.entry(t).or_default();
+            e.0 += usize::from(r.pass);
+            e.1 += 1;
+        }
+    }
+    m.into_iter()
+        .map(|(need, (passed, total))| NeedSummary {
+            need: need.to_string(),
+            passed,
+            total,
+        })
+        .collect()
+}
+
 fn render(r: &Report) -> String {
     let mut s = String::new();
     let w = r.cases.iter().map(|c| c.id.len()).max().unwrap_or(4).max(4);
     s.push_str(&format!(
-        "{:<6} {:<w$} {:<11} {:<9} {:>12} {:>6}\n",
-        "result", "case", "repo", "tool", "tokens", "ms"
+        "{:<6} {:<w$} {:<11} {:<9} {:>5} {:>12} {:>6}\n",
+        "result", "case", "repo", "tool", "calls", "tokens", "ms"
     ));
     for c in &r.cases {
         let budget = c.budget.map_or("-".to_string(), |b| b.to_string());
         s.push_str(&format!(
-            "{:<6} {:<w$} {:<11} {:<9} {:>12} {:>6}\n",
+            "{:<6} {:<w$} {:<11} {:<9} {:>5} {:>12} {:>6}\n",
             if c.pass { "PASS" } else { "FAIL" },
             c.id,
             c.repo,
             c.tool,
+            c.calls,
             format!("{}/{budget}", c.tokens),
             c.ms
         ));
@@ -229,47 +371,78 @@ fn render(r: &Report) -> String {
         r.failed,
         r.cases.len()
     ));
+    if !r.by_need.is_empty() {
+        s.push_str("\nby needs (- = none):\n");
+        for n in &r.by_need {
+            s.push_str(&format!("  {:<20} {}/{}\n", n.need, n.passed, n.total));
+        }
+    }
     s
 }
 
-fn run_case(server: &mut Server, c: &Case, answers: Answers) -> Result<CaseResult> {
-    let args = serde_json::to_value(&c.args)?;
-    let t0 = Instant::now();
-    let res = server.call(&c.tool, args)?;
-    let ms = t0.elapsed().as_millis() as u64;
+fn run_case(servers: &mut Servers, c: &Case, answers: Answers) -> Result<CaseResult> {
+    let calls = c.calls();
+    let many = calls.len() > 1;
     let mut failures = Vec::new();
-    let text = match &res {
-        Ok(r) => r
-            .get("content")
-            .and_then(Value::as_array)
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter_map(|b| b["text"].as_str())
-                    .collect::<String>()
-            })
-            .unwrap_or_default(),
-        Err(e) => {
-            failures.push(format!("protocol error: {e}"));
+    let mut texts: Vec<String> = Vec::new();
+    let mut shown = String::new();
+    let mut ms = 0;
+    for (i, (repo, tool, args)) in calls.iter().enumerate() {
+        // Failures of a call name it when the case has several.
+        let at = if many {
+            format!("call {} ({tool} on {repo}): ", i + 1)
+        } else {
             String::new()
+        };
+        let args = serde_json::to_value(args)?;
+        let server = servers.get(repo)?;
+        let t0 = Instant::now();
+        let res = server.call(tool, args.clone())?;
+        ms += t0.elapsed().as_millis() as u64;
+        let text = match &res {
+            Ok(r) => r
+                .get("content")
+                .and_then(Value::as_array)
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|b| b["text"].as_str())
+                        .collect::<String>()
+                })
+                .unwrap_or_default(),
+            Err(e) => {
+                failures.push(format!("{at}protocol error: {e}"));
+                String::new()
+            }
+        };
+        if let Ok(r) = &res {
+            let is_error = r["isError"] == true;
+            let code = r["structuredContent"]["error"]["code"].as_str();
+            match (&c.error, is_error) {
+                (None, true) => failures.push(format!(
+                    "{at}unexpected tool error ({})",
+                    code.unwrap_or("no code")
+                )),
+                (Some(want), false) => {
+                    failures.push(format!("expected a {want} error, got an answer"))
+                }
+                (Some(want), true) if code != Some(want.as_str()) => failures.push(format!(
+                    "expected a {want} error, got {}",
+                    code.unwrap_or("no code")
+                )),
+                _ => {}
+            }
         }
-    };
-    if let Ok(r) = &res {
-        let is_error = r["isError"] == true;
-        let code = r["structuredContent"]["error"]["code"].as_str();
-        match (&c.error, is_error) {
-            (None, true) => failures.push(format!(
-                "unexpected tool error ({})",
-                code.unwrap_or("no code")
-            )),
-            (Some(want), false) => failures.push(format!("expected a {want} error, got an answer")),
-            (Some(want), true) if code != Some(want.as_str()) => failures.push(format!(
-                "expected a {want} error, got {}",
-                code.unwrap_or("no code")
-            )),
-            _ => {}
+        if many {
+            shown.push_str(&format!("── {tool} {args} on {repo}\n"));
         }
+        shown.push_str(&text);
+        if many && !text.ends_with('\n') {
+            shown.push('\n');
+        }
+        texts.push(text);
     }
+    let text = texts.join("\n");
     let mut from = 0;
     for want in &c.contains {
         if c.in_order {
@@ -289,10 +462,17 @@ fn run_case(server: &mut Server, c: &Case, answers: Answers) -> Result<CaseResul
             failures.push(format!("must not contain: {bad:?}"));
         }
     }
-    let tokens = cartograph_query::budget::tokens(&text);
-    let budget = c
-        .budget
-        .or_else(|| cartograph_mcp::stats::budget_of(&c.tool));
+    let tokens = texts
+        .iter()
+        .map(|t| cartograph_query::budget::tokens(t))
+        .sum();
+    // Default budget: the sum of the tools' contracts (none if a tool has no contract).
+    let budget = c.budget.or_else(|| {
+        calls
+            .iter()
+            .map(|(_, tool, _)| cartograph_mcp::stats::budget_of(tool))
+            .sum()
+    });
     if let Some(b) = budget
         && tokens > b
     {
@@ -303,13 +483,20 @@ fn run_case(server: &mut Server, c: &Case, answers: Answers) -> Result<CaseResul
         id: c.id.clone(),
         question: c.question.clone(),
         repo: c.repo.clone(),
-        tool: c.tool.clone(),
+        tool: calls
+            .iter()
+            .map(|(_, t, _)| *t)
+            .collect::<Vec<_>>()
+            .join(","),
+        needs: c.needs.clone(),
         pass,
+        calls: calls.len(),
         tokens,
         budget,
         ms,
         failures,
-        answer: (answers == Answers::All || (answers == Answers::Failing && !pass)).then_some(text),
+        answer: (answers == Answers::All || (answers == Answers::Failing && !pass))
+            .then_some(shown),
     })
 }
 

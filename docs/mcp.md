@@ -335,12 +335,46 @@ contains = ["crates/cartograph-cli/src/main.rs", "crates/cartograph-mcp/src/engi
 A case fails when a fact is missing (or out of order), a forbidden one appears, the tool
 errs unexpectedly (or with another code), or the answer is over its token budget (the
 tool's contract by default). Options: `--filter <id part>`, `-a` prints the answers of
-failing cases, `-A` of every case, `--json`. Exit 1 when a case fails.
+failing cases, `-A` of every case, `--json`, `--data-dir <dir>` (where the temporary
+indexes go instead of the system temp dir; they are removed afterwards). Exit 1 when a
+case fails.
+
+A case that needs several calls lists them instead of `tool` and `args`; a call may go to
+another repo of the suite. The checks and the budget then apply to all the answers
+together (the default budget is the sum of the tools' contracts). `needs` tags a case with
+the features it depends on, for instance one a tool does not have yet: a tool that does
+not exist is a failed call, so such a case fails until the feature lands.
+
+```toml
+[[case]]
+id = "client-of-a-route"
+repo = "server"
+question = "Which client code calls the route that creates an order?"
+needs = ["http-bridge"]
+contains = ["src/orders/OrderController.java", "src/api/orders.ts"]
+
+[[case.calls]]
+tool = "callers"
+args = { symbol = "OrderController.create" }
+
+[[case.calls]]
+tool = "find"
+args = { query = "orders" }
+repo = "client"
+```
+
+The report gives per case pass or fail, the number of calls, the tokens of the answers
+against the budget, and the time; with `needs`, also the passes per tag (`-` counts the
+cases without one). `--json` carries the same fields (`calls`, `tokens`, `budget`,
+`needs`, `by_need`).
 
 Repos of a suite, each served by its own `cartograph mcp --no-watch` with the index in a
-temp data dir (nothing is written into a repo):
+temp data dir (nothing is written into a repo). Paths are relative to the cases file, or
+absolute, so a cases file can live anywhere and measure any repository on disk:
 
-- `path`: served in place. The `self` repo is this working tree; its cases assert
+- `path`: served in place, read-only (also any other repository: `path =
+  '/work/other-repo'`; in TOML, write a Windows path in single quotes or with forward
+  slashes). The `self` repo is this working tree; its cases assert
   architectural invariants (which crate uses which, what a core file is, where the binary
   starts), never counts or line numbers, so ordinary edits do not break them, and they
   still catch an indexer regression on today's code.
