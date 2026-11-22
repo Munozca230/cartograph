@@ -34,6 +34,7 @@ is off by default because some clients show only the structured JSON to the mode
 | `diff` | reading `git diff` to review a branch | `base` (merge-base with the default branch) | 1.5k |
 | `hotspots` | `git log` statistics | `within` (whole repo) | 1k |
 | `annotate` | — (leaves a note for later sessions) | `node`, `text` (≤ 600 chars; empty deletes) | — |
+| `open_map` | asking the user to run `cartograph serve` | `focus` (whole repo), `view` plan/flows (flows for a function or method, else plan), `open_browser` (true) | — |
 
 Ids are stable and every answer uses them: `file:src/a.rs`, `dir:src`, `repo:`,
 `sym:src/a.rs#name`, libraries as `external:npm:react` (or `npm:react`). Inputs also
@@ -47,7 +48,32 @@ the note shows as `note (stale: …)`. `cartograph query explain` shows them too
 
 The server instructions (sent at initialization) say when to prefer cartograph over grep,
 so a client that defers tool schemas behind a tool search still knows when to reach for
-the tools. Every tool but `annotate` is marked read-only.
+the tools. Every tool but `annotate` and `open_map` is marked read-only.
+
+### `open_map`: the visual map
+
+When the user asks to see the architecture, a diagram, a flow or the map, `open_map`
+opens the web UI of `cartograph serve` focused on what is being discussed, and returns its
+URL with a one-line description of what it shows.
+
+- `focus` takes any id the other tools accept. A folder or file is selected on the plan
+  (Plano) with its parent folders open; a function or method opens the call flows
+  (Flujos) at it; a class or another type opens the plan on its file; a library opens the
+  plan with the libraries shown. `view` overrides the choice (`plan` on a function shows
+  its file; `flows` on a file shows its module-level calls; a folder has no flow). An
+  unknown id is an error with suggestions, as in the other tools.
+- The first call starts the map inside the MCP server, on `127.0.0.1` and a port the OS
+  picks, serving the repo and data dir the server already indexes. It has no indexer or
+  watcher of its own: each index the server makes is pushed to the open page, which
+  refreshes live, and the page's reindex button asks the server for a run. Later calls
+  reuse the same map; it stops when the MCP server does (stdin closed). The Host and
+  Origin checks of `cartograph serve` apply.
+- With `open_browser` (the default) the URL is opened with the platform's opener. When that
+  fails the answer says so and still carries the URL to give the user.
+- The URL is a deep link: `?view=plan&focus=dir:src/app` or
+  `?view=flows&focus=sym:src/auth.ts%23login`. The page applies it once its first plan is
+  loaded, and from then on keeps the URL in step with the selection, so it can be shared
+  while the session runs.
 
 ### Errors are data
 
@@ -141,6 +167,8 @@ the map instead of from grep:
 7. **Leave knowledge behind**: something non-obvious about a file or folder (its purpose,
    an invariant, a trap) goes into `annotate(node, text)` (at most 600 characters).
    `explain` shows it in later sessions and marks it stale when the code changes.
+8. **Show the user**: to show the user the architecture or a flow, call `open_map`
+   (`focus` on the folder, file or function being discussed).
 
 Reading the answers:
 

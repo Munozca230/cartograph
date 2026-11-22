@@ -140,7 +140,8 @@ pub struct Running {
     pub addr: SocketAddr,
     pub state: Arc<AppState>,
     server: Option<JoinHandle<()>>,
-    worker: JoinHandle<()>,
+    /// The indexing worker (none when the server is fed from outside, see [`start_fed`]).
+    worker: Option<JoinHandle<()>>,
     watcher: Option<watch::Watcher>,
     shutdown: Option<oneshot::Sender<()>>,
 }
@@ -172,8 +173,10 @@ impl Running {
             }
         }
         // Aborting the worker drops its progress ticker with it (see `indexer::Ticker`).
-        self.worker.abort();
-        let _ = (&mut self.worker).await;
+        if let Some(w) = self.worker.take() {
+            w.abort();
+            let _ = w.await;
+        }
         self.watcher = None;
     }
 }
@@ -187,7 +190,9 @@ impl Drop for Running {
         if let Some(h) = &self.server {
             h.abort();
         }
-        self.worker.abort();
+        if let Some(w) = &self.worker {
+            w.abort();
+        }
     }
 }
 
@@ -198,6 +203,51 @@ pub async fn start(config: ServeConfig) -> Result<Running, ServeError> {
 
 /// Start serving with a custom index function (tests use it to slow or count runs).
 pub async fn start_with(config: ServeConfig, index_fn: IndexFn) -> Result<Running, ServeError> {
+    let (listener, addr, state) = listen(&config)?;
+
+    // The watcher starts before the first index, so edits made during it queue a run.
+    let watcher = if config.watch {
+        match watch::start(state.clone()) {
+            Ok(w) => {
+                state.set_watching(true);
+                Some(w)
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "file watcher failed to start; serving without it");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    state.scheduler.request(Reason::Startup, std::iter::empty());
+    let worker = tokio::spawn(indexer::run_worker(
+        state.clone(),
+        index_fn,
+        config.max_file_bytes,
+        config.git,
+    ));
+    Ok(serve(listener, addr, state, Some(worker), watcher))
+}
+
+/// Start the HTTP server alone, fed by an indexer that runs elsewhere in the process (the
+/// MCP server's): no worker and no watcher of its own, so the repo is never indexed twice.
+///
+/// The caller publishes each new index with [`indexer::publish`] (data endpoints answer
+/// 503 `indexing` until the first one) and takes the `POST /api/reindex` requests from
+/// `state.scheduler`. `config.watch` only says what `/api/meta` reports as `watching`
+/// (whether the feeder watches the repo); `max_file_bytes` and `git` are the feeder's.
+pub async fn start_fed(config: ServeConfig) -> Result<Running, ServeError> {
+    let (listener, addr, state) = listen(&config)?;
+    state.set_watching(config.watch);
+    Ok(serve(listener, addr, state, None, None))
+}
+
+/// Check the root, create the data dir, bind the port and build the state.
+fn listen(
+    config: &ServeConfig,
+) -> Result<(tokio::net::TcpListener, SocketAddr, Arc<AppState>), ServeError> {
     if !config.root.is_dir() {
         return Err(ServeError::NotADirectory(config.root.clone()));
     }
@@ -232,31 +282,17 @@ pub async fn start_with(config: ServeConfig, index_fn: IndexFn) -> Result<Runnin
         data_dir,
     ));
     state.set_port(addr.port());
+    Ok((listener, addr, state))
+}
 
-    // The watcher starts before the first index, so edits made during it queue a run.
-    let watcher = if config.watch {
-        match watch::start(state.clone()) {
-            Ok(w) => {
-                state.set_watching(true);
-                Some(w)
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "file watcher failed to start; serving without it");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    state.scheduler.request(Reason::Startup, std::iter::empty());
-    let worker = tokio::spawn(indexer::run_worker(
-        state.clone(),
-        index_fn,
-        config.max_file_bytes,
-        config.git,
-    ));
-
+/// Serve the API and the frontend on `listener` until [`Running::stop`].
+fn serve(
+    listener: tokio::net::TcpListener,
+    addr: SocketAddr,
+    state: Arc<AppState>,
+    worker: Option<JoinHandle<()>>,
+    watcher: Option<watch::Watcher>,
+) -> Running {
     let app = api::router(state.clone());
     let (tx, rx) = oneshot::channel::<()>();
     let server = tokio::spawn(async move {
@@ -270,14 +306,14 @@ pub async fn start_with(config: ServeConfig, index_fn: IndexFn) -> Result<Runnin
         }
     });
     tracing::info!(%addr, root = %state.root_display, "serving");
-    Ok(Running {
+    Running {
         addr,
         state,
         server: Some(server),
         worker,
         watcher,
         shutdown: Some(tx),
-    })
+    }
 }
 
 /// Run until Ctrl-C. `on_ready` gets the bound address once the server listens.

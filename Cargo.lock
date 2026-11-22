@@ -305,6 +305,7 @@ dependencies = [
  "cartograph-query",
  "cartograph-server",
  "dunce",
+ "open",
  "rmcp",
  "serde",
  "serde_json",

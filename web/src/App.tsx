@@ -1,6 +1,7 @@
 import { Toast, ToastClose, ToastDescription, ToastRegion, ToastTitle } from "@ui-sdk/react/toast";
 import { useEffect } from "react";
 import { controller } from "./state/controller";
+import { DeepLinks } from "./state/deeplink";
 import { store, useAppState } from "./state/store";
 import { flows } from "./state/flows";
 import { closeTopmost, DetailPanel } from "./ui/DetailPanel";
@@ -49,11 +50,15 @@ function BootOverlay() {
   );
 }
 
+const links = new DeepLinks(window);
+
 export function App() {
   const mode = useAppState((s) => s.mode);
   useEffect(() => {
     controller.boot();
     flows.watch();
+    // `?view=…&focus=…`: applied once the first plan is loaded, then kept in step.
+    links.start();
     // Profiling and test handle: in dev, and in builds with ?debug in the URL.
     if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) {
       Object.assign(window, { __cartograph: { controller, store, flows } });

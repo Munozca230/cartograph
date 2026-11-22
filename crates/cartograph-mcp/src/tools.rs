@@ -10,6 +10,7 @@ use crate::annotations;
 use crate::base;
 use crate::engine::{Engine, Loaded, Ready};
 use crate::guard::Guard;
+use crate::map;
 use cartograph_core::EntryKind;
 use cartograph_query::{Answer, QueryError, deps, find, list, symbols};
 use rmcp::handler::server::wrapper::Parameters;
@@ -34,7 +35,8 @@ B, where does execution start, which tests cover this. One call returns a compac
 Workflow: overview (the map) -> find / explain (locate, understand) -> impact before \
 editing a file, callers before changing a function -> check before finishing \
 (with base=main only what your change introduces fails; diff shows what it changes in \
-the architecture). annotate leaves a note on a file or folder that explain shows in later sessions.
+the architecture). annotate leaves a note on a file or folder that explain shows in later sessions. \
+To show the user the architecture or a flow (a diagram, the map), call open_map.
 
 Ids: file:src/a.rs, dir:src, sym:src/a.rs#name, plain repo paths (src/a.rs, src/), \
 absolute paths inside the repo, path#name, libraries as npm:react. An unknown id comes \
@@ -159,6 +161,22 @@ pub struct HotspotsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OpenMapArgs {
+    /// What to show: a file or folder (`file:src/a.rs`, `dir:src`, `src/`), a function or
+    /// method (`sym:src/a.rs#login`, `src/a.rs#Auth.login`, `login`), or any id the other
+    /// tools accept. Omitted = the whole repo.
+    #[serde(default)]
+    pub focus: Option<String>,
+    /// `plan` (folders and files) or `flows` (call flows). Default: `flows` when `focus` is
+    /// a function or method, else `plan`.
+    #[serde(default)]
+    pub view: Option<String>,
+    /// Open the map in the user's browser (default true). The URL is returned either way.
+    #[serde(default)]
+    pub open_browser: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AnnotateArgs {
     /// The file or folder the note is about.
     pub node: String,
@@ -231,6 +249,46 @@ impl Cartograph {
         T: Serialize + Send + 'static,
         F: FnOnce(&Loaded) -> Result<Answer<T>, QueryError> + Send + 'static,
     {
+        let structured = self.engine.opts.structured;
+        let res = self
+            .gated(tool, args, move |l| {
+                f(l).map(|a| {
+                    let data = if structured {
+                        serde_json::to_value(&a.data).ok()
+                    } else {
+                        None
+                    };
+                    (a.text, data)
+                })
+            })
+            .await;
+        let ((text, data), note) = match res {
+            Ok(x) => x,
+            Err(r) => return r,
+        };
+        // The query crate points at CLI commands; here they are tools.
+        let text = text.replace("`cartograph query ", "`");
+        let text = match note {
+            Some(n) => format!("{n}\n{text}"),
+            None => text,
+        };
+        let mut r = CallToolResult::success(vec![ContentBlock::text(text)]);
+        r.structured_content = data;
+        r
+    }
+
+    /// The freshness gate, then `f` under the guard. The value and the freshness note, or
+    /// the answer to send instead: "indexing", the query's error, a timeout or a panic.
+    async fn gated<R, F>(
+        &self,
+        tool: &'static str,
+        args: Vec<String>,
+        f: F,
+    ) -> Result<(R, Option<String>), CallToolResult>
+    where
+        R: Send + 'static,
+        F: FnOnce(&Loaded) -> Result<R, QueryError> + Send + 'static,
+    {
         let t0 = Instant::now();
         let structured = self.engine.opts.structured;
         let (loaded, note) = match self.engine.ready(&args).await {
@@ -242,23 +300,11 @@ impl Cartograph {
                 r.structured_content = Some(json!({
                     "status": "indexing", "message": msg, "done": done, "total": total
                 }));
-                return r;
+                return Err(r);
             }
         };
         let generation = loaded.generation;
-        let res = self
-            .guard
-            .run(move || {
-                f(&loaded).map(|a| {
-                    let data = if structured {
-                        serde_json::to_value(&a.data).ok()
-                    } else {
-                        None
-                    };
-                    (a.text, data)
-                })
-            })
-            .await;
+        let res = self.guard.run(move || f(&loaded)).await;
         let ms = t0.elapsed().as_millis() as u64;
         tracing::info!(
             tool,
@@ -268,18 +314,8 @@ impl Cartograph {
             "tool call"
         );
         match res {
-            Ok(Ok((text, data))) => {
-                // The query crate points at CLI commands; here they are tools.
-                let text = text.replace("`cartograph query ", "`");
-                let text = match note {
-                    Some(n) => format!("{n}\n{text}"),
-                    None => text,
-                };
-                let mut r = CallToolResult::success(vec![ContentBlock::text(text)]);
-                r.structured_content = data;
-                r
-            }
-            Ok(Err(e)) => query_error(&e, structured),
+            Ok(Ok(v)) => Ok((v, note)),
+            Ok(Err(e)) => Err(query_error(&e, structured)),
             Err(e) => {
                 tracing::error!(tool, error = %e, "tool failed");
                 let msg = format!(
@@ -290,11 +326,11 @@ impl Cartograph {
                     crate::guard::GuardError::TimedOut(_) => "timeout",
                     crate::guard::GuardError::Panicked(_) => "internal",
                 };
-                tool_error(
+                Err(tool_error(
                     msg.clone(),
                     json!({ "code": code, "message": msg }),
                     structured,
-                )
+                ))
             }
         }
     }
@@ -592,6 +628,89 @@ impl Cartograph {
             cartograph_query::hotspots::hotspots(&l.repo, within.as_deref())
         })
         .await
+    }
+
+    #[tool(
+        description = "Show the user cartograph's visual map in the browser: the plan of \
+            folders and files, or the call flows of a function, focused on what you name. Use \
+            it when the user asks to see, visualize or show the architecture, a diagram, a flow \
+            or the map. Returns the URL. `focus`: file, folder or function (file:, dir:, sym:, \
+            a path, path#name), omitted = whole repo; `view`: plan or flows (default flows for \
+            a function, else plan); `open_browser` (default true).",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn open_map(&self, Parameters(a): Parameters<OpenMapArgs>) -> CallToolResult {
+        let structured = self.engine.opts.structured;
+        let view = match given(a.view).map(|v| v.parse::<map::MapView>()).transpose() {
+            Ok(v) => v,
+            Err(e) => return query_error(&e, structured),
+        };
+        let focus = given(a.focus).map(|f| self.norm(&f));
+        let args: Vec<String> = focus.iter().cloned().collect();
+        let (target, note) = match self
+            .gated("open_map", args, move |l| {
+                map::target(&l.repo, focus.as_deref(), view)
+            })
+            .await
+        {
+            Ok(x) => x,
+            Err(r) => return r,
+        };
+        let base = match self.engine.map.ensure(&self.engine).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!(error = %e, "web map failed");
+                return tool_error(
+                    e.clone(),
+                    json!({ "code": "map_failed", "message": e }),
+                    structured,
+                );
+            }
+        };
+        let url = target.url(&base);
+        // A failed launch is not an error: the URL is in the answer.
+        let launched = if a.open_browser.unwrap_or(true) {
+            let u = url.clone();
+            Some(
+                match tokio::task::spawn_blocking(move || open::that_detached(&u)).await {
+                    Ok(r) => r.map_err(|e| e.to_string()),
+                    Err(e) => Err(e.to_string()),
+                },
+            )
+        } else {
+            None
+        };
+        let first = match &launched {
+            None => format!("Map URL: {url}"),
+            Some(Ok(())) => format!("Opened the map in the browser: {url}"),
+            Some(Err(e)) => {
+                tracing::warn!(error = %e, "no browser opened");
+                format!("Could not open a browser ({e}); give the user this URL instead: {url}")
+            }
+        };
+        let opened = matches!(launched, Some(Ok(())));
+        let mut text = format!(
+            "{first}\nShows {}. The page refreshes when the code changes and stays up while \
+             this session runs.\n",
+            target.what
+        );
+        if let Some(n) = note {
+            text = format!("{n}\n{text}");
+        }
+        let mut r = CallToolResult::success(vec![ContentBlock::text(text)]);
+        r.structured_content = Some(json!({
+            "url": url,
+            "view": target.view.as_str(),
+            "focus": target.focus,
+            "shows": target.what,
+            "opened": opened,
+        }));
+        r
     }
 
     #[tool(
