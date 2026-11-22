@@ -209,6 +209,8 @@ impl RepoGraph {
 
         // Entry data from Godot projects and package manifests.
         let mut entries = Entries::default();
+        // `(package folder, entry as written)`.
+        let mut manifest_raw: Vec<(&str, &str)> = Vec::new();
         for n in &graph.nodes {
             if n.kind == NodeKind::Package
                 && let Some(d) = n.meta["dir"].as_str()
@@ -220,12 +222,7 @@ impl RepoGraph {
                     .flatten()
                 {
                     if let Some(e) = e.as_str() {
-                        let p = if d.is_empty() {
-                            e.to_string()
-                        } else {
-                            format!("{d}/{e}")
-                        };
-                        entries.manifest.insert(p);
+                        manifest_raw.push((d, e));
                     }
                 }
             }
@@ -246,7 +243,12 @@ impl RepoGraph {
         let mut file_nodes: Vec<_> = graph.nodes_of(NodeKind::File).collect();
         file_nodes.sort_by(|a, b| a.path.cmp(&b.path));
         let paths: BTreeSet<&str> = file_nodes.iter().map(|n| n.path.as_str()).collect();
-        entries.manifest = manifest_files(&entries.manifest, &paths);
+        entries.manifest = manifest_raw
+            .iter()
+            .flat_map(|(d, e)| {
+                cartograph_core::manifest_entry::entry_files(d, e, |p| paths.contains(p))
+            })
+            .collect();
         // Dirs: every Dir node plus every ancestor of every file.
         let mut dir_paths: BTreeSet<String> = BTreeSet::new();
         dir_paths.insert(String::new());
@@ -737,55 +739,6 @@ fn dir_targets(files: &[FileNode], dir: &DirNode, lang: Option<&str>) -> Vec<Fil
         .filter(|&f| files[f as usize].kind != FileKind::Test)
         .collect();
     if non_test.is_empty() { pool } else { non_test }
-}
-
-/// Extensions Node and bundlers try for a `package.json` path written without one.
-const MANIFEST_EXTS: &[&str] = &["js", "mjs", "cjs", "ts", "tsx", "jsx"];
-
-/// The indexed files that manifest entries name. An entry may be written without its
-/// extension (`"main": "lib/server"`) or point at a folder (`"bin": "./cli"`), as Node
-/// resolves them: the path itself, `<p>.{js,mjs,cjs,ts,tsx,jsx}`, `<p>/index.*`. `.` and
-/// empty segments are dropped first (`"."`, `"lib/./cli"`); a path that names a folder (a
-/// trailing `/`, a last `.` segment, the package folder itself) only tries `<p>/index.*`.
-fn manifest_files(raw: &BTreeSet<String>, files: &BTreeSet<&str>) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for p in raw {
-        let folder = p.is_empty() || p == "." || p.ends_with('/') || p.ends_with("/.");
-        let p = p
-            .split('/')
-            .filter(|s| !s.is_empty() && *s != ".")
-            .collect::<Vec<_>>()
-            .join("/");
-        let index = |e: &&str| {
-            if p.is_empty() {
-                format!("index.{e}")
-            } else {
-                format!("{p}/index.{e}")
-            }
-        };
-        if folder || p.is_empty() {
-            for c in MANIFEST_EXTS.iter().map(index) {
-                if files.contains(c.as_str()) {
-                    out.insert(c);
-                }
-            }
-            continue;
-        }
-        if files.contains(p.as_str()) {
-            out.insert(p);
-            continue;
-        }
-        for c in MANIFEST_EXTS
-            .iter()
-            .map(|e| format!("{p}.{e}"))
-            .chain(MANIFEST_EXTS.iter().map(index))
-        {
-            if files.contains(c.as_str()) {
-                out.insert(c);
-            }
-        }
-    }
-    out
 }
 
 /// Names that mark a JS/TS/Python file as an entry point when nothing imports it.

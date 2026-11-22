@@ -911,12 +911,14 @@ fn kind_rank(k: EntryKind) -> u8 {
         EntryKind::GodotMainScene => 1,
         EntryKind::Http => 2,
         EntryKind::Cli => 3,
-        EntryKind::GodotAutoload => 4,
+        EntryKind::Ipc => 4,
+        EntryKind::GodotAutoload => 5,
     }
 }
 
 /// `entries(kind?, within?, include_tests)`, within [`limits::ENTRIES`]: where flows start
-/// (`main`, HTTP routes, CLI commands, Godot main scenes and autoloads) with the symbol
+/// (`main`, HTTP routes, CLI commands, IPC handlers, Godot main scenes and autoloads) with
+/// the symbol
 /// that runs. Like `overview`, entries in tests and in test, fixture or example trees
 /// below the queried folder (the repo by default) are left out and only counted, unless
 /// `include_tests`: a query within such a tree, or of one file, lists its own.
@@ -993,7 +995,7 @@ pub fn entries(
             };
             if r.total == 0 {
                 return format!(
-                    "no flow entry points found (main, HTTP routes, CLI commands, Godot scenes){tests}\n"
+                    "no flow entry points found (main, HTTP routes, CLI commands, IPC handlers, Godot scenes){tests}\n"
                 );
             }
             let kinds: Vec<String> = r.by_kind.iter().map(|(k, n)| format!("{k} {n}")).collect();

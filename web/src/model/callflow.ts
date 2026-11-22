@@ -238,11 +238,12 @@ export function alertCount(flow: FlowResponse): number {
   return flow.edges.filter((e) => edgeAlert(flow, e)).length;
 }
 
-/** Entry groups of the left rail, in a fixed order (commands, routes, main, Godot). */
+/** Entry groups of the left rail, in a fixed order (commands, routes, main, IPC, Godot). */
 export const ENTRY_GROUPS: { kinds: EntryKind[]; title: string }[] = [
   { kinds: ["cli"], title: "Comandos" },
   { kinds: ["http"], title: "HTTP" },
   { kinds: ["main"], title: "main" },
+  { kinds: ["ipc"], title: "IPC" },
   { kinds: ["godot_main_scene", "godot_autoload"], title: "Godot" },
 ];
 
@@ -253,7 +254,7 @@ export function groupEntries(entries: readonly FlowEntry[], filter = ""): { titl
   return ENTRY_GROUPS.map((g) => ({ title: g.title, items: entries.filter((e) => g.kinds.includes(e.kind) && hit(e)) })).filter((g) => g.items.length > 0);
 }
 
-/** The tag before an entry in the rail: `CLI`, the HTTP method, `main`, `escena`, `autoload`. */
+/** The tag before an entry in the rail: `CLI`, the HTTP method, `main`, `IPC`, `escena`, `autoload`. */
 export function entryTag(e: FlowEntry): string {
   switch (e.kind) {
     case "cli":
@@ -264,6 +265,8 @@ export function entryTag(e: FlowEntry): string {
     }
     case "main":
       return "main";
+    case "ipc":
+      return "IPC";
     case "godot_main_scene":
       return "escena";
     case "godot_autoload":

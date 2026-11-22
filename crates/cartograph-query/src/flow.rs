@@ -288,8 +288,13 @@ fn flat_name(name: &str) -> String {
 /// last literal part of a route's path) bare and with a prefix or suffix (`cmd_index`,
 /// `handleIndex`, `index_command`...), all flattened ([`flat_name`]); and the bare one apart.
 /// None when nothing in it can name a function: a route's method alone (`GET /`), parameters
-/// (`GET /:id`, `/{id}`) or a wildcard (`*`).
+/// (`GET /:id`, `/{id}`) or a wildcard (`*`); and for an IPC channel, whose handler the
+/// indexer already knows when it is named, and whose name (`doc:save`) is also the name of
+/// the renderer-side wrapper that sends to it.
 fn handler_names(kind: EntryKind, name: &str) -> Option<(String, Vec<String>)> {
+    if kind == EntryKind::Ipc {
+        return None;
+    }
     let mut name = name.trim();
     if kind == EntryKind::Http {
         // `GET /users`: the method says nothing about the handler's name.
@@ -386,8 +391,9 @@ fn kind_rank(k: EntryKind) -> u8 {
         EntryKind::Cli => 0,
         EntryKind::Http => 1,
         EntryKind::Main => 2,
-        EntryKind::GodotMainScene => 3,
-        EntryKind::GodotAutoload => 4,
+        EntryKind::Ipc => 3,
+        EntryKind::GodotMainScene => 4,
+        EntryKind::GodotAutoload => 5,
     }
 }
 

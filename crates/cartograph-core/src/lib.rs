@@ -13,6 +13,7 @@
 )]
 
 pub mod history;
+pub mod manifest_entry;
 pub mod model;
 pub mod scip;
 pub mod store;

@@ -240,7 +240,7 @@ export interface SearchResponse {
 
 // ---------------------------------------------------------------- flows (docs/api-f2.md, items 20-25)
 
-export type EntryKind = "cli" | "http" | "main" | "godot_main_scene" | "godot_autoload";
+export type EntryKind = "cli" | "http" | "main" | "ipc" | "godot_main_scene" | "godot_autoload";
 
 export interface FlowEntry {
   kind: EntryKind;

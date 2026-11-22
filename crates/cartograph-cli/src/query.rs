@@ -78,9 +78,10 @@ pub enum Tool {
     /// Supertypes and direct subtypes of a class, struct, interface or trait (or of a
     /// method's type): `sym:<path>#<name>`, `<path>#<name>`, `Class.method` or a name.
     Hierarchy { symbol: String },
-    /// Where flows start: main, HTTP routes, CLI commands, Godot main scenes and autoloads.
+    /// Where flows start: main, HTTP routes, CLI commands, IPC handlers, Godot main scenes
+    /// and autoloads.
     Entries {
-        /// main, http, cli, godot_main_scene or godot_autoload.
+        /// main, http, cli, ipc, godot_main_scene or godot_autoload.
         #[arg(long)]
         kind: Option<String>,
         /// Only entries in this file or folder.
@@ -280,7 +281,7 @@ pub fn cmd_query(tool: Tool, opts: &QueryOpts) -> Result<ExitCode> {
                 Some(Err(_)) => {
                     return query_error(
                         &QueryError::BadArgument(
-                            "kind must be main, http, cli, godot_main_scene or godot_autoload"
+                            "kind must be main, http, cli, ipc, godot_main_scene or godot_autoload"
                                 .into(),
                         ),
                         json,

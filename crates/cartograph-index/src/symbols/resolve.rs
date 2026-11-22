@@ -53,8 +53,8 @@ mod hier;
 use super::RustCallPaths;
 use super::{BindKind, Call, Code, Def, Form};
 use cartograph_core::{
-    CallStats, Confidence, EntryKind, EntryPoint, Graph, NodeKind, Symbol, SymbolCall, SymbolKind,
-    Symbols, symbol_id,
+    CallStats, Confidence, EdgeKind, EntryKind, EntryPoint, Graph, NodeKind, Symbol, SymbolCall,
+    SymbolKind, Symbols, symbol_id,
 };
 use hier::{Hier, TKey, caller_key, inherited, inherited_of_one, rust_impls};
 use rayon::prelude::*;
@@ -784,6 +784,7 @@ fn gate_libraries(gate: &str) -> &'static [&'static str] {
             "elysia",
         ],
         "js-cli" => &["commander", "yargs", "cac", "sade"],
+        "js-ipc" => &["electron"],
         "js-nest" => &["@nestjs/common"],
         "py-http" => &["flask", "fastapi", "starlette", "quart", "sanic", "bottle"],
         "py-cli" => &["click", "typer"],
@@ -849,6 +850,7 @@ pub fn resolve(graph: &Graph, files: &[FileCode<'_>], rust_paths: &RustCallPaths
         out.entries.extend(r.entries);
     }
     out.entries.extend(godot_entries(graph));
+    out.entries.extend(npm_main_entries(graph));
     out.normalize();
     out
 }
@@ -928,7 +930,8 @@ fn resolve_file(
                 Out::Hit(sid, _) => Some(ctx.ids[sid as usize].clone()),
                 _ => None,
             }
-        } else if e.kind == EntryKind::Main {
+        } else if e.kind == EntryKind::Main || e.kind == EntryKind::Ipc {
+            // A `main` of a whole file; an IPC handler written inline at module level.
             Some(format!("file:{}", f.path))
         } else {
             None
@@ -1514,6 +1517,59 @@ fn member_heuristic(ctx: &Ctx<'_>, binds: &[Bindings<'_>], fi: usize, name: &str
 }
 
 /// Godot main scenes and autoloads, from the `project.godot` metadata.
+/// The program a `package.json` `main` runs (an Electron main process, a Node app), as a
+/// `main` entry on its source file: the file itself, or, for a build output that is not
+/// indexed (`dist/electron/main.js`), the source it is compiled from
+/// ([`cartograph_core::manifest_entry::entry_files`]). A `main` that other files import (tests aside)
+/// is a library's entry, not where a program starts, and is left out.
+fn npm_main_entries(graph: &Graph) -> Vec<EntryPoint> {
+    let files: HashSet<&str> = graph
+        .nodes_of(NodeKind::File)
+        .map(|n| n.path.as_str())
+        .collect();
+    let imported: HashSet<&str> = graph
+        .edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Import && !looks_like_test(&e.src))
+        .map(|e| e.dst.as_str())
+        .collect();
+    let mut out = Vec::new();
+    for n in graph.nodes_of(NodeKind::Package) {
+        let (Some(dir), Some(main)) = (n.meta["dir"].as_str(), n.meta["details"]["main"].as_str())
+        else {
+            continue;
+        };
+        for path in cartograph_core::manifest_entry::entry_files(dir, main, |p| files.contains(p)) {
+            let id = format!("file:{path}");
+            if imported.contains(id.as_str()) {
+                continue;
+            }
+            out.push(EntryPoint {
+                file: path,
+                line: 0,
+                kind: EntryKind::Main,
+                name: "main".to_string(),
+                target: Some(id),
+            });
+        }
+    }
+    out
+}
+
+/// A test file by its path alone (a `test`/`tests`/`__tests__`/`e2e`/`spec` folder, a
+/// `.test.`/`.spec.` name): what a test imports says nothing about who runs a file.
+fn looks_like_test(id: &str) -> bool {
+    let path = id.strip_prefix("file:").unwrap_or(id);
+    let (dirs, name) = path.rsplit_once('/').unwrap_or(("", path));
+    dirs.split('/').any(|d| {
+        matches!(
+            d,
+            "test" | "tests" | "__tests__" | "__mocks__" | "e2e" | "spec" | "specs"
+        )
+    }) || name.contains(".test.")
+        || name.contains(".spec.")
+}
+
 fn godot_entries(graph: &Graph) -> Vec<EntryPoint> {
     let mut out = Vec::new();
     for n in graph.nodes_of(NodeKind::File) {

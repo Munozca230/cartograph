@@ -342,8 +342,9 @@ pub const QUERIES: [&str; 11] = [
 /// `super(Class, self)`; 15: [`Def::class_name`] (an inner GDScript class on line 1 is not
 /// the script); 16: methods and function properties of named JS object literals
 /// (module-level `const x = {…}`, `export default {…}`, `module.exports = {…}`,
-/// `exposeInMainWorld("api", {…})`) as `x.prop`.
-pub const REVISION: u32 = 16;
+/// `exposeInMainWorld("api", {…})`) as `x.prop`; 17: Electron `ipcMain.handle` / `on`
+/// entries ([`cartograph_core::EntryKind::Ipc`]).
+pub const REVISION: u32 = 17;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

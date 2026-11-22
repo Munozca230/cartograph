@@ -176,6 +176,11 @@ fn parse_npm(text: &str) -> Result<Parsed, String> {
     if !workspaces.is_empty() {
         details.insert("workspaces".into(), Value::Array(workspaces));
     }
+    // The program a `package.json` runs (Electron's main process, a Node app): a flow
+    // entry (see `symbols::resolve`).
+    if let Some(main) = v.get("main").and_then(Value::as_str) {
+        details.insert("main".into(), Value::String(main.to_string()));
+    }
     let entries = npm_entries(&v);
     if !entries.is_empty() {
         details.insert(

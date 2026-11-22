@@ -1801,6 +1801,9 @@ svg.dia.tiny {
 .t-main {
   --k: var(--kind-test);
 }
+.t-ipc {
+  --k: var(--kind-data);
+}
 .t-godot_main_scene,
 .t-godot_autoload {
   --k: var(--kind-style);

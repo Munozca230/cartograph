@@ -2226,6 +2226,15 @@ fn entries(
         }
     }
 
+    // Electron main-process IPC handlers: `ipcMain.handle("channel", handler)`.
+    if lang == Lang::Js {
+        for c in calls {
+            if let Some(e) = ipc_entry(c, src, &code.defs) {
+                out.push(e);
+            }
+        }
+    }
+
     // Route and command registrations written as calls.
     for c in calls {
         if c.cap != "call.member" {
@@ -2544,6 +2553,65 @@ fn entries(
     }
 
     code.entries = out;
+}
+
+/// Methods of Electron's `ipcMain` that register a handler for a channel.
+const IPC_MAIN_METHODS: &[&str] = &["handle", "handleOnce", "on", "once"];
+
+/// `ipcMain.handle(channel, handler)` (and `handleOnce`, `on`, `once`) as an
+/// [`EntryKind::Ipc`] entry. The channel is a string literal, or a constant as written
+/// (`IPC_CHANNELS.LOGOUT`, `CHANNEL`); a lower-case variable (`ipcMain.handle(channel, fn)`
+/// in a generic helper) names no channel and is skipped. A handler passed by name is the
+/// entry's handler; an inline function makes the function or method around the call (none
+/// at module level: the file) the entry's start. Gated on the file importing `electron`.
+fn ipc_entry(c: &CallCap<'_>, src: &[u8], defs: &[Def]) -> Option<RawEntry> {
+    if c.cap != "call.member" || !IPC_MAIN_METHODS.contains(&text(c.name, src).as_str()) {
+        return None;
+    }
+    let recv = c.recv.filter(|r| r.kind() == "identifier")?;
+    if text(recv, src) != "ipcMain" {
+        return None;
+    }
+    let list = named_args(c.args?);
+    let [channel, .., handler] = list.as_slice() else {
+        return None;
+    };
+    let name = match channel.kind() {
+        "member_expression" => text(*channel, src),
+        "identifier" => {
+            let t = text(*channel, src);
+            if !t.chars().any(|ch| ch.is_ascii_uppercase())
+                || t.chars().any(|ch| ch.is_ascii_lowercase())
+            {
+                return None;
+            }
+            t
+        }
+        _ => string_value(*channel, src)?,
+    };
+    let name: String = name.split_whitespace().collect();
+    if name.is_empty() {
+        return None;
+    }
+    let l = line(c.name);
+    let (handler, def) = match handler.kind() {
+        "identifier" | "member_expression" => (handler_ref(Lang::Js, *handler, src), None),
+        _ => {
+            let around = defs
+                .iter()
+                .filter(|d| d.kind.is_callable() && d.start <= l && l <= d.end)
+                .max_by_key(|d| (d.start, std::cmp::Reverse(d.end)));
+            (None, around.map(Def::qualified))
+        }
+    };
+    Some(RawEntry {
+        line: l,
+        kind: EntryKind::Ipc,
+        name,
+        handler,
+        def,
+        gate: Some("js-ipc".into()),
+    })
 }
 
 /// kebab-case as clap derives a subcommand name from a variant: heck 0.5's

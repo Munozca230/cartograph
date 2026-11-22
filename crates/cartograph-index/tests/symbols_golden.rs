@@ -244,6 +244,46 @@ fn object_literal_members() {
 }
 
 #[test]
+fn electron_entries() {
+    let s = symbols_of("electron-app");
+    let entry = |kind: &str, name: &str| {
+        s.entries
+            .iter()
+            .find(|e| e.kind.as_str() == kind && e.name == name)
+            .map(|e| (e.file.clone(), e.target.clone().unwrap_or_default()))
+    };
+    // `package.json` `main` names the build output (`dist/electron/main.js`, not in the
+    // repo): the entry is the source it is built from.
+    assert_eq!(
+        entry("main", "main"),
+        Some((
+            "src/electron/main.ts".into(),
+            "file:src/electron/main.ts".into()
+        ))
+    );
+    // `ipcMain` handlers: a named handler, an inline one at module level (the file) and in a
+    // method (the method); the channel as a literal or as the constant written.
+    assert_eq!(
+        entry("ipc", "doc:save").map(|e| e.1),
+        Some("sym:src/electron/handlers.ts#saveDoc".into())
+    );
+    assert_eq!(
+        entry("ipc", "CHANNELS.PING").map(|e| e.1),
+        Some("file:src/electron/main.ts".into())
+    );
+    assert_eq!(
+        entry("ipc", "update:now").map(|e| e.1),
+        Some("sym:src/electron/updater.ts#Updater.register".into())
+    );
+    assert_eq!(
+        entry("ipc", "legacy:ping").map(|e| e.1),
+        Some("sym:src/electron/legacy.js#onPing".into())
+    );
+    // A channel held in a parameter (`ipcMain.handle(channel, fn)`) names nothing.
+    assert!(!s.entries.iter().any(|e| e.name == "channel"));
+}
+
+#[test]
 fn typescript_rules() {
     let s = symbols_of("symbols-ts");
     use Confidence::*;

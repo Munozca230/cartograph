@@ -13,10 +13,19 @@
     "src/electron/preload.ts:26 sym:src/electron/preload.ts#tools.format -> sym:src/electron/log.ts#logCall [resolved]",
     "src/electron/preload.ts:34 sym:src/electron/preload.ts#makeLocal -> sym:src/electron/log.ts#logCall [resolved]",
     "src/electron/preload.ts:38 (top level) -> sym:src/electron/preload.ts#makeLocal [exact]",
+    "src/electron/updater.ts:6 sym:src/electron/updater.ts#Updater.register -> sym:src/electron/handlers.ts#checkForUpdates [resolved]",
     "src/ui/app.ts:4 sym:src/ui/app.ts#boot -> sym:src/electron/api.ts#api.stop [resolved]",
     "src/ui/app.ts:5 sym:src/ui/app.ts#boot -> sym:src/electron/api.ts#default.run [resolved]"
   ],
-  "entries": [],
+  "entries": [
+    "ipc \"legacy:ping\" src/electron/legacy.js:14 -> sym:src/electron/legacy.js#onPing",
+    "main \"main\" src/electron/main.ts:0 -> file:src/electron/main.ts",
+    "ipc \"CHANNELS.PING\" src/electron/main.ts:9 -> file:src/electron/main.ts",
+    "ipc \"doc:save\" src/electron/main.ts:10 -> sym:src/electron/handlers.ts#saveDoc",
+    "ipc \"app:reload\" src/electron/main.ts:11 -> file:src/electron/main.ts",
+    "ipc \"CHANNELS.UPDATE_CHECK\" src/electron/main.ts:12 -> file:src/electron/main.ts",
+    "ipc \"update:now\" src/electron/updater.ts:6 -> sym:src/electron/updater.ts#Updater.register"
+  ],
   "stats": [
     "src/electron/api.ts: exact 2, resolved 2, heuristic 0, ambiguous 0, unresolved 0",
     "src/electron/handlers.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 0",
@@ -24,6 +33,7 @@
     "src/electron/log.ts: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
     "src/electron/main.ts: exact 1, resolved 1, heuristic 0, ambiguous 0, unresolved 8",
     "src/electron/preload.ts: exact 1, resolved 4, heuristic 0, ambiguous 0, unresolved 8",
+    "src/electron/updater.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 1",
     "src/ui/app.ts: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 0"
   ],
   "supers": [],
@@ -49,6 +59,8 @@
     "method sym:src/electron/preload.ts#tools.format L26-26 exported",
     "method sym:src/electron/preload.ts#tools.reload L27-29 exported",
     "function sym:src/electron/preload.ts#makeLocal L32-36",
+    "class sym:src/electron/updater.ts#Updater L4-8 exported",
+    "method sym:src/electron/updater.ts#Updater.register L5-7 exported",
     "function sym:src/ui/app.ts#boot L3-6 exported"
   ]
 }

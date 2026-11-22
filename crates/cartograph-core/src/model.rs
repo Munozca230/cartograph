@@ -373,6 +373,9 @@ pub enum EntryKind {
     GodotMainScene,
     /// A Godot autoload (singleton).
     GodotAutoload,
+    /// An IPC channel handler of the main process (Electron `ipcMain.handle("channel", fn)`,
+    /// `ipcMain.on`); the name is the channel as written.
+    Ipc,
 }
 
 str_enum!(SymbolKind {
@@ -381,7 +384,7 @@ str_enum!(SymbolKind {
 });
 str_enum!(EntryKind {
     Main => "main", Http => "http", Cli => "cli", GodotMainScene => "godot_main_scene",
-    GodotAutoload => "godot_autoload",
+    GodotAutoload => "godot_autoload", Ipc => "ipc",
 });
 
 /// A symbol definition: a function, method, type or module-level constant.

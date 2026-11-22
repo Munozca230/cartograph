@@ -106,7 +106,7 @@ pub struct CallersArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EntriesArgs {
-    /// `main`, `http`, `cli`, `godot_main_scene` or `godot_autoload`; omitted = all.
+    /// `main`, `http`, `cli`, `ipc`, `godot_main_scene` or `godot_autoload`; omitted = all.
     #[serde(default)]
     pub kind: Option<String>,
     /// Only entries in this file or folder.
@@ -512,8 +512,8 @@ impl Cartograph {
     }
 
     #[tool(
-        description = "Where execution starts: main functions, HTTP routes, CLI commands, Godot \
-            main scene and autoloads; optionally one kind or within a folder. Entries in test, \
+        description = "Where execution starts: main functions, HTTP routes, CLI commands, IPC \
+            handlers (Electron `ipcMain`), Godot main scene and autoloads; optionally one kind or within a folder. Entries in test, \
             fixture or example trees are only counted (`include_tests` lists them). Use it to \
             see how a feature is reached from outside before tracing it.",
         annotations(read_only_hint = true)
@@ -526,7 +526,8 @@ impl Cartograph {
             Some(Err(_)) => {
                 return query_error(
                     &QueryError::BadArgument(
-                        "kind must be main, http, cli, godot_main_scene or godot_autoload".into(),
+                        "kind must be main, http, cli, ipc, godot_main_scene or godot_autoload"
+                            .into(),
                     ),
                     structured,
                 );

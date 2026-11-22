@@ -403,8 +403,8 @@ describe("flow helpers", () => {
   const entry = (kind: FlowEntry["kind"], name: string, file = "src/main.rs", line = 37): FlowEntry => ({ kind, name, file, line, target: null, root: "sym:x#y" });
 
   it("groups entries by kind and filters them", () => {
-    const list = [entry("http", "GET /api/tree", "src/api.rs"), entry("cli", "index"), entry("main", "main"), entry("godot_main_scene", "main.tscn", "main.tscn", 0)];
-    expect(groupEntries(list).map((g) => g.title)).toEqual(["Comandos", "HTTP", "main", "Godot"]);
+    const list = [entry("http", "GET /api/tree", "src/api.rs"), entry("cli", "index"), entry("main", "main"), entry("ipc", "doc:save", "src/main.ts"), entry("godot_main_scene", "main.tscn", "main.tscn", 0)];
+    expect(groupEntries(list).map((g) => g.title)).toEqual(["Comandos", "HTTP", "main", "IPC", "Godot"]);
     expect(groupEntries(list, "api").map((g) => [g.title, g.items.length])).toEqual([["HTTP", 1]]);
     expect(groupEntries(list, "nothing")).toEqual([]);
   });
@@ -414,6 +414,7 @@ describe("flow helpers", () => {
     expect([entryTag(entry("cli", "index")), entryLabel(entry("cli", "index"))]).toEqual(["CLI", "index"]);
     expect(entryLabel(entry("main", "main", "crates/cli/src/main.rs"))).toBe("src/main.rs");
     expect(entryTag(entry("godot_main_scene", "main.tscn"))).toBe("escena");
+    expect([entryTag(entry("ipc", "doc:save")), entryLabel(entry("ipc", "doc:save"))]).toEqual(["IPC", "doc:save"]);
     expect(entryWhere(entry("cli", "index", "crates/cli/src/main.rs", 38))).toBe("main.rs:38");
     expect(entryWhere(entry("main", "x", "a/b.tscn", 0))).toBe("b.tscn");
     expect(flowTitle(entry("cli", "index"), "cartograph", "f")).toBe("cartograph index");
