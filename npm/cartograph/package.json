@@ -1,0 +1,43 @@
+{
+  "name": "@munozca230/cartograph",
+  "version": "0.0.0",
+  "description": "Architecture map of a code repository: CLI, local web UI and a stdio MCP server for coding agents.",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Munozca230/cartograph.git"
+  },
+  "homepage": "https://github.com/Munozca230/cartograph#readme",
+  "bugs": {
+    "url": "https://github.com/Munozca230/cartograph/issues"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "architecture",
+    "dependency-graph",
+    "code-analysis",
+    "static-analysis",
+    "call-graph",
+    "tree-sitter",
+    "cli"
+  ],
+  "bin": {
+    "cartograph": "bin/cartograph.js"
+  },
+  "files": [
+    "bin",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@munozca230/cartograph-darwin-arm64": "0.0.0",
+    "@munozca230/cartograph-darwin-x64": "0.0.0",
+    "@munozca230/cartograph-linux-x64": "0.0.0",
+    "@munozca230/cartograph-win32-x64": "0.0.0"
+  }
+}
