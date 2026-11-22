@@ -1,0 +1,14 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="Fixture Game"
+run/main_scene="uid://bmain0000001"
+config/icon="res://icon.svg"
+
+[autoload]
+
+Events="*res://autoload/events.gd"
+Music="*res://autoload/music.tscn"
+Missing="*res://autoload/missing.gd"

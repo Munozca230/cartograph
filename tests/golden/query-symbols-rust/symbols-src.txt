@@ -1,0 +1,25 @@
+symbols in src/ · 14 in 4 files (exported 8) · pub = exported, ←N = call sites reaching it
+calls made here: 8 resolved (exact 3, resolved 4, heuristic 1), ambiguous 0, unresolved 8
+src/model.rs (8)
+  const LIMIT L3 pub
+  struct Store L5-7 pub
+    method Store.new L10-13 pub ←1
+    method Store.init_log L15 ←1
+    method Store.persist_all L17-19 pub ←1
+    method Store.flush_now L21-23 ←1
+    method Store.fmt L27-29 pub
+  function shared L32-34 pub ←1
+src/main.rs (3)
+  enum Command L9-12
+  function main L14-21
+  function helper L23 ←1
+src/routes.rs (2)
+  function router L5-7 pub ←1
+  function health L9-11
+src/util.rs (1)
+  function format_name L1-3 pub ←1
+flow entries:
+  cli index → Command (src/main.rs:10)
+  cli serve-all → Command (src/main.rs:11)
+  main main → main (src/main.rs:14)
+  http GET /health → health (src/routes.rs:6)

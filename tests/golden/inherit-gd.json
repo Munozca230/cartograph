@@ -1,0 +1,31 @@
+{
+  "calls": [
+    "boss.gd:4 sym:boss.gd#_process -> sym:actor.gd#move_by [resolved]",
+    "boss.gd:5 sym:boss.gd#_process -> sym:enemy.gd#hurt [resolved]",
+    "boss.gd:10 sym:boss.gd#Minion.tick -> sym:actor.gd#move_by [resolved]",
+    "enemy.gd:5 sym:enemy.gd#_process -> sym:actor.gd#move_by [resolved]",
+    "enemy.gd:6 sym:enemy.gd#_process -> sym:enemy.gd#hurt [exact]",
+    "enemy.gd:9 sym:enemy.gd#hurt -> sym:actor.gd#hurt [resolved]"
+  ],
+  "entries": [],
+  "stats": [
+    "boss.gd: exact 0, resolved 3, heuristic 0, ambiguous 0, unresolved 1",
+    "enemy.gd: exact 1, resolved 2, heuristic 0, ambiguous 0, unresolved 0"
+  ],
+  "supers": [
+    "file:actor.gd : Node2D -> ? [-] actor.gd:1",
+    "file:boss.gd : Enemy -> sym:enemy.gd#Enemy [resolved] boss.gd:1",
+    "sym:boss.gd#Minion : Enemy -> sym:enemy.gd#Enemy [resolved] boss.gd:8",
+    "sym:enemy.gd#Enemy : \"res://actor.gd\" -> file:actor.gd [resolved] enemy.gd:2"
+  ],
+  "symbols": [
+    "function sym:actor.gd#move_by L3-4 exported",
+    "function sym:actor.gd#hurt L6-7 exported",
+    "function sym:boss.gd#_process L3-6",
+    "class sym:boss.gd#Minion L8-10 exported",
+    "method sym:boss.gd#Minion.tick L9-10 exported",
+    "class sym:enemy.gd#Enemy L1-10 exported",
+    "function sym:enemy.gd#_process L4-6",
+    "function sym:enemy.gd#hurt L8-9 exported"
+  ]
+}

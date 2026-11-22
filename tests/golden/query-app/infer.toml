@@ -1,0 +1,16 @@
+# cartograph.toml proposed by `cartograph infer` for query-app (Louvain over folder dependencies,
+# modularity 0.00). Layers go from the most dependent (top) to the most depended on.
+# `allow` lists every dependency that exists today, so this passes `cartograph check`;
+# remove the ones marked "against the order" to start enforcing the layering.
+# Format: docs/cartograph-toml.md
+# The graph does not split into separate groups; one layer only.
+
+# 12 files, 50 LOC, instability 0.00
+[[layers]]
+name = "src"
+paths = ["**"]
+allow = []
+
+[rules]
+# no_cycles = true
+# max_fan_out = 30

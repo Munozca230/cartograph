@@ -1,0 +1,18 @@
+{
+  "query": "serv",
+  "hits": [
+    {
+      "id": "file:src/core/service.ts",
+      "kind": "file",
+      "label": "src/core/service.ts",
+      "size": 5
+    },
+    {
+      "id": "file:src/core/service.test.ts",
+      "kind": "file",
+      "label": "src/core/service.test.ts",
+      "size": 4
+    }
+  ],
+  "more": 0
+}

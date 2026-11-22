@@ -1,0 +1,10 @@
+file src/server.ts · typescript · 12 LOC · code · entry (entry name)
+imports: none
+imported by: none
+findings:
+  [info] hidden_coupling:file:src/client.ts->file:src/server.ts: hidden coupling: src/client.ts and src/server.ts changed together in 10 commits, no dependency either way
+symbols (1, exported 1): const route L1 pub
+git: 12 commits (+12 −0 lines), 1 in the last 90 days · first 2025-01-01 · last 2025-07-20
+owners: Ada Lovelace 50%, Grace Hopper 50% · bus factor 1 (50%), 2 (80%)
+changes with: src/client.ts 10× (91%)
+note: none

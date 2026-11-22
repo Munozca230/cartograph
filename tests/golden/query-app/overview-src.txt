@@ -1,0 +1,10 @@
+src/ · 14 files · 56 LOC · typescript 14
+folders (files, LOC, kind, !findings):
+src/core/ 5 22 code !3
+src/ui/ 3 14 code !3
+src/infra/ 1 5 code !2
++ 5 files directly in src/
+entry points: src/main.ts (manifest entry)
+most depended on (←files using it, tests aside): src/core/model.ts ←6, src/core/repo.ts ←3, src/core/service.ts ←3, src/ui/widgets.ts ←3, src/core/util.ts ←2, src/infra/db.ts ←2
+libraries (files using it, tests aside): npm:react 1
+8 findings (5 violations, error 5, info 1, warning 2): cycle 1, fan_out_limit 1, folder_cycle 1, layer_violation 2, orphan 3 → `cartograph query findings`

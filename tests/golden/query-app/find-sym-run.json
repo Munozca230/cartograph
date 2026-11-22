@@ -1,0 +1,12 @@
+{
+  "query": "run",
+  "hits": [
+    {
+      "id": "sym:src/core/service.ts#run",
+      "kind": "sym",
+      "label": "src/core/service.ts:4 function run",
+      "size": 2
+    }
+  ],
+  "more": 0
+}

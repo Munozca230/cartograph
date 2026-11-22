@@ -1,0 +1,13 @@
+[package]
+name = "app-cli"
+version = "0.1.0"
+edition.workspace = true
+build = "build.rs"
+
+[dependencies]
+core-model.workspace = true
+anyhow = "1"
+util = { path = "../local-util", package = "local-util" }
+
+[dev-dependencies]
+pretty_assertions = "1"

@@ -1,0 +1,7 @@
+{
+  "name": "@fx/ui",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./src/index.ts" },
+    "./Card": "./src/Card.tsx"
+  }
+}

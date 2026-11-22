@@ -1,0 +1,158 @@
+name: release
+
+# A tag v<version> (matching the workspace version in Cargo.toml) builds the binaries,
+# runs the tests on each platform, and creates a DRAFT GitHub release with the archives
+# and their SHA-256 checksums. Publishing the draft is a manual step.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Point build.rs at the built frontend explicitly, so a restored cache cannot keep a
+  # build-script output from a checkout without web/dist.
+  CARTOGRAPH_WEB_DIST: ${{ github.workspace }}/web/dist
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+            archive: zip
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-15
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Version of the tag and of Cargo.toml must match
+        id: version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          # The workspace version ([workspace.package] in the root Cargo.toml).
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          if [ "$tag" != "$crate" ]; then
+            echo "tag $GITHUB_REF_NAME does not match the crate version $crate" >&2
+            exit 1
+          fi
+          echo "version=$crate" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # The server embeds web/dist at compile time, so the frontend is built first.
+      - name: Build the web frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.target }}
+
+      # The archives ship THIRD_PARTY_NOTICES.md: it must match Cargo.lock and the web lockfile.
+      - name: Third-party notices are up to date
+        shell: bash
+        run: node scripts/third-party.mjs --check
+
+      - name: Test
+        shell: bash
+        run: cargo test --workspace --locked --release --target ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked -p cartograph-cli --target ${{ matrix.target }}
+
+      - name: Check that the web UI is embedded
+        shell: bash
+        run: |
+          bin=target/${{ matrix.target }}/release/cartograph
+          mkdir -p doctor-probe
+          "$bin" doctor doctor-probe | tee doctor.txt
+          grep -q "web ui.*embedded in this binary" doctor.txt
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          name="cartograph-${{ steps.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md "dist/$name/"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            cp "target/${{ matrix.target }}/release/cartograph.exe" "dist/$name/"
+            (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
+            file="$name.zip"
+          else
+            cp "target/${{ matrix.target }}/release/cartograph" "dist/$name/"
+            (cd dist && tar -czf "$name.tar.gz" "$name")
+            file="$name.tar.gz"
+          fi
+          cd dist
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$file" > "$file.sha256"
+          else
+            shasum -a 256 "$file" > "$file.sha256"
+          fi
+          cat "$file.sha256"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/${{ steps.package.outputs.file }}
+            dist/${{ steps.package.outputs.file }}.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          cat *.sha256 > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/SHA256SUMS

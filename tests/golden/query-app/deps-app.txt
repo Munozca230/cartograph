@@ -1,0 +1,14 @@
+src/ui/app.ts · file level · depth 2 (:N = import line; (N) = file pairs; a folder = its own files)
+uses:
+  src/core/service.ts :1
+    src/core/model.ts :1
+    src/core/repo.ts :2
+  src/ui/widgets.ts :3
+    src/core/model.ts :1 (type) (seen)
+  src/infra/db.ts :2
+    src/core/model.ts :1 (seen)
+    src/core/util.ts :2
+used by:
+  src/main.ts :1
+    tests/e2e.test.ts :1
+  src/ui/app.spec.ts :1

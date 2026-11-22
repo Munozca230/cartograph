@@ -1,0 +1,4 @@
+{
+  "name": "@fx/shared",
+  "main": "dist/index.js"
+}

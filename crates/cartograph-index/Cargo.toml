@@ -1,0 +1,37 @@
+[package]
+name = "cartograph-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Indexer of cartograph: files, imports, symbols, calls and git history"
+
+[dependencies]
+blake3 = "1.8.7"
+gix = { version = "0.90.0", default-features = false, features = ["sha1", "blob-diff", "mailmap", "max-performance"] }
+globset = "0.4.21"
+cartograph-core = { version = "0.1.0", path = "../cartograph-core" }
+ignore = "0.4.34"
+rayon = "1.12.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+toml = "1.2.1"
+tracing = "0.1.44"
+tree-sitter = "0.27.2"
+tree-sitter-c = "0.24.2"
+tree-sitter-c-sharp = "0.24.0"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-gdscript = "6.1.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = "0.23.2"
+scip = "0.10.0"
+protobuf = "=3.7.2"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1,0 +1,35 @@
+{
+  "calls": [
+    "App/Program.cs:5 (top level) -> sym:App/Shapes.cs#Square [resolved]",
+    "App/Program.cs:9 sym:App/Program.cs#Program.Run -> sym:App/Shapes.cs#ShapeBase.Describe [resolved]",
+    "App/Shapes.cs:14 sym:App/Shapes.cs#ShapeBase.Describe -> sym:App/Shapes.cs#ShapeBase.Area [exact]",
+    "App/Shapes.cs:24 sym:App/Shapes.cs#Square.Area -> sym:App/Shapes.cs#ShapeBase.Log [resolved]",
+    "App/Shapes.cs:25 sym:App/Shapes.cs#Square.Area -> sym:App/Shapes.cs#ShapeBase.Describe [resolved]",
+    "App/Shapes.cs:26 sym:App/Shapes.cs#Square.Area -> sym:App/Shapes.cs#ShapeBase.Log [resolved]"
+  ],
+  "entries": [],
+  "stats": [
+    "App/Program.cs: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 1",
+    "App/Shapes.cs: exact 1, resolved 3, heuristic 0, ambiguous 0, unresolved 1"
+  ],
+  "supers": [
+    "sym:App/Program.cs#Failure : System.Exception -> ? [-] App/Program.cs:13",
+    "sym:App/Shapes.cs#ShapeBase : IShape -> sym:App/Shapes.cs#IShape [exact] App/Shapes.cs:8",
+    "sym:App/Shapes.cs#Square : ShapeBase -> sym:App/Shapes.cs#ShapeBase [exact] App/Shapes.cs:20",
+    "sym:App/Shapes.cs#Square : IShape -> sym:App/Shapes.cs#IShape [exact] App/Shapes.cs:20"
+  ],
+  "symbols": [
+    "class sym:App/Program.cs#Program L3-11 exported",
+    "method sym:App/Program.cs#Program.Run L7-10 exported",
+    "class sym:App/Program.cs#Failure L13-19 exported",
+    "method sym:App/Program.cs#Failure.Show L15-18 exported",
+    "interface sym:App/Shapes.cs#IShape L3-6 exported",
+    "method sym:App/Shapes.cs#IShape.Area L5-5 exported",
+    "class sym:App/Shapes.cs#ShapeBase L8-18 exported",
+    "method sym:App/Shapes.cs#ShapeBase.Area L10-10 exported",
+    "method sym:App/Shapes.cs#ShapeBase.Describe L12-15 exported",
+    "method sym:App/Shapes.cs#ShapeBase.Log L17-17 exported",
+    "class sym:App/Shapes.cs#Square L20-29 exported",
+    "method sym:App/Shapes.cs#Square.Area L22-28 exported"
+  ]
+}

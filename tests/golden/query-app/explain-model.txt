@@ -1,0 +1,14 @@
+file src/core/model.ts · typescript · 4 LOC · code · layer core
+imports (1 file):
+  src/core/ 1: repo.ts
+imported by (6 files):
+  src/ 2: big.ts, dead.ts
+  scripts/ 1: seed.ts
+  src/core/ 1: service.ts
+  src/infra/ 1: db.ts
+  src/ui/ 1: widgets.ts
+findings:
+  [violation] cycle:file:src/core/model.ts: 3 files tangled in a cycle (shortest loop: repo.ts → service.ts)
+symbols (1, exported 1): class Model L3-5 pub ←4
+git: not indexed (run `cartograph index` without --no-git)
+note: none

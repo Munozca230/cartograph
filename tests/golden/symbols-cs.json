@@ -1,0 +1,33 @@
+{
+  "calls": [
+    "App/Program.cs:10 sym:App/Program.cs#Program.Main -> sym:Core/Repo.cs#Repo [resolved]",
+    "App/Program.cs:11 sym:App/Program.cs#Program.Main -> sym:Core/Repo.cs#Repo.PersistEntity [heuristic]",
+    "App/Program.cs:12 sym:App/Program.cs#Program.Main -> sym:App/Program.cs#Program.Helper [exact]",
+    "App/UsersController.cs:11 sym:App/UsersController.cs#UsersController.Get -> sym:Core/Repo.cs#Repo.Describe [resolved]",
+    "Core/Repo.cs:5 sym:Core/Repo.cs#Repo.PersistEntity -> sym:Core/Repo.cs#Repo.Validate [exact]"
+  ],
+  "entries": [
+    "main \"main\" App/Program.cs:8 -> sym:App/Program.cs#Program.Main",
+    "http \"GET /api/Users/{id}\" App/UsersController.cs:8 -> sym:App/UsersController.cs#UsersController.Get"
+  ],
+  "stats": [
+    "App/Program.cs: exact 1, resolved 1, heuristic 1, ambiguous 0, unresolved 1",
+    "App/UsersController.cs: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 0",
+    "Core/Repo.cs: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 1"
+  ],
+  "supers": [
+    "sym:App/UsersController.cs#UsersController : ControllerBase -> ? [-] App/UsersController.cs:6"
+  ],
+  "symbols": [
+    "class sym:App/Program.cs#Program L6-17 exported",
+    "method sym:App/Program.cs#Program.Main L8-14 exported",
+    "method sym:App/Program.cs#Program.Helper L16-16",
+    "class sym:App/UsersController.cs#UsersController L6-13 exported",
+    "method sym:App/UsersController.cs#UsersController.Get L9-12 exported",
+    "class sym:Core/Repo.cs#Repo L3-12 exported",
+    "method sym:Core/Repo.cs#Repo.PersistEntity L5-5 exported",
+    "method sym:Core/Repo.cs#Repo.Validate L7-7",
+    "method sym:Core/Repo.cs#Repo.Describe L9-9 exported",
+    "method sym:Core/Repo.cs#Repo.ToString L11-11 exported"
+  ]
+}

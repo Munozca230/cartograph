@@ -1,0 +1,64 @@
+{
+  "from": "file:src/main.ts",
+  "to": "file:src/core/repo.ts",
+  "direct": 0,
+  "crossings": [],
+  "crossings_more": 0,
+  "paths": [
+    [
+      {
+        "id": "file:src/main.ts",
+        "line": 2
+      },
+      {
+        "id": "file:src/infra/db.ts",
+        "line": 1
+      },
+      {
+        "id": "file:src/core/model.ts",
+        "line": 1
+      },
+      {
+        "id": "file:src/core/repo.ts"
+      }
+    ],
+    [
+      {
+        "id": "file:src/main.ts",
+        "line": 1
+      },
+      {
+        "id": "file:src/ui/app.ts",
+        "line": 1
+      },
+      {
+        "id": "file:src/core/service.ts",
+        "line": 2
+      },
+      {
+        "id": "file:src/core/repo.ts"
+      }
+    ],
+    [
+      {
+        "id": "file:src/main.ts",
+        "line": 1
+      },
+      {
+        "id": "file:src/ui/app.ts",
+        "line": 2
+      },
+      {
+        "id": "file:src/infra/db.ts",
+        "line": 1
+      },
+      {
+        "id": "file:src/core/model.ts",
+        "line": 1
+      },
+      {
+        "id": "file:src/core/repo.ts"
+      }
+    ]
+  ]
+}

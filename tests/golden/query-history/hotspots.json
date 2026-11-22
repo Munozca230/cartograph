@@ -1,0 +1,72 @@
+{
+  "scope": "repo:",
+  "git": null,
+  "partial": false,
+  "commits": 24,
+  "newest": "2025-07-20",
+  "window_days": 90,
+  "files": 5,
+  "items": [
+    {
+      "id": "file:src/helpers.ts",
+      "score": 12,
+      "commits": 3,
+      "recent": 0,
+      "loc": 7,
+      "complexity": 4,
+      "authors": 2,
+      "owner": "Ada Lovelace",
+      "owner_share": 67,
+      "last_change": "2025-02-02"
+    },
+    {
+      "id": "file:src/api.ts",
+      "score": 10,
+      "commits": 10,
+      "recent": 0,
+      "loc": 13,
+      "complexity": 1,
+      "authors": 2,
+      "owner": "Ada Lovelace",
+      "owner_share": 50,
+      "last_change": "2025-02-20"
+    },
+    {
+      "id": "file:src/server.ts",
+      "score": 0,
+      "commits": 12,
+      "recent": 1,
+      "loc": 12,
+      "complexity": 0,
+      "authors": 2,
+      "owner": "Ada Lovelace",
+      "owner_share": 50,
+      "last_change": "2025-07-20"
+    },
+    {
+      "id": "file:src/client.ts",
+      "score": 0,
+      "commits": 11,
+      "recent": 0,
+      "loc": 11,
+      "complexity": 0,
+      "authors": 2,
+      "owner": "Ada Lovelace",
+      "owner_share": 55,
+      "last_change": "2025-02-21"
+    },
+    {
+      "id": "file:src/db.ts",
+      "score": 0,
+      "commits": 10,
+      "recent": 0,
+      "loc": 10,
+      "complexity": 0,
+      "authors": 2,
+      "owner": "Ada Lovelace",
+      "owner_share": 50,
+      "last_change": "2025-02-20"
+    }
+  ],
+  "more": 0
+}

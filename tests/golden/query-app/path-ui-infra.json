@@ -1,0 +1,26 @@
+{
+  "from": "dir:src/ui",
+  "to": "dir:src/infra",
+  "direct": 1,
+  "crossings": [
+    {
+      "target": "file:src/infra/db.ts",
+      "count": 1,
+      "from": [
+        "src/ui/app.ts:2"
+      ]
+    }
+  ],
+  "crossings_more": 0,
+  "paths": [
+    [
+      {
+        "id": "file:src/ui/app.ts",
+        "line": 2
+      },
+      {
+        "id": "file:src/infra/db.ts"
+      }
+    ]
+  ]
+}

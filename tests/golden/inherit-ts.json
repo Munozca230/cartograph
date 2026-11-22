@@ -1,0 +1,50 @@
+{
+  "calls": [
+    "src/app.ts:5 (top level) -> sym:src/circle.ts#Ring [resolved]",
+    "src/app.ts:6 (top level) -> sym:src/mid.ts#Mid [resolved]",
+    "src/app.ts:9 sym:src/app.ts#App.run -> sym:src/shape.ts#Shape.describe [resolved]",
+    "src/app.ts:10 sym:src/app.ts#App.run -> sym:src/root.ts#Root.rootHelper [resolved]",
+    "src/app.ts:12 sym:src/app.ts#App.run -> sym:src/shape.ts#Shape.create [resolved]",
+    "src/circle.ts:9 sym:src/circle.ts#Circle.draw -> sym:src/shape.ts#Shape.describe [resolved]",
+    "src/circle.ts:10 sym:src/circle.ts#Circle.draw -> sym:src/shape.ts#Shape.scale [resolved]",
+    "src/circle.ts:11 sym:src/circle.ts#Circle.draw -> sym:src/shape.ts#Shape.describe [resolved]",
+    "src/circle.ts:17 sym:src/circle.ts#Ring.draw -> sym:src/circle.ts#Circle.draw [resolved]",
+    "src/circle.ts:18 sym:src/circle.ts#Ring.draw -> sym:src/shape.ts#Shape.describe [resolved]"
+  ],
+  "entries": [],
+  "stats": [
+    "src/app.ts: exact 0, resolved 5, heuristic 0, ambiguous 0, unresolved 1",
+    "src/circle.ts: exact 0, resolved 5, heuristic 0, ambiguous 0, unresolved 0",
+    "src/shape.ts: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "src/widget.ts: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 2"
+  ],
+  "supers": [
+    "sym:src/circle.ts#Circle : Shape -> sym:src/shape.ts#Shape [resolved] src/circle.ts:3",
+    "sym:src/circle.ts#Ring : Circle -> sym:src/circle.ts#Circle [exact] src/circle.ts:15",
+    "sym:src/mid.ts#Mid : Root -> sym:src/root.ts#Root [resolved] src/mid.ts:3",
+    "sym:src/shape.ts#Drawable : Named -> sym:src/shape.ts#Named [exact] src/shape.ts:5",
+    "sym:src/shape.ts#Shape : Drawable -> sym:src/shape.ts#Drawable [exact] src/shape.ts:9",
+    "sym:src/widget.ts#Widget : Component -> ? [-] src/widget.ts:3"
+  ],
+  "symbols": [
+    "class sym:src/app.ts#App L4-14 exported",
+    "method sym:src/app.ts#App.run L8-13 exported",
+    "class sym:src/circle.ts#Circle L3-13 exported",
+    "method sym:src/circle.ts#Circle.name L4-6 exported",
+    "method sym:src/circle.ts#Circle.draw L8-12 exported",
+    "class sym:src/circle.ts#Ring L15-20 exported",
+    "method sym:src/circle.ts#Ring.draw L16-19 exported",
+    "class sym:src/mid.ts#Mid L3-5 exported",
+    "method sym:src/mid.ts#Mid.midHelper L4-4 exported",
+    "class sym:src/root.ts#Root L1-3 exported",
+    "method sym:src/root.ts#Root.rootHelper L2-2 exported",
+    "interface sym:src/shape.ts#Named L1-3 exported",
+    "interface sym:src/shape.ts#Drawable L5-7 exported",
+    "class sym:src/shape.ts#Shape L9-22 exported",
+    "method sym:src/shape.ts#Shape.create L10-10 exported",
+    "method sym:src/shape.ts#Shape.describe L12-14 exported",
+    "method sym:src/shape.ts#Shape.scale L16-18 exported",
+    "class sym:src/widget.ts#Widget L3-8 exported",
+    "method sym:src/widget.ts#Widget.draw L4-7 exported"
+  ]
+}

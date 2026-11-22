@@ -1,0 +1,25 @@
+{
+  "calls": [
+    "src/main.c:13 sym:src/main.c#main -> sym:src/main.c#twice [exact]",
+    "src/main.c:13 sym:src/main.c#main -> sym:src/orphan.c#orphan_only [heuristic]",
+    "src/main.c:13 sym:src/main.c#main -> sym:src/util.c#util_add [resolved]",
+    "src/util.c:8 sym:src/util.c#util_add -> sym:src/util.c#clamp [exact]"
+  ],
+  "entries": [
+    "main \"main\" src/main.c:12 -> sym:src/main.c#main"
+  ],
+  "stats": [
+    "src/main.c: exact 1, resolved 1, heuristic 1, ambiguous 0, unresolved 2",
+    "src/util.c: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0"
+  ],
+  "supers": [],
+  "symbols": [
+    "struct sym:src/main.c#point L4-6 exported",
+    "function sym:src/main.c#twice L8-10",
+    "function sym:src/main.c#main L12-15 exported",
+    "function sym:src/orphan.c#orphan_only L1-3 exported",
+    "function sym:src/orphan.c#clamp L5-7",
+    "function sym:src/util.c#clamp L3-5",
+    "function sym:src/util.c#util_add L7-9 exported"
+  ]
+}

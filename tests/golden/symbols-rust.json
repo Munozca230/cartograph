@@ -1,0 +1,43 @@
+{
+  "calls": [
+    "src/main.rs:15 sym:src/main.rs#main -> sym:src/model.rs#Store.new [resolved]",
+    "src/main.rs:16 sym:src/main.rs#main -> sym:src/model.rs#Store.persist_all [heuristic]",
+    "src/main.rs:17 sym:src/main.rs#main -> sym:src/main.rs#helper [exact]",
+    "src/main.rs:18 sym:src/main.rs#main -> sym:src/util.rs#format_name [resolved]",
+    "src/main.rs:19 sym:src/main.rs#main -> sym:src/routes.rs#router [resolved]",
+    "src/model.rs:11 sym:src/model.rs#Store.new -> sym:src/model.rs#Store.init_log [exact]",
+    "src/model.rs:18 sym:src/model.rs#Store.persist_all -> sym:src/model.rs#Store.flush_now [exact]",
+    "src/routes.rs:10 sym:src/routes.rs#health -> sym:src/model.rs#shared [resolved]"
+  ],
+  "entries": [
+    "cli \"index\" src/main.rs:10 -> sym:src/main.rs#Command",
+    "cli \"serve-all\" src/main.rs:11 -> sym:src/main.rs#Command",
+    "main \"main\" src/main.rs:14 -> sym:src/main.rs#main",
+    "http \"GET /health\" src/routes.rs:6 -> sym:src/routes.rs#health"
+  ],
+  "stats": [
+    "src/main.rs: exact 1, resolved 3, heuristic 1, ambiguous 0, unresolved 1",
+    "src/model.rs: exact 2, resolved 0, heuristic 0, ambiguous 0, unresolved 2",
+    "src/routes.rs: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 4",
+    "src/util.rs: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1"
+  ],
+  "supers": [
+    "sym:src/model.rs#Store : fmt::Display -> ? [-] src/model.rs:26"
+  ],
+  "symbols": [
+    "enum sym:src/main.rs#Command L9-12",
+    "function sym:src/main.rs#main L14-21",
+    "function sym:src/main.rs#helper L23-23",
+    "const sym:src/model.rs#LIMIT L3-3 exported",
+    "struct sym:src/model.rs#Store L5-7 exported",
+    "method sym:src/model.rs#Store.new L10-13 exported",
+    "method sym:src/model.rs#Store.init_log L15-15",
+    "method sym:src/model.rs#Store.persist_all L17-19 exported",
+    "method sym:src/model.rs#Store.flush_now L21-23",
+    "method sym:src/model.rs#Store.fmt L27-29 exported",
+    "function sym:src/model.rs#shared L32-34 exported",
+    "function sym:src/routes.rs#router L5-7 exported",
+    "function sym:src/routes.rs#health L9-11",
+    "function sym:src/util.rs#format_name L1-3 exported"
+  ]
+}

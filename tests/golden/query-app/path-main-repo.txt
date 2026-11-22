@@ -1,0 +1,5 @@
+src/main.ts → src/core/repo.ts: shortest path 3 steps (path:line = the import)
+paths:
+  src/main.ts:2 → src/infra/db.ts:1 → src/core/model.ts:1 → src/core/repo.ts
+  src/main.ts:1 → src/ui/app.ts:1 → src/core/service.ts:2 → src/core/repo.ts
+  src/main.ts:1 → src/ui/app.ts:2 → src/infra/db.ts:1 → src/core/model.ts:1 → src/core/repo.ts

@@ -1,0 +1,88 @@
+{
+  "root": "repo:",
+  "repo": "symbols-rust",
+  "files": 5,
+  "loc": 64,
+  "languages": [
+    {
+      "lang": "rust",
+      "files": 4,
+      "loc": 57
+    }
+  ],
+  "tree": [
+    {
+      "id": "dir:src",
+      "level": 1,
+      "files": 4,
+      "loc": 57,
+      "kind": "code",
+      "findings": 0
+    }
+  ],
+  "tree_more": 0,
+  "loose_files": 1,
+  "entries": [
+    {
+      "id": "file:src/main.rs",
+      "why": "crate root"
+    }
+  ],
+  "entries_more": 0,
+  "hubs": [
+    {
+      "id": "file:src/model.rs",
+      "n": 2
+    }
+  ],
+  "libraries": [
+    {
+      "id": "external:rust:std",
+      "n": 2
+    },
+    {
+      "id": "external:crates:axum",
+      "n": 1
+    },
+    {
+      "id": "external:crates:clap",
+      "n": 1
+    }
+  ],
+  "libraries_more": 0,
+  "findings": {
+    "total": 0,
+    "violations": 0,
+    "by_severity": {},
+    "by_kind": {}
+  },
+  "unresolved_imports": 0,
+  "flows": {
+    "total": 4,
+    "by_kind": {
+      "cli": 2,
+      "http": 1,
+      "main": 1
+    },
+    "first": [
+      {
+        "kind": "main",
+        "name": "main",
+        "at": "src/main.rs:14",
+        "target": "sym:src/main.rs#main"
+      },
+      {
+        "kind": "http",
+        "name": "GET /health",
+        "at": "src/routes.rs:6",
+        "target": "sym:src/routes.rs#health"
+      },
+      {
+        "kind": "cli",
+        "name": "index",
+        "at": "src/main.rs:10",
+        "target": "sym:src/main.rs#Command"
+      }
+    ]
+  }
+}

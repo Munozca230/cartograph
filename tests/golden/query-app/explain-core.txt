@@ -1,0 +1,16 @@
+dir src/core/ · 5 files · 22 LOC · layer core
+imports (2 files):
+  src/ 1: only-tested.ts
+  src/ui/ 1: widgets.ts
+imported by (6 files):
+  src/ 2: big.ts, dead.ts
+  src/ui/ 2: app.ts, widgets.ts
+  scripts/ 1: seed.ts
+  src/infra/ 1: db.ts
+findings:
+  [violation] layer_violation:core->ui: layer core depends on ui (not in its allow list): 1 import
+  [violation] cycle:file:src/core/model.ts: 3 files tangled in a cycle (shortest loop: repo.ts → service.ts)
+  [violation] folder_cycle:dir:src/core: folders src/core/ and src/ui/ depend on each other
+symbols (5, exported 5) → `cartograph query symbols src/core/`
+git: not indexed (run `cartograph index` without --no-git)
+note: none

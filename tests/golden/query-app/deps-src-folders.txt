@@ -1,0 +1,17 @@
+src/ui/ · folder level · depth 3 (:N = import line; (N) = file pairs; a folder = its own files)
+uses:
+  src/core/ (2)
+    src/ (1)
+      src/core/ (seen)
+      src/infra/ (seen)
+  src/infra/ (1)
+    src/core/ (seen)
+used by:
+  src/ (2)
+    src/core/ (seen)
+    tests/ (1)
+  src/core/ (1)
+    src/ (seen)
+    src/infra/ (2)
+      src/ (seen)
+    scripts/ (1)

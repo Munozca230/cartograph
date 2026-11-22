@@ -1,0 +1,8 @@
+/target
+**/node_modules/
+/web/dist/
+.cartograph/
+# Data dir of the former project name (codevgraph).
+.codevgraph/
+# Local release archives (scripts/package.ps1).
+/dist/

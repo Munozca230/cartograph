@@ -1,0 +1,548 @@
+# Eval suite of the cartograph MCP tools: `cargo run -p cartograph-cli -- eval`
+# (or `cartograph eval evals/cases.toml`). See docs/mcp.md#evals.
+#
+# Each case is a question an agent would ask, the tool call it would make, facts the
+# answer must contain (`contains`, optionally `in_order`) or must not (`not_contains`),
+# and a token budget (default: the tool's contract). `error` expects a tool error code.
+#
+# Why these cases do not rot:
+# - Cases on this repository (`self`) assert architectural invariants of the workspace
+#   (which crate depends on which, where the binary starts, what a core file is), not
+#   counts, line numbers or anything a normal edit changes. They run on the live tree, so
+#   they also catch an indexer regression on today's code.
+# - Exact facts (counts, rule violations, rankings) live in the synthetic fixtures under
+#   tests/fixtures, copied to a temp dir outside any git repository before indexing.
+# - Git-dependent tools (diff, check with base, hotspots) run on repositories built at run
+#   time from the commits below, with fixed dates and people: no dependence on this
+#   repository's history, branch or clone depth.
+
+[repos.self]
+path = ".."
+
+[repos.query-app]
+fixture = "../tests/fixtures/query-app"
+
+[repos.symbols-ts]
+fixture = "../tests/fixtures/symbols-ts"
+
+[repos.inherit-ts]
+fixture = "../tests/fixtures/inherit-ts"
+
+[repos.godot]
+fixture = "../tests/fixtures/godot-basic"
+
+# A layered app. main: an old cycle and an old ui -> db violation. Branch feature: a new
+# cycle (model <-> service) and a new core -> ui import. Uncommitted: an unresolved import.
+[repos.layered]
+
+[[repos.layered.commits]]
+message = "base"
+
+[repos.layered.commits.files]
+"cartograph.toml" = '''
+[[layers]]
+name = "ui"
+paths = ["src/ui/**"]
+forbid = ["db"]
+
+[[layers]]
+name = "core"
+paths = ["src/core/**"]
+forbid = ["ui"]
+
+[[layers]]
+name = "db"
+paths = ["src/db/**"]
+
+[rules]
+no_cycles = true
+'''
+"src/db/store.ts" = '''
+export const store = 1;
+'''
+"src/core/model.ts" = '''
+import { store } from "../db/store";
+export const model = store;
+'''
+"src/ui/view.ts" = '''
+import { model } from "../core/model";
+import { store } from "../db/store";
+export const view = [model, store];
+'''
+"src/ui/widget.ts" = '''
+export const widget = 2;
+'''
+"src/legacy/left.ts" = '''
+import { right } from "./right";
+export const left = () => right;
+'''
+"src/legacy/right.ts" = '''
+import { left } from "./left";
+export const right = () => left;
+'''
+
+[[repos.layered.commits]]
+message = "feature: pricing service"
+branch = "feature"
+
+[repos.layered.commits.files]
+"src/core/service.ts" = '''
+import { model } from "./model";
+import { widget } from "../ui/widget";
+export const service = [model, widget];
+'''
+"src/core/model.ts" = '''
+import { store } from "../db/store";
+import { service } from "./service";
+export const model = [store, service];
+'''
+
+[repos.layered.worktree]
+"src/ui/panel.ts" = '''
+import { gone } from "./missing";
+export const panel = gone;
+'''
+
+# Churn: src/hot.ts changes in all 5 commits and nests deeper each time; src/warm.ts is
+# in 3 commits; src/cold.ts in 1.
+[repos.churn]
+
+[[repos.churn.commits]]
+message = "start"
+
+[repos.churn.commits.files]
+"src/hot.ts" = '''
+export function hot(x: number) {
+  if (x > 0) {
+    return 1;
+  }
+  return 0;
+}
+'''
+"src/warm.ts" = '''
+export function warm(x: number) {
+  return x;
+}
+'''
+"src/cold.ts" = '''
+export const cold = 1;
+'''
+
+[[repos.churn.commits]]
+message = "hot 2"
+
+[repos.churn.commits.files]
+"src/hot.ts" = '''
+export function hot(x: number) {
+  if (x > 0) {
+    for (let i = 0; i < x; i++) {
+      if (i % 2) {
+        return i;
+      }
+    }
+  }
+  return 0;
+}
+'''
+"src/warm.ts" = '''
+export function warm(x: number) {
+  if (x) {
+    return x;
+  }
+  return 0;
+}
+'''
+
+[[repos.churn.commits]]
+message = "hot 3"
+
+[repos.churn.commits.files]
+"src/hot.ts" = '''
+export function hot(x: number) {
+  if (x > 0) {
+    for (let i = 0; i < x; i++) {
+      if (i % 2) {
+        while (i > 3) {
+          return i;
+        }
+      }
+    }
+  }
+  return 0;
+}
+'''
+
+[[repos.churn.commits]]
+message = "hot 4"
+
+[repos.churn.commits.files]
+"src/hot.ts" = '''
+export function hot(x: number) {
+  if (x > 0) {
+    for (let i = 0; i < x; i++) {
+      if (i % 2) {
+        while (i > 3) {
+          if (i > 9) {
+            return i;
+          }
+          i--;
+        }
+      }
+    }
+  }
+  return 0;
+}
+'''
+"src/warm.ts" = '''
+export function warm(x: number) {
+  if (x) {
+    return x + 1;
+  }
+  return 0;
+}
+'''
+
+[[repos.churn.commits]]
+message = "hot 5"
+
+[repos.churn.commits.files]
+"src/hot.ts" = '''
+export function hot(x: number) {
+  if (x > 0) {
+    for (let i = 0; i < x; i++) {
+      if (i % 2) {
+        while (i > 3) {
+          if (i > 9) {
+            switch (i) {
+              case 10:
+                return i;
+            }
+          }
+          i--;
+        }
+      }
+    }
+  }
+  return 0;
+}
+'''
+
+# ---------------------------------------------------------------- overview
+
+[[case]]
+id = "overview-self"
+repo = "self"
+question = "I just opened this repo: what is it made of?"
+tool = "overview"
+contains = ["crates/", "web/", "rust", "most depended on", "crates/cartograph-core/src/lib.rs"]
+not_contains = ["target/", "node_modules"]
+
+[[case]]
+id = "overview-crates"
+repo = "self"
+question = "Which crates does the workspace have?"
+tool = "overview"
+args = { path = "crates", depth = 2 }
+contains = [
+  "crates/cartograph-core/",
+  "crates/cartograph-index/",
+  "crates/cartograph-query/",
+  "crates/cartograph-mcp/",
+  "crates/cartograph-cli/",
+  "crates/cartograph-server/",
+]
+
+[[case]]
+id = "overview-fixture"
+repo = "query-app"
+question = "What is in this small app and is anything wrong with it?"
+tool = "overview"
+contains = ["src/core/", "src/ui/", "src/infra/", "src/main.ts", "src/core/model.ts ←6", "layer_violation 2"]
+
+# ---------------------------------------------------------------- explain
+
+[[case]]
+id = "explain-core-lib"
+repo = "self"
+question = "What is crates/cartograph-core/src/lib.rs and who depends on it?"
+tool = "explain"
+args = { node = "crates/cartograph-core/src/lib.rs" }
+contains = ["crate root", "imported by", "crates/cartograph-index/", "crates/cartograph-query/", "crates/cartograph-mcp/src/"]
+
+[[case]]
+id = "explain-typo"
+repo = "self"
+question = "Explain the store file (the agent misspells the path)."
+tool = "explain"
+args = { node = "crates/cartograph-core/src/stor.rs" }
+error = "unknown_node"
+contains = ["crates/cartograph-core/src/store.rs"]
+
+[[case]]
+id = "explain-history"
+repo = "churn"
+question = "How often does src/hot.ts change?"
+tool = "explain"
+args = { node = "src/hot.ts" }
+contains = ["5 commits", "Eval Author"]
+
+# ---------------------------------------------------------------- deps
+
+[[case]]
+id = "deps-mcp-uses"
+repo = "self"
+question = "What does the MCP crate depend on? It must not depend on the CLI."
+tool = "deps"
+args = { node = "crates/cartograph-mcp", level = "folder" }
+contains = ["crates/cartograph-query/src/", "crates/cartograph-core/src/", "crates:rmcp"]
+not_contains = ["crates/cartograph-cli/"]
+
+[[case]]
+id = "deps-core-is-a-leaf"
+repo = "self"
+question = "Does cartograph-core depend on any other crate of the workspace?"
+tool = "deps"
+args = { node = "crates/cartograph-core", level = "folder" }
+contains = ["nothing in the repo", "crates:rusqlite"]
+not_contains = ["crates/cartograph-index", "crates/cartograph-query", "crates/cartograph-mcp"]
+
+[[case]]
+id = "deps-cli-main-uses-mcp"
+repo = "self"
+question = "Which files does the CLI entry point use? (it starts the MCP server and the HTTP server)"
+tool = "deps"
+args = { node = "crates/cartograph-cli/src/main.rs" }
+contains = ["crates/cartograph-mcp/src/lib.rs", "crates/cartograph-server/src/lib.rs"]
+
+[[case]]
+id = "deps-ui-app"
+repo = "query-app"
+question = "What does src/ui/app.ts import?"
+tool = "deps"
+args = { node = "src/ui/app.ts" }
+contains = ["src/core/service.ts", "src/infra/db.ts"]
+
+# ---------------------------------------------------------------- impact
+
+[[case]]
+id = "impact-budget-tests"
+repo = "self"
+question = "I will change the token budget helpers: what can break and which tests do I run?"
+tool = "impact"
+args = { nodes = ["crates/cartograph-query/src/budget.rs"] }
+contains = ["crates/cartograph-query/src/", "crates/cartograph-mcp/src/", "tests to run", "crates/cartograph-query/tests/budget.rs"]
+
+[[case]]
+id = "impact-engine-reaches-cli"
+repo = "self"
+question = "I will change the MCP engine's Options: what can break?"
+tool = "impact"
+args = { nodes = ["crates/cartograph-mcp/src/engine.rs"] }
+contains = ["crates/cartograph-cli/src/main.rs"]
+
+[[case]]
+id = "impact-fixture-tests"
+repo = "query-app"
+question = "Which tests do I run after changing src/core/model.ts?"
+tool = "impact"
+args = { nodes = ["src/core/model.ts"] }
+contains = ["src/core/service.test.ts", "src/ui/app.spec.ts", "tests/e2e.test.ts", "scripts/seed.ts"]
+
+# ---------------------------------------------------------------- find
+
+[[case]]
+id = "find-snapshot"
+repo = "self"
+question = "Where is the snapshot code?"
+tool = "find"
+args = { query = "snapshot" }
+contains = ["crates/cartograph-index/src/git/snapshot.rs", "crates/cartograph-server/src/snapshot.rs"]
+
+[[case]]
+id = "find-sym-run-stdio"
+repo = "self"
+question = "Where is the function that runs the stdio MCP server?"
+tool = "find"
+args = { query = "run_stdio", kind = "sym" }
+contains = ["crates/cartograph-mcp/src/lib.rs:", "run_stdio"]
+
+# ---------------------------------------------------------------- path
+
+[[case]]
+id = "path-cli-to-store"
+repo = "self"
+question = "Why does the CLI entry point depend on the SQLite store?"
+tool = "path"
+args = { from = "crates/cartograph-cli/src/main.rs", to = "crates/cartograph-core/src/store.rs" }
+contains = ["crates/cartograph-cli/src/main.rs", "crates/cartograph-core/src/lib.rs", "crates/cartograph-core/src/store.rs"]
+not_contains = ["does not depend"]
+
+[[case]]
+id = "path-cli-to-mcp"
+repo = "self"
+question = "How does the CLI entry point reach the MCP crate?"
+tool = "path"
+args = { from = "crates/cartograph-cli/src/main.rs", to = "crates/cartograph-mcp/src/lib.rs" }
+contains = ["crates/cartograph-mcp/src/lib.rs"]
+not_contains = ["does not depend"]
+
+# ---------------------------------------------------------------- symbols / callers
+
+[[case]]
+id = "symbols-guard"
+repo = "self"
+question = "What does the MCP guard module define?"
+tool = "symbols"
+args = { node = "crates/cartograph-mcp/src/guard.rs" }
+contains = ["enum GuardError", "struct Guard", "Guard.new", "Guard.run"]
+
+[[case]]
+id = "callers-index-to-store"
+repo = "self"
+question = "Before changing index_to_store: who calls it in production code?"
+tool = "callers"
+args = { symbol = "index_to_store" }
+contains = ["crates/cartograph-cli/src/main.rs", "crates/cartograph-mcp/src/engine.rs"]
+
+[[case]]
+id = "callers-guard-run"
+repo = "self"
+question = "Before changing Guard::run: who calls it?"
+tool = "callers"
+args = { symbol = "Guard.run" }
+contains = ["crates/cartograph-mcp/src/tools.rs"]
+
+[[case]]
+id = "callers-fixture-helper"
+repo = "symbols-ts"
+question = "Who calls helper()?"
+tool = "callers"
+args = { symbol = "helper" }
+contains = ["src/app.ts", "src/cli.ts"]
+
+[[case]]
+id = "callers-ambiguous"
+repo = "symbols-ts"
+question = "Who calls dup()? (two functions share the name)"
+tool = "callers"
+args = { symbol = "dup" }
+error = "ambiguous"
+contains = ["sym:src/dup-a.ts#dup", "sym:src/dup-b.ts#dup"]
+
+[[case]]
+id = "callers-inherited-method"
+repo = "inherit-ts"
+question = "Before changing Shape.describe(): who calls it, also through subclasses that inherit it?"
+tool = "callers"
+args = { symbol = "Shape.describe" }
+contains = ["src/circle.ts", "Circle.draw()", "Ring.draw()", "src/app.ts", "App.run()"]
+not_contains = ["Widget"]
+
+[[case]]
+id = "hierarchy-of-a-base-class"
+repo = "inherit-ts"
+question = "What does Circle extend, and which classes extend it?"
+tool = "hierarchy"
+args = { symbol = "Circle" }
+contains = ["Shape", "src/shape.ts:9", "Drawable", "Named", "Ring", "src/circle.ts:15"]
+in_order = true
+
+# ---------------------------------------------------------------- entries
+
+[[case]]
+id = "entries-cli-commands"
+repo = "self"
+question = "Which CLI commands does cartograph have and where are they defined?"
+tool = "entries"
+args = { kind = "cli" }
+contains = ["index", "query", "crates/cartograph-cli/src/main.rs"]
+
+[[case]]
+id = "entries-main-no-fixtures"
+repo = "self"
+question = "Where does the program start? (test fixtures are not programs of this repo)"
+tool = "entries"
+args = { kind = "main" }
+contains = ["crates/cartograph-cli/src/main.rs"]
+not_contains = ["tests/fixtures/"]
+
+[[case]]
+id = "entries-http-and-cli"
+repo = "symbols-ts"
+question = "Where do requests and commands enter this app?"
+tool = "entries"
+contains = ["GET /users/:id", "src/server.ts", "build", "src/cli.ts"]
+
+[[case]]
+id = "entries-godot"
+repo = "godot"
+question = "What is the main scene and which autoloads exist?"
+tool = "entries"
+contains = ["game/scenes/main.tscn", "game/autoload/events.gd"]
+
+# ---------------------------------------------------------------- findings / check
+
+[[case]]
+id = "findings-layer-violations"
+repo = "query-app"
+question = "Which imports break the layer rules?"
+tool = "findings"
+args = { kind = ["layer_violation"] }
+contains = ["src/core/util.ts:1 → src/ui/widgets.ts", "src/ui/app.ts:2 → src/infra/db.ts"]
+not_contains = ["orphan"]
+
+[[case]]
+id = "findings-orphans"
+repo = "query-app"
+question = "Is there dead code?"
+tool = "findings"
+args = { kind = ["orphan"] }
+contains = ["src/dead.ts", "src/only-tested.ts"]
+not_contains = ["orphan:file:src/main.ts"]
+
+[[case]]
+id = "check-fixture"
+repo = "query-app"
+question = "Does the code respect cartograph.toml?"
+tool = "check"
+contains = ["FAIL", "layer_violation:core->ui", "fan_out_limit:file:src/big.ts", "cycle"]
+
+[[case]]
+id = "check-base-new-only"
+repo = "layered"
+question = "Before finishing: what does my branch break that main did not?"
+tool = "check"
+args = { base = "main" }
+contains = [
+  "FAIL: 3 new rule violations",
+  "layer_violation:core->ui",
+  "src/core/service.ts:2 → src/ui/widget.ts",
+  "cycle:file:src/core/model.ts",
+  "existing (in the base too, not failing): 2",
+  "cycle:file:src/legacy/left.ts",
+]
+not_contains = ["[VIOLATION] cycle:file:src/legacy", "[VIOLATION] layer_violation:ui->db"]
+
+# ---------------------------------------------------------------- diff / hotspots
+
+[[case]]
+id = "diff-branch"
+repo = "layered"
+question = "What does this branch change in the architecture?"
+tool = "diff"
+args = { base = "main" }
+contains = [
+  "added src/core/service.ts, src/ui/panel.ts",
+  "rule violations introduced: 3",
+  "+ core → ui",
+  "src/ui/panel.ts:1 \"./missing\"",
+]
+not_contains = ["[VIOLATION] layer_violation:ui->db"]
+
+[[case]]
+id = "hotspots-churn"
+repo = "churn"
+question = "Which files should I review first?"
+tool = "hotspots"
+contains = ["src/hot.ts", "src/warm.ts", "src/cold.ts"]
+in_order = true

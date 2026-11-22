@@ -1,0 +1,8 @@
+3 findings (info 1, warning 2): orphan 3
+[warning] orphan:file:src/big.ts
+  nothing depends on it (dead file? it uses 5 files)
+[warning] orphan:file:src/dead.ts
+  nothing depends on it (dead file? it uses 1 file)
+[info] orphan:file:src/only-tested.ts
+  only tests use it (1 test): dead outside tests?
+    used by test src/core/service.test.ts

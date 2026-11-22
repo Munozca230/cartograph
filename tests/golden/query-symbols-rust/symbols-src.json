@@ -1,0 +1,177 @@
+{
+  "node": "dir:src",
+  "files": 4,
+  "total": 14,
+  "exported": 8,
+  "calls_out": {
+    "exact": 3,
+    "resolved": 4,
+    "heuristic": 1,
+    "ambiguous": 0,
+    "unresolved": 8
+  },
+  "groups": [
+    {
+      "file": "file:src/model.rs",
+      "total": 8,
+      "symbols": [
+        {
+          "id": "sym:src/model.rs#LIMIT",
+          "kind": "const",
+          "line": 3,
+          "end_line": 3,
+          "exported": true,
+          "callers": 0
+        },
+        {
+          "id": "sym:src/model.rs#Store",
+          "kind": "struct",
+          "line": 5,
+          "end_line": 7,
+          "exported": true,
+          "callers": 0
+        },
+        {
+          "id": "sym:src/model.rs#Store.new",
+          "kind": "method",
+          "line": 10,
+          "end_line": 13,
+          "exported": true,
+          "callers": 1
+        },
+        {
+          "id": "sym:src/model.rs#Store.init_log",
+          "kind": "method",
+          "line": 15,
+          "end_line": 15,
+          "callers": 1
+        },
+        {
+          "id": "sym:src/model.rs#Store.persist_all",
+          "kind": "method",
+          "line": 17,
+          "end_line": 19,
+          "exported": true,
+          "callers": 1
+        },
+        {
+          "id": "sym:src/model.rs#Store.flush_now",
+          "kind": "method",
+          "line": 21,
+          "end_line": 23,
+          "callers": 1
+        },
+        {
+          "id": "sym:src/model.rs#Store.fmt",
+          "kind": "method",
+          "line": 27,
+          "end_line": 29,
+          "exported": true,
+          "callers": 0
+        },
+        {
+          "id": "sym:src/model.rs#shared",
+          "kind": "function",
+          "line": 32,
+          "end_line": 34,
+          "exported": true,
+          "callers": 1
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/main.rs",
+      "total": 3,
+      "symbols": [
+        {
+          "id": "sym:src/main.rs#Command",
+          "kind": "enum",
+          "line": 9,
+          "end_line": 12,
+          "callers": 0
+        },
+        {
+          "id": "sym:src/main.rs#main",
+          "kind": "function",
+          "line": 14,
+          "end_line": 21,
+          "callers": 0
+        },
+        {
+          "id": "sym:src/main.rs#helper",
+          "kind": "function",
+          "line": 23,
+          "end_line": 23,
+          "callers": 1
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/routes.rs",
+      "total": 2,
+      "symbols": [
+        {
+          "id": "sym:src/routes.rs#router",
+          "kind": "function",
+          "line": 5,
+          "end_line": 7,
+          "exported": true,
+          "callers": 1
+        },
+        {
+          "id": "sym:src/routes.rs#health",
+          "kind": "function",
+          "line": 9,
+          "end_line": 11,
+          "callers": 0
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/util.rs",
+      "total": 1,
+      "symbols": [
+        {
+          "id": "sym:src/util.rs#format_name",
+          "kind": "function",
+          "line": 1,
+          "end_line": 3,
+          "exported": true,
+          "callers": 1
+        }
+      ],
+      "more": 0
+    }
+  ],
+  "groups_more": 0,
+  "entries": [
+    {
+      "kind": "cli",
+      "name": "index",
+      "at": "src/main.rs:10",
+      "target": "sym:src/main.rs#Command"
+    },
+    {
+      "kind": "cli",
+      "name": "serve-all",
+      "at": "src/main.rs:11",
+      "target": "sym:src/main.rs#Command"
+    },
+    {
+      "kind": "main",
+      "name": "main",
+      "at": "src/main.rs:14",
+      "target": "sym:src/main.rs#main"
+    },
+    {
+      "kind": "http",
+      "name": "GET /health",
+      "at": "src/routes.rs:6",
+      "target": "sym:src/routes.rs#health"
+    }
+  ],
+  "entries_more": 0
+}

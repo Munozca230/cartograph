@@ -1,0 +1,3 @@
+package tested
+
+func OnlyTests() {}

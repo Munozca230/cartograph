@@ -1,0 +1,27 @@
+8 findings (5 violations, error 5, info 1, warning 2): cycle 1, fan_out_limit 1, folder_cycle 1, layer_violation 2, orphan 3
+[VIOLATION] layer_violation:core->ui
+  layer core depends on ui (not in its allow list): 1 import
+    src/core/util.ts:1 → src/ui/widgets.ts
+[VIOLATION] layer_violation:ui->infra
+  layer ui depends on infra (forbidden): 1 import
+    src/ui/app.ts:2 → src/infra/db.ts
+[VIOLATION] fan_out_limit:file:src/big.ts
+  src/big.ts depends on 5 files (max_fan_out = 4)
+    src/core/ 4
+    src/ui/ 1
+[VIOLATION] cycle:file:src/core/model.ts
+  3 files tangled in a cycle (shortest loop: repo.ts → service.ts)
+    src/core/repo.ts:1 → src/core/service.ts
+    src/core/service.ts:2 → src/core/repo.ts
+[VIOLATION] folder_cycle:dir:src/core
+  folders src/core/ and src/ui/ depend on each other
+    src/core/ → src/ui/ (1 file pair, e.g. src/core/util.ts:1 → src/ui/widgets.ts)
+    src/ui/ → src/core/ (1 file pair, e.g. src/ui/app.ts:1 → src/core/service.ts)
+    +1 more
+[warning] orphan:file:src/big.ts
+  nothing depends on it (dead file? it uses 5 files)
+[warning] orphan:file:src/dead.ts
+  nothing depends on it (dead file? it uses 1 file)
+[info] orphan:file:src/only-tested.ts
+  only tests use it (1 test): dead outside tests?
+    used by test src/core/service.test.ts

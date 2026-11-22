@@ -1,0 +1,6 @@
+1 findings (info 1): hidden_coupling 1
+[info] hidden_coupling:file:src/client.ts->file:src/server.ts
+  hidden coupling: src/client.ts and src/server.ts changed together in 10 commits, no dependency either way
+    100% of the 10 commits of src/client.ts also change server.ts
+    91% of the 11 commits of src/server.ts also change client.ts
+    +2 more

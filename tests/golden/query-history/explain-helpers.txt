@@ -1,0 +1,10 @@
+file src/helpers.ts · typescript · 7 LOC · code
+imports: none
+imported by: none
+findings:
+  [warning] orphan:file:src/helpers.ts: nothing depends on it and it depends on nothing (dead file?)
+symbols (1, exported 1): function util L1-5 pub
+git: 3 commits (+7 −0 lines), 0 in the last 90 days · first 2025-01-01 · last 2025-02-02
+owners: Ada Lovelace 67%, Grace Hopper 33% · bus factor 1 (50%), 2 (80%)
+changes with: no file twice or more
+note: none

@@ -1,0 +1,5 @@
+# Link the MSVC C runtime statically so `cartograph.exe` runs on a clean Windows
+# machine without the VC++ Redistributable (no VCRUNTIME140.dll dependency).
+# `cc` sees the target feature and builds the C grammars and SQLite with /MT too.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

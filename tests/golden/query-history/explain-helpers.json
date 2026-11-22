@@ -1,0 +1,82 @@
+{
+  "id": "file:src/helpers.ts",
+  "node": "file",
+  "lang": "typescript",
+  "loc": 7,
+  "files": 1,
+  "kind": "code",
+  "layer": null,
+  "entry": null,
+  "unresolved": 0,
+  "imports": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "imported_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "tested_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "libraries": [],
+  "libraries_more": 0,
+  "subfolders": [],
+  "subfolders_more": 0,
+  "findings": [
+    {
+      "id": "orphan:file:src/helpers.ts",
+      "severity": "warning",
+      "title": "nothing depends on it and it depends on nothing (dead file?)"
+    }
+  ],
+  "findings_more": 0,
+  "symbols": {
+    "total": 1,
+    "exported": 1,
+    "main": [
+      {
+        "id": "sym:src/helpers.ts#util",
+        "kind": "function",
+        "line": 1,
+        "end_line": 5,
+        "exported": true,
+        "callers": 0
+      }
+    ],
+    "more": 0
+  },
+  "git": {
+    "commits": 3,
+    "added": 7,
+    "removed": 0,
+    "recent": 0,
+    "window_days": 90,
+    "first_change": "2025-01-01",
+    "last_change": "2025-02-02",
+    "authors": 2,
+    "owners": [
+      {
+        "name": "Ada Lovelace",
+        "commits": 2,
+        "share": 67
+      },
+      {
+        "name": "Grace Hopper",
+        "commits": 1,
+        "share": 33
+      }
+    ],
+    "bus_factor_50": 1,
+    "bus_factor_80": 2,
+    "co_change": [],
+    "co_change_more": 0,
+    "partial": false
+  },
+  "git_note": null,
+  "annotation": null
+}

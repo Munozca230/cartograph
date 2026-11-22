@@ -1,0 +1,31 @@
+{
+  "summary": {
+    "total": 1,
+    "violations": 0,
+    "by_severity": {
+      "info": 1
+    },
+    "by_kind": {
+      "hidden_coupling": 1
+    }
+  },
+  "items": [
+    {
+      "id": "hidden_coupling:file:src/client.ts->file:src/server.ts",
+      "kind": "hidden_coupling",
+      "severity": "info",
+      "violation": false,
+      "title": "hidden coupling: src/client.ts and src/server.ts changed together in 10 commits, no dependency either way",
+      "nodes": [
+        "file:src/client.ts",
+        "file:src/server.ts"
+      ],
+      "evidence": [
+        "100% of the 10 commits of src/client.ts also change server.ts",
+        "91% of the 11 commits of src/server.ts also change client.ts"
+      ],
+      "evidence_more": 2
+    }
+  ],
+  "more": 0
+}

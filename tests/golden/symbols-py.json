@@ -1,0 +1,39 @@
+{
+  "calls": [
+    "app.py:14 sym:app.py#item -> sym:pkg/core.py#Engine [resolved]",
+    "app.py:15 sym:app.py#item -> sym:pkg/core.py#Engine.drain_queue [heuristic]",
+    "app.py:17 sym:app.py#item -> sym:pkg/core.py#compute [resolved]",
+    "app.py:19 sym:app.py#item -> sym:pkg/core.py#compute [resolved]",
+    "app.py:27 (top level) -> sym:app.py#main [exact]",
+    "pkg/core.py:6 sym:pkg/core.py#compute -> sym:pkg/core.py#_clamp [exact]",
+    "pkg/core.py:15 sym:pkg/core.py#Engine.run -> sym:pkg/core.py#Engine.step_once [exact]",
+    "pkg/core.py:18 sym:pkg/core.py#Engine.step_once -> sym:pkg/core.py#compute [exact]",
+    "star.py:5 sym:star.py#total -> sym:pkg/core.py#compute [resolved]"
+  ],
+  "entries": [
+    "http \"GET /items/<item_id>\" app.py:13 -> sym:app.py#item",
+    "main \"__main__\" app.py:26 -> file:app.py",
+    "cli \"hello\" cli.py:5 -> sym:cli.py#hello"
+  ],
+  "stats": [
+    "app.py: exact 1, resolved 3, heuristic 1, ambiguous 0, unresolved 5",
+    "cli.py: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 2",
+    "pkg/core.py: exact 3, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "star.py: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 1"
+  ],
+  "supers": [],
+  "symbols": [
+    "function sym:app.py#item L13-19 exported",
+    "function sym:app.py#main L22-23 exported",
+    "function sym:cli.py#hello L5-6 exported",
+    "const sym:pkg/core.py#MAX_SIZE L1-1 exported",
+    "function sym:pkg/core.py#compute L5-6 exported",
+    "function sym:pkg/core.py#_clamp L9-10",
+    "class sym:pkg/core.py#Engine L13-21 exported",
+    "method sym:pkg/core.py#Engine.run L14-15 exported",
+    "method sym:pkg/core.py#Engine.step_once L17-18 exported",
+    "method sym:pkg/core.py#Engine.drain_queue L20-21 exported",
+    "function sym:pkg/other.py#compute L1-2 exported",
+    "function sym:star.py#total L4-5 exported"
+  ]
+}

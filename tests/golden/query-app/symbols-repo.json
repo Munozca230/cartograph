@@ -1,0 +1,41 @@
+{
+  "node": "file:src/core/repo.ts",
+  "files": 1,
+  "total": 2,
+  "exported": 2,
+  "calls_out": {
+    "exact": 0,
+    "resolved": 0,
+    "heuristic": 0,
+    "ambiguous": 0,
+    "unresolved": 0
+  },
+  "groups": [
+    {
+      "file": "file:src/core/repo.ts",
+      "total": 2,
+      "symbols": [
+        {
+          "id": "sym:src/core/repo.ts#save",
+          "kind": "function",
+          "line": 3,
+          "end_line": 5,
+          "exported": true,
+          "callers": 1
+        },
+        {
+          "id": "sym:src/core/repo.ts#load",
+          "kind": "function",
+          "line": 6,
+          "end_line": 8,
+          "exported": true,
+          "callers": 1
+        }
+      ],
+      "more": 0
+    }
+  ],
+  "groups_more": 0,
+  "entries": [],
+  "entries_more": 0
+}

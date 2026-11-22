@@ -1,0 +1,27 @@
+{
+  "calls": [
+    "src/main.cpp:6 sym:src/main.cpp#run -> sym:src/shape.cpp#Shape.make [resolved]",
+    "src/main.cpp:7 sym:src/main.cpp#run -> sym:src/shape.cpp#Shape.area [heuristic]",
+    "src/shape.cpp:4 sym:src/shape.cpp#Shape.area -> sym:src/shape.hpp#Shape.sides [resolved]",
+    "src/shape.cpp:8 sym:src/shape.cpp#Shape.make -> sym:src/shape.hpp#Shape [resolved]",
+    "src/shape.hpp:7 sym:src/shape.hpp#Shape.sides -> sym:src/shape.hpp#Shape.count [exact]"
+  ],
+  "entries": [
+    "main \"main\" src/main.cpp:11 -> sym:src/main.cpp#main"
+  ],
+  "stats": [
+    "src/main.cpp: exact 0, resolved 1, heuristic 1, ambiguous 0, unresolved 3",
+    "src/shape.cpp: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 0",
+    "src/shape.hpp: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0"
+  ],
+  "supers": [],
+  "symbols": [
+    "function sym:src/main.cpp#run L5-8 exported",
+    "function sym:src/main.cpp#main L11-14 exported",
+    "method sym:src/shape.cpp#Shape.area L3-5 exported",
+    "method sym:src/shape.cpp#Shape.make L7-9 exported",
+    "class sym:src/shape.hpp#Shape L3-11 exported",
+    "method sym:src/shape.hpp#Shape.sides L7-7 exported",
+    "method sym:src/shape.hpp#Shape.count L10-10 exported"
+  ]
+}

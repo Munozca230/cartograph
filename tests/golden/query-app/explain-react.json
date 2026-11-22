@@ -1,0 +1,44 @@
+{
+  "id": "external:npm:react",
+  "node": "external",
+  "lang": null,
+  "loc": 0,
+  "files": 0,
+  "kind": null,
+  "layer": null,
+  "entry": null,
+  "unresolved": 0,
+  "imports": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "imported_by": {
+    "total": 1,
+    "folders": [
+      {
+        "dir": "dir:src",
+        "count": 1,
+        "files": [
+          "big.ts"
+        ]
+      }
+    ],
+    "folders_more": 0
+  },
+  "tested_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "libraries": [],
+  "libraries_more": 0,
+  "subfolders": [],
+  "subfolders_more": 0,
+  "findings": [],
+  "findings_more": 0,
+  "symbols": null,
+  "git": null,
+  "git_note": null,
+  "annotation": null
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "directory": "..",
+    "file": "src/main.c",
+    "arguments": ["cc", "-Iinclude", "-iquote", "src/quoted", "-isystem", "third_party/sys", "-I", "/opt/outside/include", "-c", "src/main.c"]
+  },
+  {
+    "directory": "..",
+    "file": "src/other.c",
+    "arguments": ["cc", "-I", "other", "-c", "src/other.c"]
+  }
+]

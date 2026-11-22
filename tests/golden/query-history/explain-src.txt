@@ -1,0 +1,11 @@
+dir src/ · 5 files · 53 LOC
+imports: none
+imported by: none
+findings:
+  [warning] orphan:file:src/api.ts: nothing depends on it (dead file? it uses 1 file)
+  [warning] orphan:file:src/client.ts: nothing depends on it and it depends on nothing (dead file?)
+  [warning] orphan:file:src/helpers.ts: nothing depends on it and it depends on nothing (dead file?)
+  [info] hidden_coupling:file:src/client.ts->file:src/server.ts: hidden coupling: src/client.ts and src/server.ts changed together in 10 commits, no dependency either way
+symbols (5, exported 5) → `cartograph query symbols src/`
+git: per file; hottest here: `cartograph query hotspots --within dir:src`
+note: none

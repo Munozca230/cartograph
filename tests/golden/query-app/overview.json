@@ -1,0 +1,126 @@
+{
+  "root": "repo:",
+  "repo": "query-app",
+  "files": 18,
+  "loc": 80,
+  "languages": [
+    {
+      "lang": "typescript",
+      "files": 16,
+      "loc": 59
+    }
+  ],
+  "tree": [
+    {
+      "id": "dir:src",
+      "level": 1,
+      "files": 14,
+      "loc": 56,
+      "kind": "code",
+      "findings": 8
+    },
+    {
+      "id": "dir:src/core",
+      "level": 2,
+      "files": 5,
+      "loc": 22,
+      "kind": "code",
+      "findings": 3
+    },
+    {
+      "id": "dir:src/ui",
+      "level": 2,
+      "files": 3,
+      "loc": 14,
+      "kind": "code",
+      "findings": 3
+    },
+    {
+      "id": "dir:src/infra",
+      "level": 2,
+      "files": 1,
+      "loc": 5,
+      "kind": "code",
+      "findings": 2
+    },
+    {
+      "id": "dir:scripts",
+      "level": 1,
+      "files": 1,
+      "loc": 2,
+      "kind": "script",
+      "findings": 0
+    },
+    {
+      "id": "dir:tests",
+      "level": 1,
+      "files": 1,
+      "loc": 1,
+      "kind": "test",
+      "findings": 0
+    }
+  ],
+  "tree_more": 0,
+  "loose_files": 2,
+  "entries": [
+    {
+      "id": "file:scripts/seed.ts",
+      "why": "manifest entry"
+    },
+    {
+      "id": "file:src/main.ts",
+      "why": "manifest entry"
+    }
+  ],
+  "entries_more": 0,
+  "hubs": [
+    {
+      "id": "file:src/core/model.ts",
+      "n": 6
+    },
+    {
+      "id": "file:src/core/repo.ts",
+      "n": 3
+    },
+    {
+      "id": "file:src/core/service.ts",
+      "n": 3
+    },
+    {
+      "id": "file:src/ui/widgets.ts",
+      "n": 3
+    },
+    {
+      "id": "file:src/core/util.ts",
+      "n": 2
+    },
+    {
+      "id": "file:src/infra/db.ts",
+      "n": 2
+    }
+  ],
+  "libraries": [
+    {
+      "id": "external:npm:react",
+      "n": 1
+    }
+  ],
+  "libraries_more": 0,
+  "findings": {
+    "total": 8,
+    "violations": 5,
+    "by_severity": {
+      "error": 5,
+      "info": 1,
+      "warning": 2
+    },
+    "by_kind": {
+      "cycle": 1,
+      "fan_out_limit": 1,
+      "folder_cycle": 1,
+      "layer_violation": 2,
+      "orphan": 3
+    }
+  },
+  "unresolved_imports": 0
+}

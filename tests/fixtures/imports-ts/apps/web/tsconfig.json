@@ -1,0 +1,5 @@
+{
+  // `extends` without the .json extension, plus one entry that does not exist.
+  "extends": ["../../tsconfig.base", "./nope.json"],
+  "compilerOptions": { "jsx": "react-jsx" }
+}

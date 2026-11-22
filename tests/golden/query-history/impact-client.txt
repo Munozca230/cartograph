@@ -1,0 +1,3 @@
+impact of src/client.ts (1 file): 0 files depend on it (0 directly) in 0 folders, plus 0 test files
+tests to run: none reach it (no test covers it through imports)
+also usually changes with (git; not a dependent): src/server.ts 10× (100%)

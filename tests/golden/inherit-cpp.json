@@ -1,0 +1,20 @@
+{
+  "calls": [
+    "src/derived.cpp:4 sym:src/derived.cpp#Derived.run -> sym:src/base.cpp#Base.helper [resolved]",
+    "src/derived.cpp:5 sym:src/derived.cpp#Derived.run -> sym:src/base.cpp#Base.helper [resolved]"
+  ],
+  "entries": [],
+  "stats": [
+    "src/derived.cpp: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 1"
+  ],
+  "supers": [
+    "sym:src/derived.hpp#Derived : Base -> sym:src/base.hpp#Base [resolved] src/derived.hpp:4"
+  ],
+  "symbols": [
+    "method sym:src/base.cpp#Base.helper L3-3 exported",
+    "method sym:src/base.cpp#Base.run L5-5 exported",
+    "class sym:src/base.hpp#Base L3-7 exported",
+    "method sym:src/derived.cpp#Derived.run L3-7 exported",
+    "class sym:src/derived.hpp#Derived L4-7 exported"
+  ]
+}

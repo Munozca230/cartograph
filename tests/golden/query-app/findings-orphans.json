@@ -1,0 +1,54 @@
+{
+  "summary": {
+    "total": 3,
+    "violations": 0,
+    "by_severity": {
+      "info": 1,
+      "warning": 2
+    },
+    "by_kind": {
+      "orphan": 3
+    }
+  },
+  "items": [
+    {
+      "id": "orphan:file:src/big.ts",
+      "kind": "orphan",
+      "severity": "warning",
+      "violation": false,
+      "title": "nothing depends on it (dead file? it uses 5 files)",
+      "nodes": [
+        "file:src/big.ts"
+      ],
+      "evidence": [],
+      "evidence_more": 0
+    },
+    {
+      "id": "orphan:file:src/dead.ts",
+      "kind": "orphan",
+      "severity": "warning",
+      "violation": false,
+      "title": "nothing depends on it (dead file? it uses 1 file)",
+      "nodes": [
+        "file:src/dead.ts"
+      ],
+      "evidence": [],
+      "evidence_more": 0
+    },
+    {
+      "id": "orphan:file:src/only-tested.ts",
+      "kind": "orphan",
+      "severity": "info",
+      "violation": false,
+      "title": "only tests use it (1 test): dead outside tests?",
+      "nodes": [
+        "file:src/only-tested.ts"
+      ],
+      "evidence": [
+        "used by test src/core/service.test.ts"
+      ],
+      "evidence_more": 0
+    }
+  ],
+  "more": 0
+}

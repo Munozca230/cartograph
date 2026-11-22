@@ -1,0 +1,56 @@
+{
+  "calls": [
+    "pkg/base.py:3 sym:pkg/base.py#Base.save -> sym:pkg/base.py#Base.validate [exact]",
+    "pkg/diamond.py:17 sym:pkg/diamond.py#Diamond.run -> sym:pkg/diamond.py#Right.hook [resolved]",
+    "pkg/models.py:8 sym:pkg/models.py#Model.run -> sym:pkg/base.py#Mixin.save [resolved]",
+    "pkg/models.py:9 sym:pkg/models.py#Model.run -> sym:pkg/base.py#Base.validate [resolved]",
+    "pkg/models.py:10 sym:pkg/models.py#Model.run -> sym:pkg/base.py#Mixin.save [resolved]",
+    "pkg/models.py:11 sym:pkg/models.py#Model.run -> sym:pkg/base.py#Base.validate [resolved]",
+    "pkg/models.py:12 sym:pkg/models.py#Model.run -> sym:pkg/base.py#Mixin.log [resolved]",
+    "pkg/models.py:17 sym:pkg/models.py#Child.go -> sym:pkg/base.py#Base.validate [resolved]",
+    "pkg/models.py:18 sym:pkg/models.py#Child.go -> sym:pkg/base.py#Mixin.log [resolved]",
+    "pkg/models.py:28 sym:pkg/models.py#Config.refresh -> sym:pkg/base.py#Config.load [resolved]"
+  ],
+  "entries": [],
+  "stats": [
+    "pkg/base.py: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0",
+    "pkg/diamond.py: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 0",
+    "pkg/models.py: exact 0, resolved 8, heuristic 0, ambiguous 0, unresolved 3"
+  ],
+  "supers": [
+    "sym:pkg/diamond.py#Diamond : Left -> sym:pkg/diamond.py#Left [exact] pkg/diamond.py:15",
+    "sym:pkg/diamond.py#Diamond : Right -> sym:pkg/diamond.py#Right [exact] pkg/diamond.py:15",
+    "sym:pkg/diamond.py#Left : Root -> sym:pkg/diamond.py#Root [exact] pkg/diamond.py:6",
+    "sym:pkg/diamond.py#Right : Root -> sym:pkg/diamond.py#Root [exact] pkg/diamond.py:10",
+    "sym:pkg/models.py#Child : Model -> sym:pkg/models.py#Model [exact] pkg/models.py:15",
+    "sym:pkg/models.py#Config : Config -> sym:pkg/base.py#Config [resolved] pkg/models.py:26",
+    "sym:pkg/models.py#Model : Mixin -> sym:pkg/base.py#Mixin [resolved] pkg/models.py:6",
+    "sym:pkg/models.py#Model : Base -> sym:pkg/base.py#Base [resolved] pkg/models.py:6",
+    "sym:pkg/models.py#Remote : requests.Session -> ? [-] pkg/models.py:21"
+  ],
+  "symbols": [
+    "class sym:pkg/base.py#Base L1-6 exported",
+    "method sym:pkg/base.py#Base.save L2-3 exported",
+    "method sym:pkg/base.py#Base.validate L5-6 exported",
+    "class sym:pkg/base.py#Mixin L9-14 exported",
+    "method sym:pkg/base.py#Mixin.save L10-11 exported",
+    "method sym:pkg/base.py#Mixin.log L13-14 exported",
+    "class sym:pkg/base.py#Config L17-19 exported",
+    "method sym:pkg/base.py#Config.load L18-19 exported",
+    "class sym:pkg/diamond.py#Root L1-3 exported",
+    "method sym:pkg/diamond.py#Root.hook L2-3 exported",
+    "class sym:pkg/diamond.py#Left L6-7 exported",
+    "class sym:pkg/diamond.py#Right L10-12 exported",
+    "method sym:pkg/diamond.py#Right.hook L11-12 exported",
+    "class sym:pkg/diamond.py#Diamond L15-17 exported",
+    "method sym:pkg/diamond.py#Diamond.run L16-17 exported",
+    "class sym:pkg/models.py#Model L6-12 exported",
+    "method sym:pkg/models.py#Model.run L7-12 exported",
+    "class sym:pkg/models.py#Child L15-18 exported",
+    "method sym:pkg/models.py#Child.go L16-18 exported",
+    "class sym:pkg/models.py#Remote L21-23 exported",
+    "method sym:pkg/models.py#Remote.go L22-23 exported",
+    "class sym:pkg/models.py#Config L26-28 exported",
+    "method sym:pkg/models.py#Config.refresh L27-28 exported"
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "targets": [
+    "file:src/core/model.ts"
+  ],
+  "targets_more": 0,
+  "target_files": 1,
+  "dependents": 10,
+  "direct": 6,
+  "type_only": 2,
+  "folders": [
+    {
+      "dir": "dir:src",
+      "files": 3,
+      "direct": 2
+    },
+    {
+      "dir": "dir:src/core",
+      "files": 3,
+      "direct": 1,
+      "type_only": 1
+    },
+    {
+      "dir": "dir:src/ui",
+      "files": 2,
+      "direct": 1,
+      "type_only": 1
+    },
+    {
+      "dir": "dir:scripts",
+      "files": 1,
+      "direct": 1
+    },
+    {
+      "dir": "dir:src/infra",
+      "files": 1,
+      "direct": 1
+    }
+  ],
+  "folders_more": 0,
+  "tests": [
+    {
+      "id": "file:src/core/service.test.ts",
+      "hops": 2
+    },
+    {
+      "id": "file:src/ui/app.spec.ts",
+      "hops": 3
+    },
+    {
+      "id": "file:tests/e2e.test.ts",
+      "hops": 3
+    }
+  ],
+  "tests_more": 0,
+  "tests_direct": 0,
+  "tests_in_repo": 3,
+  "test_folders": [
+    [
+      "dir:src/core",
+      1
+    ],
+    [
+      "dir:src/ui",
+      1
+    ],
+    [
+      "dir:tests",
+      1
+    ]
+  ],
+  "test_folders_more": 0,
+  "entries": [
+    "file:scripts/seed.ts",
+    "file:src/main.ts"
+  ],
+  "entries_more": 0,
+  "also_changes": [],
+  "also_changes_more": 0
+}

@@ -1,0 +1,139 @@
+{
+  "added": [
+    "src/core/service.ts",
+    "src/ui/panel.ts"
+  ],
+  "base": "main (93a6af2c)",
+  "edges_changed": [
+    {
+      "base": 1,
+      "from": "ui",
+      "head": 2,
+      "to": "db"
+    }
+  ],
+  "edges_changed_more": 0,
+  "edges_new": [
+    {
+      "base": 0,
+      "example": "src/core/service.ts:2 → src/ui/widget.ts",
+      "from": "core",
+      "head": 1,
+      "to": "ui"
+    }
+  ],
+  "edges_new_more": 0,
+  "edges_removed": [],
+  "edges_removed_more": 0,
+  "files_added": 2,
+  "files_removed": 0,
+  "head": "working tree",
+  "modules": "layers",
+  "new": [
+    {
+      "evidence": [],
+      "evidence_more": 0,
+      "id": "orphan:file:src/ui/panel.ts",
+      "kind": "orphan",
+      "nodes": [
+        "file:src/ui/panel.ts"
+      ],
+      "severity": "warning",
+      "title": "nothing depends on it (dead file? it uses 1 file)",
+      "violation": false
+    }
+  ],
+  "new_by_kind": {
+    "orphan": 1
+  },
+  "new_more": 0,
+  "removed": [],
+  "resolved": [
+    {
+      "id": "orphan:file:src/ui/widget.ts",
+      "title": "nothing depends on it and it depends on nothing (dead file?)",
+      "violation": false
+    }
+  ],
+  "resolved_by_kind": {
+    "orphan": 1
+  },
+  "resolved_more": 0,
+  "unchanged": 2,
+  "unresolved_new": [
+    {
+      "file": "src/ui/view.ts",
+      "line": 3,
+      "reason": "not_found",
+      "specifier": "./missing"
+    }
+  ],
+  "unresolved_new_more": 0,
+  "unresolved_removed": [],
+  "unresolved_removed_more": 0,
+  "violations": [
+    {
+      "evidence": [
+        "src/core/service.ts:2 → src/ui/widget.ts"
+      ],
+      "evidence_more": 0,
+      "id": "layer_violation:core->ui",
+      "kind": "layer_violation",
+      "nodes": [
+        "file:src/core/service.ts"
+      ],
+      "severity": "error",
+      "title": "layer core depends on ui (forbidden): 1 import",
+      "violation": true
+    },
+    {
+      "evidence": [
+        "src/ui/panel.ts:1 → src/db/store.ts"
+      ],
+      "evidence_more": 0,
+      "id": "layer_violation:ui->db",
+      "kind": "layer_violation",
+      "nodes": [
+        "file:src/ui/panel.ts",
+        "file:src/ui/view.ts"
+      ],
+      "severity": "error",
+      "title": "layer ui depends on db (forbidden): 2 imports — 1 new dependency since the base",
+      "violation": true
+    },
+    {
+      "evidence": [
+        "src/core/model.ts:2 → src/core/service.ts",
+        "src/core/service.ts:1 → src/core/model.ts"
+      ],
+      "evidence_more": 0,
+      "id": "cycle:file:src/core/model.ts",
+      "kind": "cycle",
+      "nodes": [
+        "file:src/core/model.ts",
+        "file:src/core/service.ts"
+      ],
+      "severity": "error",
+      "title": "src/core/model.ts and src/core/service.ts import each other",
+      "violation": true
+    },
+    {
+      "evidence": [
+        "src/core/ → src/ui/ (1 file pair, e.g. src/core/service.ts:2 → src/ui/widget.ts)",
+        "src/ui/ → src/core/ (1 file pair, e.g. src/ui/view.ts:1 → src/core/model.ts)",
+        "lightest link to cut: src/core/ → src/ui/ (1)"
+      ],
+      "evidence_more": 0,
+      "id": "folder_cycle:dir:src/core",
+      "kind": "folder_cycle",
+      "nodes": [
+        "dir:src/core",
+        "dir:src/ui"
+      ],
+      "severity": "error",
+      "title": "folders src/core/ and src/ui/ depend on each other",
+      "violation": true
+    }
+  ],
+  "violations_more": 0
+}

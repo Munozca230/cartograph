@@ -1,0 +1,41 @@
+{
+  "calls": [
+    "main.gd:4 sym:main.gd#_ready -> sym:player.gd#Player [resolved]",
+    "main.gd:5 sym:main.gd#_ready -> sym:player.gd#move_by [heuristic]",
+    "main.gd:6 sym:main.gd#_ready -> sym:main.gd#start_level [exact]",
+    "main.gd:9 sym:main.gd#start_level -> sym:autoload/events.gd#emit_score [resolved]",
+    "player.gd:8 sym:player.gd#_ready -> sym:player.gd#move_by [exact]",
+    "player.gd:9 sym:player.gd#_ready -> sym:player.gd#move_by [exact]",
+    "player.gd:11 sym:player.gd#_ready -> sym:bullet.gd#fire_now [heuristic]",
+    "player.gd:12 sym:player.gd#_ready -> sym:autoload/events.gd#emit_score [resolved]"
+  ],
+  "entries": [
+    "godot_main_scene \"main scene\" project.godot:8 -> file:main.tscn",
+    "godot_autoload \"Events\" project.godot:12 -> file:autoload/events.gd"
+  ],
+  "stats": [
+    "autoload/events.gd: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "bullet.gd: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "main.gd: exact 1, resolved 2, heuristic 1, ambiguous 0, unresolved 0",
+    "player.gd: exact 2, resolved 1, heuristic 1, ambiguous 0, unresolved 2"
+  ],
+  "supers": [
+    "file:autoload/events.gd : Node -> ? [-] autoload/events.gd:1",
+    "file:bullet.gd : Node -> ? [-] bullet.gd:1",
+    "file:main.gd : Node -> ? [-] main.gd:1",
+    "sym:player.gd#Player : Node -> ? [-] player.gd:1"
+  ],
+  "symbols": [
+    "function sym:autoload/events.gd#emit_score L5-6 exported",
+    "function sym:bullet.gd#fire_now L3-4 exported",
+    "function sym:main.gd#_ready L3-6",
+    "function sym:main.gd#start_level L8-9 exported",
+    "class sym:player.gd#Player L2-22 exported",
+    "const sym:player.gd#Bullet L4-4 exported",
+    "const sym:player.gd#SPEED L5-5 exported",
+    "function sym:player.gd#_ready L7-12",
+    "function sym:player.gd#move_by L14-15 exported",
+    "class sym:player.gd#Hitbox L19-21 exported",
+    "method sym:player.gd#Hitbox.shrink L20-21 exported"
+  ]
+}

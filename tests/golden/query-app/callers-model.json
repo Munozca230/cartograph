@@ -1,0 +1,67 @@
+{
+  "symbol": "sym:src/core/model.ts#Model",
+  "kind": "class",
+  "defined_at": "src/core/model.ts:3",
+  "total": 4,
+  "files": 4,
+  "exact": 0,
+  "resolved": 4,
+  "heuristic": 0,
+  "test_total": 0,
+  "test_files": 0,
+  "groups": [
+    {
+      "file": "file:scripts/seed.ts",
+      "count": 1,
+      "test": false,
+      "sites": [
+        {
+          "line": 3,
+          "caller": null,
+          "confidence": "resolved"
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/core/service.ts",
+      "count": 1,
+      "test": false,
+      "sites": [
+        {
+          "line": 5,
+          "caller": "sym:src/core/service.ts#run",
+          "confidence": "resolved"
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/dead.ts",
+      "count": 1,
+      "test": false,
+      "sites": [
+        {
+          "line": 3,
+          "caller": null,
+          "confidence": "resolved"
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/infra/db.ts",
+      "count": 1,
+      "test": false,
+      "sites": [
+        {
+          "line": 5,
+          "caller": "sym:src/infra/db.ts#connect",
+          "confidence": "resolved"
+        }
+      ],
+      "more": 0
+    }
+  ],
+  "groups_more": 0
+}

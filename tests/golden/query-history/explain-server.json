@@ -1,0 +1,88 @@
+{
+  "id": "file:src/server.ts",
+  "node": "file",
+  "lang": "typescript",
+  "loc": 12,
+  "files": 1,
+  "kind": "code",
+  "layer": null,
+  "entry": "entry name",
+  "unresolved": 0,
+  "imports": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "imported_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "tested_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "libraries": [],
+  "libraries_more": 0,
+  "subfolders": [],
+  "subfolders_more": 0,
+  "findings": [
+    {
+      "id": "hidden_coupling:file:src/client.ts->file:src/server.ts",
+      "severity": "info",
+      "title": "hidden coupling: src/client.ts and src/server.ts changed together in 10 commits, no dependency either way"
+    }
+  ],
+  "findings_more": 0,
+  "symbols": {
+    "total": 1,
+    "exported": 1,
+    "main": [
+      {
+        "id": "sym:src/server.ts#route",
+        "kind": "const",
+        "line": 1,
+        "end_line": 1,
+        "exported": true,
+        "callers": 0
+      }
+    ],
+    "more": 0
+  },
+  "git": {
+    "commits": 12,
+    "added": 12,
+    "removed": 0,
+    "recent": 1,
+    "window_days": 90,
+    "first_change": "2025-01-01",
+    "last_change": "2025-07-20",
+    "authors": 2,
+    "owners": [
+      {
+        "name": "Ada Lovelace",
+        "commits": 6,
+        "share": 50
+      },
+      {
+        "name": "Grace Hopper",
+        "commits": 6,
+        "share": 50
+      }
+    ],
+    "bus_factor_50": 1,
+    "bus_factor_80": 2,
+    "co_change": [
+      {
+        "id": "file:src/client.ts",
+        "together": 10,
+        "confidence": 91
+      }
+    ],
+    "co_change_more": 0,
+    "partial": false
+  },
+  "git_note": null,
+  "annotation": null
+}

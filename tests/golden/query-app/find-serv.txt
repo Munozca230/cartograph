@@ -1,0 +1,2 @@
+src/core/service.ts  5 LOC
+src/core/service.test.ts  4 LOC

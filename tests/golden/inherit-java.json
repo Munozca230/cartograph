@@ -1,0 +1,38 @@
+{
+  "calls": [
+    "src/main/java/com/acme/Service.java:10 sym:src/main/java/com/acme/Service.java#Service.run -> sym:src/main/java/com/acme/core/Repo.java#Repo.saveEverything [resolved]",
+    "src/main/java/com/acme/Service.java:11 sym:src/main/java/com/acme/Service.java#Service.run -> sym:src/main/java/com/acme/core/Store.java#Store.reload [resolved]",
+    "src/main/java/com/acme/Service.java:12 sym:src/main/java/com/acme/Service.java#Service.run -> sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.audit [resolved]",
+    "src/main/java/com/acme/core/Repo.java:6 sym:src/main/java/com/acme/core/Repo.java#Repo.load -> sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.audit [resolved]",
+    "src/main/java/com/acme/core/Repo.java:7 sym:src/main/java/com/acme/core/Repo.java#Repo.load -> sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.audit [resolved]",
+    "src/main/java/com/acme/core/Repo.java:8 sym:src/main/java/com/acme/core/Repo.java#Repo.load -> sym:src/main/java/com/acme/core/Store.java#Store.reload [resolved]",
+    "src/main/java/com/acme/core/Repo.java:13 sym:src/main/java/com/acme/core/Repo.java#Repo.saveEverything -> sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.saveEverything [resolved]",
+    "src/main/java/com/acme/core/Store.java:7 sym:src/main/java/com/acme/core/Store.java#Store.reload -> sym:src/main/java/com/acme/core/Store.java#Store.load [exact]"
+  ],
+  "entries": [],
+  "stats": [
+    "src/main/java/com/acme/Service.java: exact 0, resolved 3, heuristic 0, ambiguous 0, unresolved 1",
+    "src/main/java/com/acme/core/Repo.java: exact 0, resolved 4, heuristic 0, ambiguous 0, unresolved 0",
+    "src/main/java/com/acme/core/Store.java: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0"
+  ],
+  "supers": [
+    "sym:src/main/java/com/acme/Service.java#Names : ArrayList -> ? [-] src/main/java/com/acme/Service.java:16",
+    "sym:src/main/java/com/acme/core/Repo.java#Repo : BaseRepo -> sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo [resolved] src/main/java/com/acme/core/Repo.java:3",
+    "sym:src/main/java/com/acme/core/Repo.java#Repo : Store -> sym:src/main/java/com/acme/core/Store.java#Store [resolved] src/main/java/com/acme/core/Repo.java:3"
+  ],
+  "symbols": [
+    "class sym:src/main/java/com/acme/Service.java#Service L6-14 exported",
+    "method sym:src/main/java/com/acme/Service.java#Service.run L9-13",
+    "class sym:src/main/java/com/acme/Service.java#Names L16-20",
+    "method sym:src/main/java/com/acme/Service.java#Names.fill L17-19",
+    "class sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo L3-7 exported",
+    "method sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.saveEverything L4-4 exported",
+    "method sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.audit L6-6",
+    "class sym:src/main/java/com/acme/core/Repo.java#Repo L3-15 exported",
+    "method sym:src/main/java/com/acme/core/Repo.java#Repo.load L5-9 exported",
+    "method sym:src/main/java/com/acme/core/Repo.java#Repo.saveEverything L12-14 exported",
+    "interface sym:src/main/java/com/acme/core/Store.java#Store L3-9 exported",
+    "method sym:src/main/java/com/acme/core/Store.java#Store.load L4-4 exported",
+    "method sym:src/main/java/com/acme/core/Store.java#Store.reload L6-8 exported"
+  ]
+}

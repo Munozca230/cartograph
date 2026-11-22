@@ -1,0 +1,9 @@
+symbols-rust · 5 files · 64 LOC · rust 4
+folders (files, LOC, kind, !findings):
+src/ 4 57 code
++ 1 files directly in ./
+entry points: src/main.rs (crate root)
+flow entries: cli 2, http 1, main 1 · main main → main (src/main.rs:14); http GET /health → health (src/routes.rs:6); cli index → Command (src/main.rs:10) → `cartograph query entries`
+most depended on (←files using it, tests aside): src/model.rs ←2
+libraries (files using it, tests aside): rust:std 2, crates:axum 1, crates:clap 1
+no findings

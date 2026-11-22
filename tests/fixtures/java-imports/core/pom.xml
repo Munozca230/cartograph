@@ -1,0 +1,10 @@
+<project>
+  <parent><groupId>com.acme</groupId><artifactId>acme-parent</artifactId></parent>
+  <artifactId>core</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-lang3</artifactId>
+    </dependency>
+  </dependencies>
+</project>

@@ -1,0 +1,98 @@
+{
+  "ok": false,
+  "config": "cartograph.toml",
+  "rules": true,
+  "violations": [
+    {
+      "id": "layer_violation:core->ui",
+      "kind": "layer_violation",
+      "severity": "error",
+      "violation": true,
+      "title": "layer core depends on ui (not in its allow list): 1 import",
+      "nodes": [
+        "file:src/core/util.ts"
+      ],
+      "evidence": [
+        "src/core/util.ts:1 → src/ui/widgets.ts"
+      ],
+      "evidence_more": 0
+    },
+    {
+      "id": "layer_violation:ui->infra",
+      "kind": "layer_violation",
+      "severity": "error",
+      "violation": true,
+      "title": "layer ui depends on infra (forbidden): 1 import",
+      "nodes": [
+        "file:src/ui/app.ts"
+      ],
+      "evidence": [
+        "src/ui/app.ts:2 → src/infra/db.ts"
+      ],
+      "evidence_more": 0
+    },
+    {
+      "id": "fan_out_limit:file:src/big.ts",
+      "kind": "fan_out_limit",
+      "severity": "error",
+      "violation": true,
+      "title": "src/big.ts depends on 5 files (max_fan_out = 4)",
+      "nodes": [
+        "file:src/big.ts"
+      ],
+      "evidence": [
+        "src/core/ 4",
+        "src/ui/ 1"
+      ],
+      "evidence_more": 0
+    },
+    {
+      "id": "cycle:file:src/core/model.ts",
+      "kind": "cycle",
+      "severity": "error",
+      "violation": true,
+      "title": "3 files tangled in a cycle (shortest loop: repo.ts → service.ts)",
+      "nodes": [
+        "file:src/core/repo.ts",
+        "file:src/core/service.ts",
+        "file:src/core/model.ts"
+      ],
+      "evidence": [
+        "src/core/repo.ts:1 → src/core/service.ts",
+        "src/core/service.ts:2 → src/core/repo.ts"
+      ],
+      "evidence_more": 0
+    },
+    {
+      "id": "folder_cycle:dir:src/core",
+      "kind": "folder_cycle",
+      "severity": "error",
+      "violation": true,
+      "title": "folders src/core/ and src/ui/ depend on each other",
+      "nodes": [
+        "dir:src/core",
+        "dir:src/infra",
+        "dir:src/ui"
+      ],
+      "evidence": [
+        "src/core/ → src/ui/ (1 file pair, e.g. src/core/util.ts:1 → src/ui/widgets.ts)",
+        "src/ui/ → src/core/ (1 file pair, e.g. src/ui/app.ts:1 → src/core/service.ts)",
+        "lightest link to cut: src/core/ → src/ui/ (1)"
+      ],
+      "evidence_more": 0
+    }
+  ],
+  "violations_more": 0,
+  "baseline_violations": 0,
+  "informational": {
+    "total": 3,
+    "violations": 0,
+    "by_severity": {
+      "info": 1,
+      "warning": 2
+    },
+    "by_kind": {
+      "orphan": 3
+    }
+  }
+}

@@ -1,0 +1,21 @@
+rules from cartograph.toml
+base: main (93a6af2c); only violations the change introduces fail
+FAIL: 4 new rule violations
+[VIOLATION] layer_violation:core->ui
+  layer core depends on ui (forbidden): 1 import
+    src/core/service.ts:2 → src/ui/widget.ts
+[VIOLATION] layer_violation:ui->db
+  layer ui depends on db (forbidden): 2 imports — 1 new dependency since the base
+    src/ui/panel.ts:1 → src/db/store.ts
+[VIOLATION] cycle:file:src/core/model.ts
+  src/core/model.ts and src/core/service.ts import each other
+    src/core/model.ts:2 → src/core/service.ts
+    src/core/service.ts:1 → src/core/model.ts
+[VIOLATION] folder_cycle:dir:src/core
+  folders src/core/ and src/ui/ depend on each other
+    src/core/ → src/ui/ (1 file pair, e.g. src/core/service.ts:2 → src/ui/widget.ts)
+    src/ui/ → src/core/ (1 file pair, e.g. src/ui/view.ts:1 → src/core/model.ts)
+    lightest link to cut: src/core/ → src/ui/ (1)
+existing (in the base too, not failing): 1
+  cycle:file:src/legacy/x.ts: src/legacy/x.ts and src/legacy/y.ts import each other
+informational: 2 findings (warning 2): orphan 2

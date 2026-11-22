@@ -1,0 +1,1033 @@
+{
+  "diagnostics": [],
+  "edges": [
+    [
+      "dir:game",
+      "dir:game/autoload",
+      "depends_on",
+      "exact",
+      2
+    ],
+    [
+      "dir:game",
+      "dir:game/scenes",
+      "depends_on",
+      "resolved",
+      1
+    ],
+    [
+      "dir:game/crlf",
+      "dir:game/scenes",
+      "depends_on",
+      "exact",
+      1
+    ],
+    [
+      "dir:game/scenes",
+      "dir:game",
+      "depends_on",
+      "exact",
+      1
+    ],
+    [
+      "dir:game/scenes",
+      "dir:game/autoload",
+      "depends_on",
+      "resolved",
+      2
+    ],
+    [
+      "dir:game/scenes",
+      "dir:game/crlf",
+      "depends_on",
+      "exact",
+      1
+    ],
+    [
+      "dir:game/scenes",
+      "dir:game/levels",
+      "depends_on",
+      "heuristic",
+      1
+    ],
+    [
+      "dir:game/scenes",
+      "dir:game/resources",
+      "depends_on",
+      "exact",
+      2
+    ],
+    [
+      "dir:game/scripts",
+      "dir:game/scenes",
+      "depends_on",
+      "heuristic",
+      1
+    ],
+    [
+      "file:editor/main.gd",
+      "external:godot:Control",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:editor/main.gd",
+      "external:godot:Control",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:editor/main.gd",
+      "file:editor/main.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:editor/main.tscn",
+      "file:editor/main.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:editor/project.godot",
+      "file:editor/main.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/autoload/events.gd",
+      "external:godot:Node",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/autoload/events.gd",
+      "external:godot:Node",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/autoload/music.gd",
+      "external:godot:AudioStreamPlayer",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/autoload/music.gd",
+      "external:godot:AudioStreamPlayer",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/autoload/music.gd",
+      "file:game/autoload/events.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/autoload/music.tscn",
+      "file:game/autoload/music.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/crlf/hud.gd",
+      "external:godot:CanvasLayer",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/crlf/hud.gd",
+      "external:godot:CanvasLayer",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/crlf/hud.gd",
+      "file:game/scenes/main.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/crlf/hud.tscn",
+      "file:game/crlf/hud.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/project.godot",
+      "file:game/autoload/events.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/project.godot",
+      "file:game/autoload/music.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/project.godot",
+      "file:game/icon.svg",
+      "import",
+      "heuristic",
+      1
+    ],
+    [
+      "file:game/project.godot",
+      "file:game/scenes/main.tscn",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/resources/stats.gd",
+      "external:godot:Resource",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/resources/stats.gd",
+      "external:godot:Resource",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/resources/stats.tres",
+      "file:game/resources/stats.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/actor.gd",
+      "external:godot:CharacterBody2D",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/actor.gd",
+      "external:godot:CharacterBody2D",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/boss.tscn",
+      "file:game/scenes/enemy.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/boss.tscn",
+      "file:game/scenes/enemy.tscn",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/enemy.gd",
+      "file:game/scenes/actor.gd",
+      "import",
+      "exact",
+      2
+    ],
+    [
+      "file:game/scenes/enemy.gd",
+      "file:game/scenes/actor.gd",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/enemy.gd",
+      "file:game/scenes/player.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/enemy.tscn",
+      "file:game/scenes/enemy.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "dir:game/levels",
+      "import",
+      "heuristic",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "external:godot:Node2D",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "external:godot:Node2D",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "file:game/autoload/events.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "file:game/resources/stats.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "file:game/resources/stats.tres",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "file:game/scenes/enemy.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "file:game/scenes/player.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/main.gd",
+      "file:game/scenes/player.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/crlf/hud.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/icon.svg",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/scenes/boss.tscn",
+      "import",
+      "heuristic",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/scenes/enemy.tscn",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/scenes/main.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/scenes/main.gd",
+      "call",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/scenes/player.gd",
+      "call",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/main.tscn",
+      "file:game/scenes/player.tscn",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scenes/player.gd",
+      "file:game/autoload/events.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/player.gd",
+      "file:game/scenes/actor.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/player.gd",
+      "file:game/scenes/actor.gd",
+      "extends",
+      "resolved",
+      1
+    ],
+    [
+      "file:game/scenes/player.tscn",
+      "file:game/scenes/player.gd",
+      "import",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scripts/dup_a.gd",
+      "external:godot:RefCounted",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scripts/dup_a.gd",
+      "external:godot:RefCounted",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scripts/dup_b.gd",
+      "external:godot:RefCounted",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scripts/dup_b.gd",
+      "external:godot:RefCounted",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scripts/tests.gd",
+      "external:godot:SceneTree",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scripts/tests.gd",
+      "external:godot:SceneTree",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:game/scripts/tests.gd",
+      "file:game/scenes/main.gd",
+      "import",
+      "heuristic",
+      1
+    ],
+    [
+      "file:game/scripts/tests.gd",
+      "file:game/scripts/dup_a.gd",
+      "import",
+      "heuristic",
+      1
+    ],
+    [
+      "file:game/scripts/tests.gd",
+      "file:game/scripts/dup_b.gd",
+      "import",
+      "heuristic",
+      1
+    ],
+    [
+      "file:loose.gd",
+      "external:godot:Node",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:loose.gd",
+      "external:godot:Node",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:tools/loose_base.gd",
+      "external:godot:RefCounted",
+      "import_external",
+      "exact",
+      1
+    ],
+    [
+      "file:tools/loose_base.gd",
+      "external:godot:RefCounted",
+      "extends",
+      "exact",
+      1
+    ],
+    [
+      "file:tools/loose_child.gd",
+      "file:tools/loose_base.gd",
+      "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:tools/loose_child.gd",
+      "file:tools/loose_base.gd",
+      "extends",
+      "resolved",
+      1
+    ],
+    [
+      "package:editor/project.godot",
+      "dir:editor",
+      "contains",
+      "exact",
+      1
+    ],
+    [
+      "package:game/project.godot",
+      "dir:game",
+      "contains",
+      "exact",
+      1
+    ]
+  ],
+  "externals": [
+    "external:godot:AudioStreamPlayer",
+    "external:godot:CanvasLayer",
+    "external:godot:CharacterBody2D",
+    "external:godot:Control",
+    "external:godot:Node",
+    "external:godot:Node2D",
+    "external:godot:RefCounted",
+    "external:godot:Resource",
+    "external:godot:SceneTree"
+  ],
+  "file_meta": {
+    "editor/project.godot": {
+      "godot": {
+        "entry_points": [
+          {
+            "kind": "main_scene",
+            "line": 5,
+            "name": null,
+            "path": "res://main.tscn",
+            "reason": null,
+            "target": "file:editor/main.tscn"
+          }
+        ]
+      }
+    },
+    "game/project.godot": {
+      "godot": {
+        "entry_points": [
+          {
+            "kind": "main_scene",
+            "line": 7,
+            "name": null,
+            "path": "uid://bmain0000001",
+            "reason": null,
+            "target": "file:game/scenes/main.tscn"
+          },
+          {
+            "kind": "autoload",
+            "line": 12,
+            "name": "Events",
+            "path": "res://autoload/events.gd",
+            "reason": null,
+            "target": "file:game/autoload/events.gd"
+          },
+          {
+            "kind": "autoload",
+            "line": 13,
+            "name": "Music",
+            "path": "res://autoload/music.tscn",
+            "reason": null,
+            "target": "file:game/autoload/music.tscn"
+          },
+          {
+            "kind": "autoload",
+            "line": 14,
+            "name": "Missing",
+            "path": "res://autoload/missing.gd",
+            "reason": "no file game/autoload/missing.gd",
+            "target": null
+          }
+        ]
+      }
+    },
+    "game/scenes/main.tscn": {
+      "godot": {
+        "connections": [
+          {
+            "from": "Player",
+            "line": 30,
+            "method": "_on_player_hit",
+            "reason": null,
+            "script": "file:game/scenes/main.gd",
+            "signal": "hit",
+            "to": "."
+          },
+          {
+            "from": "Enemy",
+            "line": 31,
+            "method": "_on_enemy_died",
+            "reason": null,
+            "script": "file:game/scenes/player.gd",
+            "signal": "died",
+            "to": "Player"
+          },
+          {
+            "from": "Sfx",
+            "line": 32,
+            "method": "queue_free",
+            "reason": "node Sfx has no script",
+            "script": null,
+            "signal": "finished",
+            "to": "Sfx"
+          },
+          {
+            "from": "Hud/Pause",
+            "line": 33,
+            "method": "_on_pause",
+            "reason": "node Hud/Pause is not in this scene (inside an instanced or inherited scene?)",
+            "script": null,
+            "signal": "pressed",
+            "to": "Hud/Pause"
+          }
+        ]
+      }
+    }
+  },
+  "sites": [
+    [
+      "editor/main.gd",
+      1,
+      "extends Control",
+      "external:godot:Control"
+    ],
+    [
+      "editor/main.gd",
+      3,
+      "preload res://main.tscn",
+      "file:editor/main.tscn"
+    ],
+    [
+      "editor/main.tscn",
+      3,
+      "script res://main.gd",
+      "file:editor/main.gd"
+    ],
+    [
+      "editor/project.godot",
+      5,
+      "main_scene res://main.tscn",
+      "file:editor/main.tscn"
+    ],
+    [
+      "game/autoload/events.gd",
+      1,
+      "extends Node",
+      "external:godot:Node"
+    ],
+    [
+      "game/autoload/music.gd",
+      1,
+      "extends AudioStreamPlayer",
+      "external:godot:AudioStreamPlayer"
+    ],
+    [
+      "game/autoload/music.gd",
+      5,
+      "Events",
+      "file:game/autoload/events.gd"
+    ],
+    [
+      "game/autoload/music.tscn",
+      3,
+      "script res://autoload/music.gd",
+      "file:game/autoload/music.gd"
+    ],
+    [
+      "game/crlf/hud.gd",
+      1,
+      "extends CanvasLayer",
+      "external:godot:CanvasLayer"
+    ],
+    [
+      "game/crlf/hud.gd",
+      3,
+      "preload res://scenes/main.tscn",
+      "file:game/scenes/main.tscn"
+    ],
+    [
+      "game/crlf/hud.tscn",
+      3,
+      "script res://crlf/hud.gd",
+      "file:game/crlf/hud.gd"
+    ],
+    [
+      "game/project.godot",
+      7,
+      "main_scene uid://bmain0000001",
+      "file:game/scenes/main.tscn"
+    ],
+    [
+      "game/project.godot",
+      8,
+      "config/icon res://icon.svg",
+      "file:game/icon.svg"
+    ],
+    [
+      "game/project.godot",
+      12,
+      "autoload Events res://autoload/events.gd",
+      "file:game/autoload/events.gd"
+    ],
+    [
+      "game/project.godot",
+      13,
+      "autoload Music res://autoload/music.tscn",
+      "file:game/autoload/music.tscn"
+    ],
+    [
+      "game/resources/stats.gd",
+      2,
+      "extends Resource",
+      "external:godot:Resource"
+    ],
+    [
+      "game/resources/stats.tres",
+      3,
+      "script res://resources/stats.gd",
+      "file:game/resources/stats.gd"
+    ],
+    [
+      "game/scenes/actor.gd",
+      2,
+      "extends CharacterBody2D",
+      "external:godot:CharacterBody2D"
+    ],
+    [
+      "game/scenes/boss.tscn",
+      3,
+      "inherits res://scenes/enemy.tscn",
+      "file:game/scenes/enemy.tscn"
+    ],
+    [
+      "game/scenes/enemy.gd",
+      1,
+      "extends res://scenes/actor.gd",
+      "file:game/scenes/actor.gd"
+    ],
+    [
+      "game/scenes/enemy.gd",
+      3,
+      "preload uid://bactor000001",
+      "file:game/scenes/actor.gd"
+    ],
+    [
+      "game/scenes/enemy.gd",
+      5,
+      "Player",
+      "file:game/scenes/player.gd"
+    ],
+    [
+      "game/scenes/enemy.tscn",
+      3,
+      "script res://scenes/enemy.gd",
+      "file:game/scenes/enemy.gd"
+    ],
+    [
+      "game/scenes/main.gd",
+      1,
+      "extends Node2D",
+      "external:godot:Node2D"
+    ],
+    [
+      "game/scenes/main.gd",
+      3,
+      "preload res://scenes/player.tscn",
+      "file:game/scenes/player.tscn"
+    ],
+    [
+      "game/scenes/main.gd",
+      4,
+      "preload enemy.gd",
+      "file:game/scenes/enemy.gd"
+    ],
+    [
+      "game/scenes/main.gd",
+      6,
+      "Player",
+      "file:game/scenes/player.gd"
+    ],
+    [
+      "game/scenes/main.gd",
+      7,
+      "string res://levels/",
+      "dir:game/levels"
+    ],
+    [
+      "game/scenes/main.gd",
+      11,
+      "Events",
+      "file:game/autoload/events.gd"
+    ],
+    [
+      "game/scenes/main.gd",
+      14,
+      "Stats",
+      "file:game/resources/stats.gd"
+    ],
+    [
+      "game/scenes/main.gd",
+      14,
+      "load res://resources/stats.tres",
+      "file:game/resources/stats.tres"
+    ],
+    [
+      "game/scenes/main.tscn",
+      3,
+      "script res://scenes/main.gd",
+      "file:game/scenes/main.gd"
+    ],
+    [
+      "game/scenes/main.tscn",
+      4,
+      "instance res://scenes/player.tscn",
+      "file:game/scenes/player.tscn"
+    ],
+    [
+      "game/scenes/main.tscn",
+      5,
+      "Texture2D res://icon.svg",
+      "file:game/icon.svg"
+    ],
+    [
+      "game/scenes/main.tscn",
+      6,
+      "instance res://scenes/old_enemy.tscn",
+      "file:game/scenes/enemy.tscn"
+    ],
+    [
+      "game/scenes/main.tscn",
+      9,
+      "instance res://crlf/hud.tscn",
+      "file:game/crlf/hud.tscn"
+    ],
+    [
+      "game/scenes/main.tscn",
+      13,
+      "next_level res://scenes/boss.tscn",
+      "file:game/scenes/boss.tscn"
+    ],
+    [
+      "game/scenes/player.gd",
+      2,
+      "extends Actor",
+      "file:game/scenes/actor.gd"
+    ],
+    [
+      "game/scenes/player.gd",
+      8,
+      "Events",
+      "file:game/autoload/events.gd"
+    ],
+    [
+      "game/scenes/player.tscn",
+      3,
+      "script res://scenes/player.gd",
+      "file:game/scenes/player.gd"
+    ],
+    [
+      "game/scripts/dup_a.gd",
+      2,
+      "extends RefCounted",
+      "external:godot:RefCounted"
+    ],
+    [
+      "game/scripts/dup_b.gd",
+      2,
+      "extends RefCounted",
+      "external:godot:RefCounted"
+    ],
+    [
+      "game/scripts/tests.gd",
+      1,
+      "extends SceneTree",
+      "external:godot:SceneTree"
+    ],
+    [
+      "game/scripts/tests.gd",
+      4,
+      "string res://scripts/dup_a.gd",
+      "file:game/scripts/dup_a.gd"
+    ],
+    [
+      "game/scripts/tests.gd",
+      5,
+      "string res://scripts/dup_b.gd",
+      "file:game/scripts/dup_b.gd"
+    ],
+    [
+      "game/scripts/tests.gd",
+      12,
+      "string res://scenes/main.gd",
+      "file:game/scenes/main.gd"
+    ],
+    [
+      "loose.gd",
+      1,
+      "extends Node",
+      "external:godot:Node"
+    ],
+    [
+      "tools/loose_base.gd",
+      2,
+      "extends RefCounted",
+      "external:godot:RefCounted"
+    ],
+    [
+      "tools/loose_child.gd",
+      1,
+      "extends LooseBase",
+      "file:tools/loose_base.gd"
+    ]
+  ],
+  "unresolved": [
+    [
+      "game/project.godot",
+      14,
+      "autoload Missing res://autoload/missing.gd",
+      "not_found",
+      "no file game/autoload/missing.gd"
+    ],
+    [
+      "game/scenes/enemy.gd",
+      6,
+      "preload uid://bnowhere0001",
+      "not_found",
+      "no .uid file, .import file or scene header in this project declares uid://bnowhere0001"
+    ],
+    [
+      "game/scenes/main.gd",
+      12,
+      "load(level_dir + \"one.tres\")",
+      "dynamic",
+      null
+    ],
+    [
+      "game/scenes/main.gd",
+      13,
+      "load res://scenes/nope.tscn",
+      "not_found",
+      "no file game/scenes/nope.tscn"
+    ],
+    [
+      "game/scenes/main.gd",
+      15,
+      "Dup",
+      "ambiguous",
+      "Dup is declared by game/scripts/dup_a.gd, game/scripts/dup_b.gd"
+    ],
+    [
+      "game/scenes/main.gd",
+      16,
+      "load res://Scenes/Player.tscn",
+      "not_found",
+      "no file game/Scenes/Player.tscn; game/scenes/player.tscn differs only in case"
+    ],
+    [
+      "game/scenes/main.tscn",
+      7,
+      "Texture2D res://art/sprite.png",
+      "not_found",
+      "game/art/sprite.png was skipped (binary)"
+    ],
+    [
+      "game/scenes/main.tscn",
+      8,
+      "AudioStream res://sfx/missing.ogg",
+      "not_found",
+      "no file game/sfx/missing.ogg"
+    ],
+    [
+      "game/scripts/tests.gd",
+      11,
+      "load(path)",
+      "dynamic",
+      null
+    ],
+    [
+      "game/scripts/typo.gd",
+      1,
+      "extends Nodee",
+      "not_found",
+      "no class_name Nodee in this project and not a Godot 4.7 built-in class"
+    ],
+    [
+      "game/scripts/typo.gd",
+      3,
+      "\"res://levels/%s.tres\" % \"one\"",
+      "dynamic",
+      null
+    ],
+    [
+      "loose.gd",
+      3,
+      "preload res://game/scenes/main.gd",
+      "not_found",
+      "res:// path in a file outside every Godot project (no project.godot above it)"
+    ]
+  ]
+}

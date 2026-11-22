@@ -1,0 +1,24 @@
+{
+  "calls": [
+    "server.go:12 sym:server.go#Server.Run -> sym:base.go#Base.Log [resolved]",
+    "server.go:18 sym:server.go#main -> sym:server.go#Server.Run [heuristic]"
+  ],
+  "entries": [
+    "main \"main\" server.go:16 -> sym:server.go#main"
+  ],
+  "stats": [
+    "server.go: exact 0, resolved 1, heuristic 1, ambiguous 0, unresolved 1"
+  ],
+  "supers": [
+    "sym:server.go#Server : Base -> sym:base.go#Base [resolved] server.go:5",
+    "sym:server.go#Server : sync.Mutex -> ? [-] server.go:5"
+  ],
+  "symbols": [
+    "struct sym:base.go#Base L3-3 exported",
+    "method sym:base.go#Base.Log L5-5 exported",
+    "interface sym:base.go#Logger L7-9 exported",
+    "struct sym:server.go#Server L5-9 exported",
+    "method sym:server.go#Server.Run L11-14 exported",
+    "function sym:server.go#main L16-19"
+  ]
+}

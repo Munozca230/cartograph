@@ -1,0 +1,89 @@
+{
+  "id": "dir:src/ui",
+  "level": "folder",
+  "depth": 3,
+  "uses": [
+    {
+      "id": "dir:src/core",
+      "weight": 2,
+      "children": [
+        {
+          "id": "dir:src",
+          "weight": 1,
+          "children": [
+            {
+              "id": "dir:src/core",
+              "seen": true,
+              "children": []
+            },
+            {
+              "id": "dir:src/infra",
+              "seen": true,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dir:src/infra",
+      "weight": 1,
+      "children": [
+        {
+          "id": "dir:src/core",
+          "seen": true,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "uses_more": 0,
+  "used_by": [
+    {
+      "id": "dir:src",
+      "weight": 2,
+      "children": [
+        {
+          "id": "dir:src/core",
+          "seen": true,
+          "children": []
+        },
+        {
+          "id": "dir:tests",
+          "weight": 1,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "dir:src/core",
+      "weight": 1,
+      "children": [
+        {
+          "id": "dir:src",
+          "seen": true,
+          "children": []
+        },
+        {
+          "id": "dir:src/infra",
+          "weight": 2,
+          "children": [
+            {
+              "id": "dir:src",
+              "seen": true,
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "dir:scripts",
+          "weight": 1,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "used_by_more": 0,
+  "libraries": [],
+  "libraries_more": 0
+}

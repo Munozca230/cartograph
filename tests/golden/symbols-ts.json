@@ -1,0 +1,52 @@
+{
+  "calls": [
+    "scripts/page.js:3 sym:scripts/page.js#boot -> sym:scripts/legacy.js#legacyHelper [heuristic]",
+    "src/app.ts:9 sym:src/app.ts#run -> sym:src/store.ts#Store [resolved]",
+    "src/app.ts:10 sym:src/app.ts#run -> sym:src/store.ts#Store.compactSegments [heuristic]",
+    "src/app.ts:12 sym:src/app.ts#run -> sym:src/store.ts#Store [resolved]",
+    "src/app.ts:13 sym:src/app.ts#run -> sym:src/store.ts#Store.flushPending [heuristic]",
+    "src/app.ts:14 sym:src/app.ts#run -> sym:src/util.ts#helper [resolved]",
+    "src/app.ts:15 sym:src/app.ts#run -> sym:src/dup-a.ts#dup [resolved]",
+    "src/app.ts:19 sym:src/app.ts#run -> sym:src/util.ts#slugify [resolved]",
+    "src/cli.ts:5 sym:src/cli.ts#runBuild -> sym:src/util.ts#helper [resolved]",
+    "src/server.ts:7 sym:src/server.ts#getUser -> sym:src/app.ts#run [resolved]",
+    "src/store.ts:3 sym:src/store.ts#Store.save -> sym:src/store.ts#Store.flushPending [exact]",
+    "src/util.ts:4 sym:src/util.ts#slugify -> sym:src/util.ts#normalize [exact]",
+    "src/view.tsx:6 sym:src/view.tsx#View -> sym:src/panel.tsx#Panel [resolved]"
+  ],
+  "entries": [
+    "cli \"build\" src/cli.ts:8 -> sym:src/cli.ts#runBuild",
+    "http \"GET /users/:id\" src/server.ts:10 -> sym:src/server.ts#getUser"
+  ],
+  "stats": [
+    "scripts/page.js: exact 0, resolved 0, heuristic 1, ambiguous 0, unresolved 0",
+    "src/app.ts: exact 0, resolved 5, heuristic 2, ambiguous 1, unresolved 3",
+    "src/cli.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 3",
+    "src/client.ts: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "src/server.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 4",
+    "src/store.ts: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0",
+    "src/util.ts: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 3",
+    "src/view.tsx: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 0"
+  ],
+  "supers": [],
+  "symbols": [
+    "function sym:scripts/legacy.js#legacyHelper L2-4 exported",
+    "function sym:scripts/page.js#boot L2-4 exported",
+    "function sym:src/app.ts#run L8-20 exported",
+    "function sym:src/cli.ts#runBuild L4-6",
+    "function sym:src/client.ts#load L4-6 exported",
+    "function sym:src/dup-a.ts#dup L1-3 exported",
+    "function sym:src/dup-b.ts#dup L1-3 exported",
+    "function sym:src/panel.tsx#Panel L1-3 exported",
+    "function sym:src/server.ts#getUser L6-8",
+    "class sym:src/store.ts#Store L1-11 exported",
+    "method sym:src/store.ts#Store.save L2-4 exported",
+    "method sym:src/store.ts#Store.flushPending L6-6 exported",
+    "method sym:src/store.ts#Store.compactSegments L8-10 exported",
+    "const sym:src/util.ts#MAX_ITEMS L1-1 exported",
+    "function sym:src/util.ts#slugify L3-5 exported",
+    "function sym:src/util.ts#helper L7-9 exported",
+    "function sym:src/util.ts#normalize L11-13",
+    "function sym:src/view.tsx#View L3-9 exported"
+  ]
+}

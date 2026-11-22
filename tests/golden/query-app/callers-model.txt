@@ -1,0 +1,9 @@
+callers of sym:src/core/model.ts#Model (class, src/core/model.ts:3) · 4 call sites in 4 files (resolved 4)
+scripts/seed.ts (1)
+  :3 (top level) [resolved]
+src/core/service.ts (1)
+  :5 run() [resolved]
+src/dead.ts (1)
+  :3 (top level) [resolved]
+src/infra/db.ts (1)
+  :5 connect() [resolved]

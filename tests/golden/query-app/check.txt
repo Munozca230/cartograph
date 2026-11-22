@@ -1,0 +1,22 @@
+rules from cartograph.toml
+FAIL: 5 rule violations
+[VIOLATION] layer_violation:core->ui
+  layer core depends on ui (not in its allow list): 1 import
+    src/core/util.ts:1 → src/ui/widgets.ts
+[VIOLATION] layer_violation:ui->infra
+  layer ui depends on infra (forbidden): 1 import
+    src/ui/app.ts:2 → src/infra/db.ts
+[VIOLATION] fan_out_limit:file:src/big.ts
+  src/big.ts depends on 5 files (max_fan_out = 4)
+    src/core/ 4
+    src/ui/ 1
+[VIOLATION] cycle:file:src/core/model.ts
+  3 files tangled in a cycle (shortest loop: repo.ts → service.ts)
+    src/core/repo.ts:1 → src/core/service.ts
+    src/core/service.ts:2 → src/core/repo.ts
+[VIOLATION] folder_cycle:dir:src/core
+  folders src/core/ and src/ui/ depend on each other
+    src/core/ → src/ui/ (1 file pair, e.g. src/core/util.ts:1 → src/ui/widgets.ts)
+    src/ui/ → src/core/ (1 file pair, e.g. src/ui/app.ts:1 → src/core/service.ts)
+    lightest link to cut: src/core/ → src/ui/ (1)
+informational: 3 findings (info 1, warning 2): orphan 3

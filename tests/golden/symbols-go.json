@@ -1,0 +1,28 @@
+{
+  "calls": [
+    "main.go:11 sym:main.go#main -> sym:store/store.go#New [resolved]",
+    "main.go:12 sym:main.go#main -> sym:store/store.go#Store.Save [heuristic]",
+    "main.go:14 sym:main.go#main -> sym:helpers.go#localHelper [resolved]",
+    "store/store.go:16 sym:store/store.go#Store.Save -> sym:store/store.go#Store.write [exact]"
+  ],
+  "entries": [
+    "main \"main\" main.go:10 -> sym:main.go#main",
+    "http \"ANY /health\" main.go:13 -> sym:main.go#health"
+  ],
+  "stats": [
+    "main.go: exact 0, resolved 2, heuristic 1, ambiguous 0, unresolved 2",
+    "store/store.go: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 1"
+  ],
+  "supers": [],
+  "symbols": [
+    "const sym:helpers.go#Version L3-3 exported",
+    "function sym:helpers.go#localHelper L5-7",
+    "function sym:main.go#main L10-16",
+    "function sym:main.go#health L18-18",
+    "struct sym:store/store.go#Store L3-5 exported",
+    "interface sym:store/store.go#Saver L7-9 exported",
+    "function sym:store/store.go#New L11-13 exported",
+    "method sym:store/store.go#Store.Save L15-17 exported",
+    "method sym:store/store.go#Store.write L19-21"
+  ]
+}

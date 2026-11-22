@@ -1,0 +1,75 @@
+{
+  "id": "file:src/ui/app.ts",
+  "level": "file",
+  "depth": 2,
+  "uses": [
+    {
+      "id": "file:src/core/service.ts",
+      "line": 1,
+      "children": [
+        {
+          "id": "file:src/core/model.ts",
+          "line": 1,
+          "children": []
+        },
+        {
+          "id": "file:src/core/repo.ts",
+          "line": 2,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "file:src/ui/widgets.ts",
+      "line": 3,
+      "children": [
+        {
+          "id": "file:src/core/model.ts",
+          "line": 1,
+          "seen": true,
+          "type_only": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "file:src/infra/db.ts",
+      "line": 2,
+      "children": [
+        {
+          "id": "file:src/core/model.ts",
+          "line": 1,
+          "seen": true,
+          "children": []
+        },
+        {
+          "id": "file:src/core/util.ts",
+          "line": 2,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "uses_more": 0,
+  "used_by": [
+    {
+      "id": "file:src/main.ts",
+      "line": 1,
+      "children": [
+        {
+          "id": "file:tests/e2e.test.ts",
+          "line": 1,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "file:src/ui/app.spec.ts",
+      "line": 1,
+      "children": []
+    }
+  ],
+  "used_by_more": 0,
+  "libraries": [],
+  "libraries_more": 0
+}

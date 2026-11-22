@@ -1,0 +1,29 @@
+diff main (93a6af2c) → working tree
+files: +2 −0; added src/core/service.ts, src/ui/panel.ts
+rule violations introduced: 4
+[VIOLATION] layer_violation:core->ui
+  layer core depends on ui (forbidden): 1 import
+    src/core/service.ts:2 → src/ui/widget.ts
+[VIOLATION] layer_violation:ui->db
+  layer ui depends on db (forbidden): 2 imports — 1 new dependency since the base
+    src/ui/panel.ts:1 → src/db/store.ts
+[VIOLATION] cycle:file:src/core/model.ts
+  src/core/model.ts and src/core/service.ts import each other
+    src/core/model.ts:2 → src/core/service.ts
+    src/core/service.ts:1 → src/core/model.ts
+[VIOLATION] folder_cycle:dir:src/core
+  folders src/core/ and src/ui/ depend on each other
+    src/core/ → src/ui/ (1 file pair, e.g. src/core/service.ts:2 → src/ui/widget.ts)
+    src/ui/ → src/core/ (1 file pair, e.g. src/ui/view.ts:1 → src/core/model.ts)
+    lightest link to cut: src/core/ → src/ui/ (1)
+new findings: 1 (orphan 1)
+[warning] orphan:file:src/ui/panel.ts
+  nothing depends on it (dead file? it uses 1 file)
+resolved findings: 1 (orphan 1)
+  orphan:file:src/ui/widget.ts: nothing depends on it and it depends on nothing (dead file?)
+unchanged findings: 2
+dependencies between layers (folders outside them): 1 new, 0 removed, 1 changed
+  + core → ui (1 import, e.g. src/core/service.ts:2 → src/ui/widget.ts)
+  ~ ui → db: 1 → 2
+unresolved imports: 1 new, 0 fixed
+  + src/ui/view.ts:3 "./missing" (not_found)

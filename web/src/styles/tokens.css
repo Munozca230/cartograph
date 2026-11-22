@@ -1,0 +1,82 @@
+/* Design tokens (see web/DESIGN.md). Dark is the reference theme; light keeps the same
+   roles: one brass accent for selection, magenta only for problems, one muted blue for
+   every dependency line. The scheme follows <meta name="color-scheme"> (the theme toggle). */
+@layer ui-sdk;
+
+:root {
+  color-scheme: light dark;
+
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
+
+  /* Surfaces */
+  --ground: light-dark(#eef1ef, #0c171e);
+  --panel: light-dark(#f7f8f5, #0f1c25);
+  --raised: light-dark(#ffffff, #132330);
+  --rule: light-dark(#d3dbda, #1d2f3b);
+  --card: light-dark(#ffffff, #132330);
+  --card-line: light-dark(#b7c5c7, #294150);
+  --card-sel: light-dark(#fbf4e4, #1d2b2f);
+  --box: light-dark(rgb(44 98 118 / 0.045), rgb(126 164 180 / 0.035));
+
+  /* Ink */
+  --ink: light-dark(#16232c, #e6e1d3);
+  --muted: light-dark(#4b5d64, #93a2a8);
+  --faint: light-dark(#6a7b81, #5f727a);
+
+  /* Meaning */
+  --brass: light-dark(#86601c, #cdae72);
+  --brass-soft: light-dark(rgb(134 96 28 / 0.1), rgb(205 174 114 / 0.13));
+  --route: light-dark(#4d7c8f, #7ea4b4);
+  --alert: light-dark(#b0336c, #e3709f);
+  --alert-soft: light-dark(rgb(176 51 108 / 0.1), rgb(227 112 159 / 0.14));
+  --live: light-dark(#2f8a63, #7fc3a6);
+  --focus: var(--brass);
+
+  /* Languages: the thin rule under each card and the dots in the explorer. */
+  --lang-typescript: light-dark(#3d6fa8, #7fa6d6);
+  --lang-tsx: light-dark(#2f8288, #78bfc4);
+  --lang-javascript: light-dark(#8e7524, #d6c07e);
+  --lang-python: light-dark(#4f7a3c, #9cc28a);
+  --lang-rust: light-dark(#9a5636, #d49a80);
+  --lang-go: light-dark(#23818b, #79cfd8);
+  --lang-java: light-dark(#7a4f94, #c39ad6);
+  --lang-c: light-dark(#5a4fae, #a9a1e0);
+  --lang-cpp: light-dark(#5a4fae, #a9a1e0);
+  --lang-csharp: light-dark(#3f7552, #8fb79c);
+  --lang-gdscript: light-dark(#66792a, #b9d07a);
+  --lang-other: light-dark(#8a979b, #6e7b80);
+
+  /* Kinds (model/kind.ts): the stripe, icon and size bar of each card, and the name of an
+     open folder. Muted, and kept away from brass (selection), magenta (problems) and the
+     route blue. Contrast: at least 5.1:1 on --card and 4.5:1 on --ground in both themes. */
+  --kind-code: light-dark(#22599c, #6c9ee0);
+  --kind-test: light-dark(#2f7a48, #7fc596);
+  --kind-script: light-dark(#ab4c28, #e58b6b);
+  --kind-style: light-dark(#8556bd, #c9a9ef);
+  --kind-data: light-dark(#57544b, #9b988e);
+
+  /* Type: three sizes in the whole app. */
+  --t-title: 20px;
+  --t-body: 13px;
+  --t-small: 11px;
+  --serif: "Cormorant Garamond Variable", "Cormorant Garamond", Georgia, serif;
+  --sans: "Hanken Grotesk Variable", "Hanken Grotesk", "Segoe UI", system-ui, sans-serif;
+
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --shadow: 0 18px 40px -18px light-dark(rgb(22 35 44 / 0.35), rgb(0 0 0 / 0.7));
+}
+
+@media (forced-colors: active) {
+  :root {
+    --brass: Highlight;
+    --focus: Highlight;
+    --rule: CanvasText;
+    --ink: CanvasText;
+    --muted: CanvasText;
+  }
+}

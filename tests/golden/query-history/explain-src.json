@@ -1,0 +1,62 @@
+{
+  "id": "dir:src",
+  "node": "dir",
+  "lang": null,
+  "loc": 53,
+  "files": 5,
+  "kind": null,
+  "layer": null,
+  "entry": null,
+  "unresolved": 0,
+  "imports": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "imported_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "tested_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "libraries": [],
+  "libraries_more": 0,
+  "subfolders": [],
+  "subfolders_more": 0,
+  "findings": [
+    {
+      "id": "orphan:file:src/api.ts",
+      "severity": "warning",
+      "title": "nothing depends on it (dead file? it uses 1 file)"
+    },
+    {
+      "id": "orphan:file:src/client.ts",
+      "severity": "warning",
+      "title": "nothing depends on it and it depends on nothing (dead file?)"
+    },
+    {
+      "id": "orphan:file:src/helpers.ts",
+      "severity": "warning",
+      "title": "nothing depends on it and it depends on nothing (dead file?)"
+    },
+    {
+      "id": "hidden_coupling:file:src/client.ts->file:src/server.ts",
+      "severity": "info",
+      "title": "hidden coupling: src/client.ts and src/server.ts changed together in 10 commits, no dependency either way"
+    }
+  ],
+  "findings_more": 0,
+  "symbols": {
+    "total": 5,
+    "exported": 5,
+    "main": [],
+    "more": 0
+  },
+  "git": null,
+  "git_note": "per file; hottest here: `cartograph query hotspots --within dir:src`",
+  "annotation": null
+}

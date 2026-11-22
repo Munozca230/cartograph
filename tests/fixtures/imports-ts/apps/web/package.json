@@ -1,0 +1,4 @@
+{
+  "name": "@fx/web",
+  "dependencies": { "react": "^18.0.0", "lodash": "^4.0.0", "@fx/ui": "*", "@fx/shared": "*" }
+}

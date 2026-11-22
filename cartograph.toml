@@ -1,0 +1,61 @@
+# Architecture rules of cartograph itself, enforced by `cartograph check` (format:
+# docs/cartograph-toml.md). Started from `cartograph infer`, which groups folders by
+# coupling, then rewritten by hand to the crate layering the workspace wants. A crate may
+# depend only on the layers below it:
+#
+#   cli -> mcp -> server -> query -> index -> core          web (separate)
+#
+# - core: the graph model and its SQLite store. Depends on no other crate.
+# - index: walk, import and symbol extraction, resolution, git history. Builds the graph.
+# - query: answers and findings over a stored graph. It never indexes
+#   (cartograph-index is only a dev-dependency, for its tests).
+# - server (HTTP API, file watcher, run scheduler) and mcp (stdio tools for agents) serve
+#   queries over a live index. mcp reuses the server's watcher and scheduler; the server
+#   never uses mcp.
+# - cli: the binary, on top of everything.
+# - web: the browser UI. It talks to the server over HTTP only, and no Rust code imports
+#   it.
+#
+# Tests never count (findings skip them). The fixture repos under tests/fixtures are test
+# data with their own layouts, so they stay out of every finding.
+
+ignore = ["tests/fixtures/**"]
+
+[[layers]]
+name = "cli"
+paths = ["crates/cartograph-cli"]
+allow = ["mcp", "server", "query", "index", "core"]
+
+[[layers]]
+name = "mcp"
+paths = ["crates/cartograph-mcp"]
+allow = ["server", "query", "index", "core"]
+
+[[layers]]
+name = "server"
+paths = ["crates/cartograph-server"]
+allow = ["query", "index", "core"]
+
+[[layers]]
+name = "query"
+paths = ["crates/cartograph-query"]
+allow = ["core"]
+
+[[layers]]
+name = "index"
+paths = ["crates/cartograph-index"]
+allow = ["core"]
+
+[[layers]]
+name = "core"
+paths = ["crates/cartograph-core"]
+allow = []
+
+[[layers]]
+name = "web"
+paths = ["web"]
+allow = []
+
+[rules]
+# The Rust crates have no file cycles: keep it that way.
+no_cycles = ["crates/**"]

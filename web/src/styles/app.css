@@ -1,0 +1,2018 @@
+/* cartograph: the layered plan ("Plano por capas"). See web/DESIGN.md.
+   Three type sizes: --t-title (serif headings), --t-body, --t-small. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  accent-color: var(--brass);
+  scrollbar-color: var(--rule) transparent;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 var(--t-body) / 1.45 var(--sans);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+p,
+ul,
+ol,
+dl,
+dd {
+  margin: 0;
+  padding: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--brass-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.small {
+  font-size: var(--t-small);
+}
+.muted {
+  color: var(--muted);
+}
+.faint {
+  color: var(--faint);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 50;
+  padding: 6px 10px;
+  background: var(--raised);
+  border: 1px solid var(--brass);
+  border-radius: 6px;
+  color: var(--ink);
+  translate: 0 -200%;
+  &:focus-visible {
+    translate: 0 0;
+  }
+}
+
+.icon {
+  flex: none;
+}
+
+/* ------------------------------------------------------------------ header and toolbar */
+
+.app {
+  display: grid;
+  grid-template-rows: 48px 44px minmax(0, 1fr);
+  height: 100%;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mark {
+  flex: none;
+  stroke: var(--brass);
+  stroke-width: 1.2;
+  & .needle {
+    fill: var(--brass);
+    stroke: none;
+  }
+}
+.brand-app {
+  color: var(--muted);
+}
+.proj {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 600 var(--t-title) / 1 var(--serif);
+  letter-spacing: 0.01em;
+}
+
+/* The live dot next to the project name; text only while indexing or offline. */
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: var(--t-small);
+  & .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--live);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--live) 18%, transparent);
+  }
+  &:hover {
+    background: color-mix(in oklab, var(--rule) 50%, transparent);
+  }
+  &[data-state="indexing"] .dot {
+    background: var(--brass);
+    box-shadow: none;
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+  &[data-state="offline"] .dot {
+    background: var(--alert);
+    box-shadow: none;
+  }
+  &[data-state="idle"] .dot {
+    background: var(--faint);
+    box-shadow: none;
+  }
+}
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.top-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+  &.warn {
+    border-color: color-mix(in oklab, var(--alert) 45%, var(--rule));
+    color: var(--ink);
+  }
+}
+button.chip:hover {
+  color: var(--ink);
+  border-color: var(--card-line);
+}
+/* The problem dot: the same magenta mark as on the cards. */
+.pdot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--alert);
+  fill: var(--alert);
+}
+.issues {
+  border-color: color-mix(in oklab, var(--alert) 45%, var(--rule));
+  color: var(--ink);
+}
+
+.search {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  width: 190px;
+  padding: 0 6px 0 11px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--faint);
+  &:hover {
+    border-color: var(--card-line);
+  }
+}
+.search-text {
+  flex: 1;
+  text-align: left;
+}
+.kbd {
+  font-size: var(--t-small);
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 18px;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--muted);
+  &:hover {
+    color: var(--ink);
+    border-color: var(--card-line);
+  }
+  &[aria-expanded="true"] {
+    color: var(--brass);
+    border-color: var(--brass);
+  }
+}
+
+.tooltip {
+  max-width: 280px;
+  padding: 6px 9px;
+  border: 1px solid var(--card-line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--t-small);
+  line-height: 1.45;
+  box-shadow: var(--shadow);
+  transition: opacity 160ms var(--ease-out);
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+  }
+}
+
+/* The plan's own controls: same ground as the plan, so it reads as part of it. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 14px;
+  background: var(--ground);
+  border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent);
+  white-space: nowrap;
+  & .chip {
+    height: 28px;
+    padding: 0 10px;
+    font-size: var(--t-small);
+  }
+  & .sep {
+    width: 1px;
+    height: 18px;
+    background: var(--rule);
+  }
+}
+.levels {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  & .levels-label {
+    padding: 0 8px 0 6px;
+    color: var(--faint);
+    font-size: var(--t-small);
+  }
+  & > .faint {
+    padding: 0 6px;
+  }
+}
+.level {
+  min-width: 30px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
+  color: var(--muted);
+  &:hover {
+    color: var(--ink);
+    background: color-mix(in oklab, var(--rule) 55%, transparent);
+  }
+  &[aria-pressed="true"] {
+    background: var(--brass-soft);
+    color: var(--brass);
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--brass) 55%, transparent);
+  }
+  /* Opened or closed by hand on top of this level: a small dot, and a click resets it. */
+  &[data-custom] {
+    position: relative;
+    &::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--brass);
+    }
+  }
+}
+.toggle {
+  & .icon {
+    color: var(--faint);
+  }
+  &[aria-pressed="true"] {
+    border-color: var(--brass);
+    color: var(--ink);
+    background: var(--brass-soft);
+    & .icon {
+      color: var(--brass);
+    }
+  }
+}
+.toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+.zoom {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.btn.fit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  color: var(--muted);
+  &:hover {
+    color: var(--ink);
+  }
+}
+
+/* Popovers: the ⓘ numbers and theme, the "?" legend. */
+.pop {
+  z-index: 20;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: 14px 16px;
+  border: 1px solid var(--card-line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  /* Rendered inside the bars, which never wrap: the popover text does. */
+  white-space: normal;
+  box-shadow: var(--shadow);
+  outline: none;
+  transition: opacity 140ms var(--ease-out);
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+  }
+}
+.pop-title {
+  font: 600 var(--t-title) / 1.15 var(--serif);
+  margin-bottom: 2px;
+}
+.pop-sub {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--t-small);
+}
+.info-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 22px;
+  margin: 14px 0;
+  & div {
+    display: grid;
+  }
+  & dt {
+    font-weight: 600;
+    font-size: 16px;
+  }
+  & dd {
+    color: var(--muted);
+    font-size: var(--t-small);
+  }
+}
+.pop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+}
+
+.legend-pop {
+  width: 330px;
+}
+.legend {
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  margin-top: 10px;
+  & li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--muted);
+  }
+  & svg {
+    flex: none;
+    fill: none;
+  }
+}
+.lg-card {
+  fill: var(--card);
+  stroke: var(--card-line);
+}
+.lg-bar {
+  fill: var(--kind-code);
+}
+.lg-tab {
+  fill: var(--card);
+  stroke: var(--card-line);
+}
+.lg-stripe {
+  fill: var(--k);
+}
+.legend svg .lg-glyph {
+  color: var(--k);
+}
+.legend-h {
+  margin-top: 12px;
+  color: var(--faint);
+  font-size: var(--t-small);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.legend-hint {
+  color: var(--faint);
+  font-size: var(--t-small);
+}
+.lg-box {
+  fill: var(--box);
+  stroke: var(--rule);
+}
+.lg-ext {
+  fill: var(--card);
+  stroke: var(--card-line);
+  stroke-dasharray: 3 2;
+}
+.lg-dot {
+  fill: var(--alert);
+}
+.lg-route {
+  stroke: var(--route);
+}
+.legend svg .lg-route-head {
+  fill: var(--route);
+}
+.lg-alert {
+  stroke: var(--alert);
+}
+.legend svg .lg-alert-head {
+  fill: var(--alert);
+}
+
+/* ------------------------------------------------------------------ main: plan and detail */
+
+.main {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------------ explorer drawer */
+
+.drawer.side {
+  width: min(320px, 92vw);
+  padding: 0;
+  border-left: 0;
+  border-right: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+.drawer-backdrop.light {
+  background: color-mix(in oklab, var(--ground) 25%, transparent);
+}
+.side-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 14px 10px 16px;
+  & .drawer__title {
+    flex: 1;
+  }
+}
+.tree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden auto;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+.tree {
+  position: relative;
+}
+.tree-item {
+  position: absolute;
+  inset-inline: 0;
+  height: 26px;
+  outline: none;
+  &:focus-visible > .tree-row {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-right: 16px;
+  color: var(--ink);
+  white-space: nowrap;
+  cursor: pointer;
+  &:hover {
+    background: color-mix(in oklab, var(--rule) 45%, transparent);
+  }
+  &[data-selected] {
+    background: var(--brass-soft);
+    box-shadow: inset 2px 0 0 var(--brass);
+    & .name {
+      font-weight: 600;
+    }
+  }
+  &.dim .name {
+    color: var(--faint);
+  }
+  & .chev {
+    display: inline-grid;
+    place-items: center;
+    width: 12px;
+    flex: none;
+    color: var(--faint);
+    & svg {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.4;
+      transition: rotate 160ms var(--ease-out);
+    }
+    &[data-expanded] svg {
+      rotate: 90deg;
+    }
+  }
+  & .ld {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: none;
+  }
+  & .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  & .num {
+    color: var(--faint);
+    font-size: var(--t-small);
+  }
+}
+.tree-alert {
+  color: var(--alert);
+  font-size: var(--t-small);
+}
+
+/* ------------------------------------------------------------------ plan pane */
+
+.pane {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ground);
+  outline: none;
+}
+
+.stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  outline: none;
+  touch-action: none;
+  &:active {
+    cursor: grabbing;
+  }
+  &:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--focus);
+  }
+}
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+.stage-busy {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  translate: -50% 0;
+  padding: 4px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--t-small);
+  pointer-events: none;
+}
+svg.dia {
+  position: absolute;
+  inset: 0;
+  display: block;
+  user-select: none;
+}
+
+/* The plan itself. Text inside it is 14 px (PLAN_FONT), never fitted under 12 px on screen. */
+.ctr {
+  & > rect {
+    fill: var(--box);
+    stroke: var(--rule);
+  }
+  &.sel > rect {
+    stroke: var(--brass);
+  }
+  & .ctr-head {
+    cursor: pointer;
+    outline: none;
+    &:focus-visible .ctr-hit {
+      stroke: var(--focus);
+      stroke-width: 2;
+    }
+  }
+  & .ctr-hit {
+    fill: transparent;
+  }
+  & .ctr-head:hover .cname,
+  &.hover .cname {
+    fill: var(--ink);
+  }
+  /* An open folder's name in the color of its kind (--k-text: readable on nested box fills). */
+  & .cname {
+    font: 600 14px var(--sans);
+    fill: var(--k-text, var(--muted));
+  }
+}
+
+/* Kinds (model/kind.ts): one custom property, read by stripes, glyphs, labels and tooltips.
+   As text on box fills, which darken with each nested box, the light theme pulls the kind
+   35% toward the ink: at least 4.8:1 on six nested boxes. The dark one needs no help.
+   --k-tint is a card painted in its kind, for the plan zoomed out past the floor. */
+:is(.k-code, .k-test, .k-script, .k-style, .k-data) {
+  --k-text: light-dark(color-mix(in srgb, var(--k) 65%, var(--ink)), var(--k));
+  --k-tint: light-dark(color-mix(in oklab, var(--k) 18%, var(--card)), color-mix(in oklab, var(--k) 26%, var(--card)));
+}
+.k-code {
+  --k: var(--kind-code);
+}
+.k-test {
+  --k: var(--kind-test);
+}
+.k-script {
+  --k: var(--kind-script);
+}
+.k-style {
+  --k: var(--kind-style);
+}
+.k-data {
+  --k: var(--kind-data);
+}
+.edge {
+  & .line {
+    fill: none;
+    stroke: var(--route);
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    opacity: 0.55;
+  }
+  & .head {
+    fill: var(--route);
+    opacity: 0.8;
+  }
+  &.ext .line {
+    stroke: var(--faint);
+    opacity: 0.5;
+  }
+  &.ext .head {
+    fill: var(--faint);
+    opacity: 0.7;
+  }
+  &.dim .line {
+    opacity: 0.18;
+  }
+  &.dim .head {
+    opacity: 0.25;
+  }
+  &.hot .line {
+    stroke: var(--brass);
+    opacity: 0.9;
+  }
+  &.hot .head {
+    fill: var(--brass);
+    opacity: 1;
+  }
+  &.alert .line {
+    stroke: var(--alert);
+    opacity: 0.95;
+  }
+  &.alert .head {
+    fill: var(--alert);
+    opacity: 1;
+  }
+}
+.hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.card {
+  cursor: pointer;
+  outline: none;
+  & .face {
+    fill: var(--card);
+    stroke: var(--card-line);
+    transition: stroke 120ms;
+  }
+  & .stack {
+    fill: var(--card);
+    stroke: var(--card-line);
+    opacity: 0.55;
+  }
+  /* A folder's tab: same fill and line as the face, so the two read as one shape. */
+  & .tab {
+    fill: var(--card);
+    stroke: var(--card-line);
+    transition: stroke 120ms;
+  }
+  & .stripe {
+    fill: var(--k);
+  }
+  & .glyph {
+    color: var(--k);
+  }
+  & .cn {
+    font: 600 14px var(--sans);
+    fill: var(--ink);
+  }
+  & .size .track {
+    fill: var(--rule);
+  }
+  &:hover :is(.face, .tab),
+  &.hover :is(.face, .tab) {
+    stroke: var(--muted);
+  }
+  &:focus-visible :is(.face, .tab) {
+    stroke: var(--focus);
+    stroke-width: 2;
+  }
+  &.nb :is(.face, .tab) {
+    stroke: color-mix(in oklab, var(--brass) 70%, var(--card-line));
+  }
+  &.sel :is(.face, .tab) {
+    stroke: var(--brass);
+    stroke-width: 1.5;
+    fill: var(--card-sel);
+  }
+  &.far {
+    opacity: 0.55;
+  }
+  &.iso {
+    opacity: 0.5;
+  }
+  &.iso.sel {
+    opacity: 1;
+  }
+  &.ext {
+    & .face {
+      stroke-dasharray: 4 3;
+    }
+    & .cn {
+      font-weight: 500;
+      fill: var(--muted);
+    }
+    & .eco {
+      font: 400 14px var(--sans);
+      fill: var(--faint);
+    }
+  }
+  &.pulse .face {
+    animation: card-pulse 1.6s var(--ease-out) 1;
+  }
+}
+@keyframes card-pulse {
+  0%,
+  40% {
+    stroke: var(--brass);
+    stroke-width: 2.5;
+  }
+}
+.axis {
+  & path {
+    stroke: var(--faint);
+    stroke-width: 1;
+    fill: none;
+    opacity: 0.7;
+  }
+}
+.axis-t {
+  font: 400 14px var(--sans);
+  fill: var(--faint);
+  letter-spacing: 0.02em;
+}
+.tag {
+  & rect {
+    fill: var(--ground);
+    stroke: var(--brass);
+  }
+  & text {
+    font: 600 14px var(--sans);
+    fill: var(--brass);
+  }
+}
+/* Zoomed out by hand past the readability floor: the plan's own text goes and the labels below
+   take over. Glyphs, tabs, stripes and size bars would be specks there: the whole card takes
+   its kind's color instead (and the plan has fewer shapes to paint while zooming). */
+svg.dia.tiny {
+  & text,
+  & .tag,
+  & .glyph,
+  & .tab,
+  & .stripe,
+  & .size {
+    display: none;
+  }
+  & .card:not(.ext, .sel) .face {
+    fill: var(--k-tint);
+  }
+}
+
+/* Names over a plan zoomed out past the floor, at 12 px on screen (planLabels.ts). The layer
+   moves with the pan; each label has the width it was placed with and ends in an ellipsis.
+   A card's name sits on the card, in the card's own tint (it may run into the gap after the
+   card); a box title sits on a pill of the ground. A label that comes in fades in briefly.
+   Flat fills, no blurred halos: cheap to repaint while zooming. */
+.labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+@keyframes lbl-in {
+  from {
+    opacity: 0;
+  }
+}
+.lbl {
+  position: absolute;
+  box-sizing: border-box;
+  height: 16px;
+  padding: 0 4px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--k-tint, var(--card));
+  color: var(--ink);
+  font: 600 12px / 16px var(--sans);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  animation: lbl-in 140ms ease-out;
+  &.box {
+    border-radius: 4px;
+    background: color-mix(in oklab, var(--ground) 78%, transparent);
+    color: var(--k-text, var(--muted));
+  }
+  &.k-ext {
+    color: var(--muted);
+  }
+}
+
+.minimap {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  border: 1px solid var(--card-line);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--panel) 92%, transparent);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  & .mm-box {
+    fill: var(--box);
+    stroke: var(--rule);
+    stroke-width: 6;
+  }
+  & .mm-card {
+    fill: var(--card-line);
+  }
+  & .mm-view {
+    fill: var(--brass-soft);
+    stroke: var(--brass);
+  }
+}
+
+/* A transient tooltip: the only text that floats over the plan. */
+.tip {
+  position: fixed;
+  z-index: 5;
+  display: grid;
+  gap: 1px;
+  max-width: 320px;
+  padding: 7px 10px;
+  border: 1px solid var(--card-line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--t-small);
+  line-height: 1.5;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+  & b {
+    margin-bottom: 1px;
+    color: var(--ink);
+    font-weight: 600;
+    font-size: var(--t-body);
+  }
+  & .alert {
+    color: var(--alert);
+  }
+  /* What it is, with a swatch of its kind. */
+  & .kind {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink);
+    &::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      background: var(--k);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ detail drawer */
+
+.detail {
+  /* Over the right of the plan, so opening it never moves a card under the pointer. */
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 300px;
+  box-shadow: var(--shadow);
+  min-height: 0;
+  padding: 14px 18px 16px;
+  overflow: hidden auto;
+  background: var(--panel);
+  border-left: 1px solid var(--rule);
+  scrollbar-width: thin;
+  animation: detail-in 160ms var(--ease-out);
+  & .kind {
+    color: var(--muted);
+  }
+  & h2 {
+    font: 600 var(--t-title) / 1.15 var(--serif);
+    overflow-wrap: anywhere;
+    outline: none;
+  }
+  & .path {
+    overflow-wrap: anywhere;
+  }
+}
+@keyframes detail-in {
+  from {
+    opacity: 0;
+    translate: 12px 0;
+  }
+}
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: -6px;
+}
+.lead {
+  color: var(--muted);
+  text-wrap: pretty;
+  &.alert {
+    padding-left: 10px;
+    border-left: 2px solid var(--alert);
+    color: var(--ink);
+  }
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  & span {
+    display: grid;
+    padding: 8px 10px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: var(--t-small);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  & b {
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 16px;
+  }
+}
+.note {
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--brass);
+  color: var(--muted);
+  & b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  &.alert {
+    border-color: var(--alert);
+  }
+}
+.block {
+  & h5 {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    font: 600 var(--t-body) / 1.45 var(--sans);
+    & span {
+      color: var(--faint);
+      font-weight: 400;
+      font-size: var(--t-small);
+    }
+  }
+}
+.rows {
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  & li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 64px 24px;
+    align-items: center;
+    gap: 8px;
+    height: 21px;
+    white-space: nowrap;
+  }
+  & .n {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: left;
+    &:hover {
+      color: var(--brass);
+    }
+  }
+  & .bar2 {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--rule);
+    overflow: hidden;
+    & i {
+      display: block;
+      height: 100%;
+      background: var(--route);
+    }
+  }
+  & .w {
+    text-align: right;
+    color: var(--muted);
+    font-size: var(--t-small);
+  }
+  & .w.wide {
+    grid-column: 2 / 4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  &.out .bar2 i {
+    background: var(--brass);
+  }
+}
+.actions {
+  display: flex;
+  gap: 8px;
+}
+.btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink);
+  white-space: nowrap;
+  &:hover {
+    border-color: var(--card-line);
+  }
+  &.primary {
+    border-color: var(--brass);
+    color: var(--brass);
+  }
+}
+.detail-loading {
+  height: 64px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, transparent, var(--rule), transparent) 0 0 / 200% 100%;
+  opacity: 0.5;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ------------------------------------------------------------------ boot */
+
+.boot {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  background: var(--ground);
+}
+.boot-card {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: 420px;
+  padding: 24px;
+  text-align: center;
+  & .mark {
+    width: 40px;
+    height: 40px;
+  }
+  & h2 {
+    font: 600 var(--t-title) / 1.15 var(--serif);
+    text-wrap: balance;
+  }
+  & p {
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+  & progress {
+    width: 220px;
+    height: 3px;
+    appearance: none;
+    border: 0;
+    border-radius: 2px;
+    background: var(--rule);
+    overflow: hidden;
+    &::-webkit-progress-bar {
+      background: var(--rule);
+    }
+    &::-webkit-progress-value {
+      background: var(--brass);
+    }
+    &::-moz-progress-bar {
+      background: var(--brass);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ issues drawer */
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in oklab, var(--ground) 55%, transparent);
+}
+.drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 100vw);
+  height: 100dvh;
+  padding: 20px;
+  overflow: hidden;
+  border-left: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink);
+}
+.drawer__header {
+  position: relative;
+  padding-right: 40px;
+}
+.drawer__title {
+  font: 600 var(--t-title) / 1.15 var(--serif);
+}
+.drawer__description {
+  margin: 6px 0 14px;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.drawer__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+.drawer__tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.drawer__panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 20px;
+}
+.reason-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  list-style: none;
+  & li {
+    padding: 2px 9px;
+    border: 1px solid var(--rule);
+    border-radius: 11px;
+    color: var(--muted);
+    font-size: var(--t-small);
+  }
+  & strong {
+    color: var(--alert);
+  }
+}
+.tabs__list {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  color: var(--muted);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 transparent;
+  &:hover {
+    color: var(--ink);
+  }
+  &[data-selected] {
+    color: var(--ink);
+    box-shadow: inset 0 -2px 0 var(--brass);
+  }
+  &:focus-visible {
+    outline-offset: -2px;
+  }
+}
+.tabs__count {
+  font-size: var(--t-small);
+  color: var(--muted);
+  &[data-alert] {
+    color: var(--alert);
+  }
+}
+.tabs__panel {
+  outline: none;
+}
+.issue-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+.issue {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--alert);
+  border-radius: 6px;
+  text-align: left;
+  & code {
+    font-family: var(--sans);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+}
+.issue--button:hover {
+  border-color: var(--card-line);
+  border-left-color: var(--alert);
+}
+.issue__head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.issue__mark {
+  color: var(--alert);
+  font-size: var(--t-small);
+}
+.issue__where,
+.issue__detail {
+  color: var(--muted);
+  font-size: var(--t-small);
+  overflow-wrap: anywhere;
+}
+.issue__reason {
+  color: var(--alert);
+  font-size: var(--t-small);
+  font-weight: 600;
+}
+.detail__empty,
+.detail__note {
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ palette */
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in oklab, var(--ground) 50%, transparent);
+}
+.palette {
+  position: fixed;
+  top: 14vh;
+  inset-inline: 0;
+  margin-inline: auto;
+  width: min(600px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--card-line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  transition:
+    opacity 200ms var(--ease-out),
+    translate 200ms var(--ease-out);
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    translate: 0 -6px;
+  }
+}
+.palette__field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule);
+  & svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+}
+.palette__input {
+  flex: 1;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  font: 400 var(--t-title) / 1.2 var(--serif);
+  outline: none;
+  &::placeholder {
+    color: var(--faint);
+  }
+}
+.palette__list {
+  max-height: min(420px, 55vh);
+  overflow: auto;
+  padding: 6px;
+  overscroll-behavior: contain;
+}
+.palette__empty {
+  padding: 14px;
+  color: var(--muted);
+  &:empty {
+    display: none;
+  }
+}
+.palette__group + .palette__group {
+  margin-top: 6px;
+}
+.palette__group-label {
+  padding: 6px 10px 2px;
+  color: var(--muted);
+  font-size: var(--t-small);
+  font-weight: 600;
+}
+.palette__item {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  &[data-highlighted] {
+    background: var(--brass-soft);
+    box-shadow: inset 2px 0 0 var(--brass);
+  }
+}
+.palette__glyph {
+  align-self: center;
+  display: inline-grid;
+  & svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: var(--route);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  &[data-kind="ext"] svg,
+  &[data-kind="action"] svg {
+    stroke: var(--brass);
+  }
+}
+.palette__label {
+  font-weight: 600;
+  & mark {
+    background: none;
+    color: var(--brass);
+    text-decoration: underline 1px;
+    text-underline-offset: 0.2em;
+  }
+}
+.palette__context {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--t-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__footer {
+  display: flex;
+  gap: 16px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: var(--t-small);
+  & kbd {
+    font: inherit;
+  }
+}
+
+/* ------------------------------------------------------------------ toasts */
+
+.toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  width: min(340px, calc(100vw - 32px));
+  height: var(--toast-front-height);
+  &[data-expanded] {
+    height: calc(var(--toast-stack-height) + (var(--toast-count) - 1) * 10px);
+  }
+}
+.toast {
+  --y: calc(var(--toast-index) * -10px);
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: calc(100 - var(--toast-index));
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  height: var(--toast-height);
+  padding: 10px 10px 10px 14px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--brass);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  user-select: none;
+  translate: var(--toast-swipe-x, 0px) calc(var(--y) + var(--toast-swipe-y, 0px));
+  scale: calc(1 - var(--toast-index) * 0.04);
+  transition-property: translate, scale, opacity, height;
+  transition-duration: 320ms;
+  transition-timing-function: var(--ease-out);
+  &[data-type="error"] {
+    border-left-color: var(--alert);
+  }
+  &:not([data-front], [data-expanded]) {
+    height: var(--toast-front-height);
+  }
+  &[data-expanded] {
+    --y: calc(-1 * (var(--toast-offset) + var(--toast-index) * 10px));
+    scale: 1;
+  }
+  &[data-starting-style] {
+    transition: none;
+  }
+  &[data-starting-style][data-front] {
+    --y: 100%;
+  }
+  &:is([data-starting-style]:not([data-front]), [data-ending-style]) {
+    opacity: 0;
+  }
+  &[data-swiping] {
+    transition: none;
+  }
+}
+.toast-text {
+  flex: 1;
+  min-width: 0;
+}
+.toast-title {
+  font-weight: 600;
+}
+.toast-description {
+  color: var(--muted);
+  font-size: var(--t-small);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ------------------------------------------------------------------ narrow screens */
+
+@media (max-width: 1100px) {
+  .brand-app,
+  .search-text,
+  .search .kbd,
+  .btn.fit .fit-text,
+  .levels-label {
+    display: none;
+  }
+  .search {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+@media (max-width: 760px) {
+  .toolbar {
+    overflow-x: auto;
+  }
+}
+
+/* ------------------------------------------------------------------ views: Plano | Flujos */
+
+.views {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 12px;
+  padding: 2px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.view-tab {
+  height: 24px;
+  padding: 0 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  &:hover {
+    color: var(--ink);
+    background: color-mix(in oklab, var(--rule) 55%, transparent);
+  }
+  &[aria-pressed="true"] {
+    background: var(--brass-soft);
+    color: var(--brass);
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--brass) 55%, transparent);
+  }
+}
+/* Both views share the cell; the hidden one keeps its size (and so its camera). */
+.main > .pane,
+.main > .flows {
+  grid-area: 1 / 1;
+}
+.pane[data-hidden] {
+  visibility: hidden;
+}
+
+/* ------------------------------------------------------------------ Flujos */
+
+.flows {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr) 304px;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ground);
+  &:not([data-active]) {
+    visibility: hidden;
+  }
+}
+.flow-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--rule);
+}
+.rail-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  margin: 12px 12px 4px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--ground);
+  color: var(--faint);
+  &:focus-within {
+    border-color: var(--brass);
+  }
+  & input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: none;
+    color: var(--ink);
+  }
+}
+.rail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: 2px 8px 16px;
+  scrollbar-width: thin;
+  & h3,
+  & h4 {
+    margin: 14px 8px 4px;
+    font: 600 var(--t-small) / 1.4 var(--sans);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    & span {
+      color: var(--faint);
+      font-weight: 400;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+  }
+  & h4 {
+    margin-top: 10px;
+    color: var(--faint);
+  }
+  & ul {
+    list-style: none;
+    display: grid;
+    gap: 1px;
+  }
+  & .note {
+    margin: 10px 8px;
+  }
+}
+.entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--ink);
+  &:hover {
+    background: color-mix(in oklab, var(--rule) 45%, transparent);
+  }
+  &[aria-current="true"] {
+    background: var(--brass-soft);
+    box-shadow: inset 2px 0 0 var(--brass);
+    & .ename {
+      font-weight: 600;
+    }
+  }
+}
+/* Names are never cut: a long name wraps at its dots (<wbr>), and the place goes under it. */
+.ename {
+  flex: 1 1 10ch;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+.ewhere {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--t-small);
+  white-space: nowrap;
+}
+.etag {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--k) 15%, transparent);
+  color: light-dark(color-mix(in srgb, var(--k) 70%, var(--ink)), var(--k));
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 17px;
+  white-space: nowrap;
+}
+.t-cli {
+  --k: var(--kind-script);
+}
+.t-http {
+  --k: var(--kind-code);
+}
+.t-main {
+  --k: var(--kind-test);
+}
+.t-godot_main_scene,
+.t-godot_autoload {
+  --k: var(--kind-style);
+}
+.t-fn {
+  --k: var(--route);
+}
+
+.flow-stage {
+  background: var(--ground);
+  /* Cards pass under the minimap: an opaque one keeps their names from showing through it. */
+  & .minimap {
+    background: var(--panel);
+  }
+}
+.flow-dia {
+  & .lane rect {
+    fill: var(--box);
+    stroke: color-mix(in oklab, var(--rule) 85%, transparent);
+  }
+  & .lane-t {
+    font: 600 11px var(--sans);
+    letter-spacing: 0.06em;
+    fill: var(--muted);
+    paint-order: stroke;
+    stroke: var(--ground);
+    stroke-width: 4px;
+    stroke-linejoin: round;
+  }
+}
+.fcard {
+  & .cn {
+    font: 600 14px var(--sans);
+    fill: var(--ink);
+  }
+  & .cm {
+    font: 400 12px var(--sans);
+    fill: var(--muted);
+  }
+  & .pill rect {
+    fill: color-mix(in oklab, var(--route) 12%, var(--card));
+    stroke: color-mix(in oklab, var(--route) 55%, transparent);
+  }
+  & .pill text {
+    font: 600 12px var(--sans);
+    fill: var(--route);
+  }
+  /* Already opened and still cut: the flow's cap, nothing left to click. */
+  & .pill.capped rect {
+    fill: none;
+    stroke: var(--faint);
+    stroke-dasharray: 3 2;
+  }
+  & .pill.capped text {
+    fill: var(--muted);
+    font-weight: 500;
+  }
+  &.root:not(.sel) .face {
+    stroke: color-mix(in oklab, var(--brass) 60%, var(--card-line));
+  }
+  /* Away from the selection: faded, its name still legible in both themes. */
+  &.far {
+    opacity: 0.62;
+  }
+}
+.flow-dia .ecount {
+  font: 600 10px var(--sans);
+  fill: var(--muted);
+  paint-order: stroke;
+  stroke: var(--ground);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.flow-dia .edge.hot .ecount {
+  fill: var(--brass);
+}
+.flow-dia .edge.alert .ecount {
+  fill: var(--alert);
+}
+.flow-dia .edge.dim .ecount {
+  opacity: 0.3;
+}
+.flow-legend {
+  display: grid;
+  gap: 6px;
+  max-width: 300px;
+  color: var(--muted);
+  font-size: var(--t-small);
+  & i {
+    display: inline-block;
+    width: 22px;
+    margin-right: 8px;
+    border-top: 2px solid var(--route);
+    vertical-align: middle;
+  }
+  & i.d {
+    border-top-style: dashed;
+  }
+  & i.f {
+    width: 22px;
+    height: 12px;
+    border: 1px solid var(--card-line);
+    border-radius: 3px;
+    background: var(--card);
+    opacity: 0.62;
+  }
+  & .alert {
+    color: var(--alert);
+    & i {
+      border-color: var(--alert);
+    }
+  }
+}
+.empty-card {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.flow-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 14px 18px 16px;
+  overflow: hidden auto;
+  background: var(--panel);
+  border-left: 1px solid var(--rule);
+  scrollbar-width: thin;
+  & h2 {
+    font: 600 var(--t-title) / 1.15 var(--serif);
+    overflow-wrap: break-word;
+    outline: none;
+  }
+  & .path {
+    overflow-wrap: anywhere;
+  }
+}
+.panel-kicker {
+  margin-bottom: -6px;
+  font: 600 var(--t-small) / 1.4 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.kv {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 4px 10px;
+  & dt {
+    color: var(--muted);
+  }
+  & dd {
+    color: var(--ink);
+  }
+}
+.calls {
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  & button {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 8px;
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--rule) 32%, transparent);
+    text-align: left;
+    &:hover:not(:disabled) {
+      background: color-mix(in oklab, var(--rule) 62%, transparent);
+    }
+    &:disabled {
+      cursor: default;
+    }
+  }
+  & .cf {
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+  & .cc {
+    grid-column: 1 / -1;
+    color: var(--muted);
+    font-size: var(--t-small);
+    overflow-wrap: anywhere;
+  }
+  & .conf {
+    color: var(--live);
+    font-size: var(--t-small);
+  }
+  & .conf.c-heuristic {
+    color: var(--kind-script);
+  }
+  & .more {
+    padding: 2px 8px;
+  }
+}
+.flow-toolbar .crumbs {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  & b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  & .alert {
+    color: var(--alert);
+  }
+}
+.file-flows .etag {
+  margin-right: 4px;
+}

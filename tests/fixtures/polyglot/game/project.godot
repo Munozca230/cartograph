@@ -1,0 +1,11 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="Polyglot Game"
+run/main_scene="res://main.tscn"
+
+[autoload]
+
+GameState="*res://autoload/game_state.gd"

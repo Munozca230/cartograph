@@ -1,0 +1,81 @@
+{
+  "calls": [
+    "tools/job.py:6 sym:tools/job.py#main -> sym:tools/job.py#step [exact]",
+    "web/src/app.ts:6 sym:web/src/app.ts#run -> sym:web/src/store.ts#makeStore [exact]",
+    "web/src/app.ts:7 sym:web/src/app.ts#run -> sym:web/src/store.ts#Store.save [exact]",
+    "web/src/app.ts:7 sym:web/src/app.ts#run -> sym:web/src/util.ts#format [exact]",
+    "web/src/app.ts:8 sym:web/src/app.ts#run -> sym:web/src/app.ts#helper [exact]",
+    "web/src/app.ts:10 sym:web/src/app.ts#run -> sym:web/src/store.ts#fetch [exact]",
+    "web/src/legacy.ts:4 sym:web/src/legacy.ts#old -> sym:web/src/util.ts#format [resolved]",
+    "web/src/store.ts:12 sym:web/src/store.ts#makeStore -> sym:web/src/store.ts#Store [exact]",
+    "web/src/store.ts:17 sym:web/src/store.ts#fetch -> sym:web/src/store.ts#Store.loadAll [exact]",
+    "web/src/store.ts:17 sym:web/src/store.ts#fetch -> sym:web/src/store.ts#makeStore [exact]",
+    "web/src/view.ts:4 sym:web/src/view.ts#show -> sym:web/src/store.ts#Store.save [exact]"
+  ],
+  "covered": [
+    "web/src/app.ts",
+    "web/src/index.ts",
+    "web/src/store.ts",
+    "web/src/util.ts",
+    "web/src/view.ts"
+  ],
+  "edges_added": [
+    "file:web/src/app.ts -> file:web/src/store.ts [uses exact]",
+    "file:web/src/util.ts -> external:npm:lodash [import_external exact]",
+    "file:web/src/util.ts -> file:web/src/app.ts [uses exact]"
+  ],
+  "scip": {
+    "calls_added": 3,
+    "calls_confirmed": 6,
+    "calls_dropped": 1,
+    "calls_upgraded": 3,
+    "deps_added": 2,
+    "externals_added": 1,
+    "files_covered": 5,
+    "indexes": [
+      {
+        "documents": 7,
+        "matched": 6,
+        "occurrences": 44,
+        "path": "index.scip",
+        "prefix": "web",
+        "stale": 1,
+        "tool": "scip-typescript 0.3.14",
+        "unmatched": 1,
+        "unmatched_sample": [
+          "src/generated.ts"
+        ]
+      }
+    ],
+    "packages_matched": 1,
+    "packages_unmatched": 1,
+    "references": 14,
+    "symbols_added": 1,
+    "symbols_matched": 11
+  },
+  "stats": [
+    "tools/job.py: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0",
+    "web/src/app.ts: exact 5, resolved 0, heuristic 0, ambiguous 0, unresolved 3",
+    "web/src/legacy.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 0",
+    "web/src/store.ts: exact 3, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "web/src/util.ts: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "web/src/view.ts: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0"
+  ],
+  "symbols": [
+    "function sym:tools/job.py#step L1-2 exported",
+    "function sym:tools/job.py#main L5-6 exported",
+    "function sym:web/src/app.ts#run L5-11 exported",
+    "function sym:web/src/app.ts#helper L13-15",
+    "function sym:web/src/app.ts#read L17-19 exported",
+    "function sym:web/src/legacy.ts#old L3-5 exported",
+    "class sym:web/src/store.ts#Store L1-9 exported",
+    "method sym:web/src/store.ts#Store.save L3-5 exported",
+    "method sym:web/src/store.ts#Store.loadAll L6-8 exported",
+    "function sym:web/src/store.ts#makeStore L11-13 exported",
+    "const sym:web/src/store.ts#api L15-19 exported",
+    "function sym:web/src/store.ts#fetch L16-18 (scip)",
+    "function sym:web/src/util.ts#format L1-3 exported",
+    "function sym:web/src/util.ts#save L5-7 exported",
+    "function sym:web/src/view.ts#show L3-6 exported"
+  ]
+}

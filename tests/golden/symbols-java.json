@@ -1,0 +1,37 @@
+{
+  "calls": [
+    "src/main/java/com/acme/App.java:7 sym:src/main/java/com/acme/App.java#App.main -> sym:src/main/java/com/acme/core/Repo.java#Repo [resolved]",
+    "src/main/java/com/acme/App.java:8 sym:src/main/java/com/acme/App.java#App.main -> sym:src/main/java/com/acme/core/Repo.java#Repo.persistEntity [heuristic]",
+    "src/main/java/com/acme/App.java:9 sym:src/main/java/com/acme/App.java#App.main -> sym:src/main/java/com/acme/Util.java#Util.format [resolved]",
+    "src/main/java/com/acme/App.java:10 sym:src/main/java/com/acme/App.java#App.main -> sym:src/main/java/com/acme/App.java#App.helper [exact]",
+    "src/main/java/com/acme/core/Repo.java:5 sym:src/main/java/com/acme/core/Repo.java#Repo.persistEntity -> sym:src/main/java/com/acme/core/Repo.java#Repo.validate [exact]",
+    "src/main/java/com/acme/web/UserController.java:8 (top level) -> sym:src/main/java/com/acme/core/Repo.java#Repo [resolved]",
+    "src/main/java/com/acme/web/UserController.java:12 sym:src/main/java/com/acme/web/UserController.java#UserController.get -> sym:src/main/java/com/acme/core/Repo.java#Repo.persistEntity [heuristic]"
+  ],
+  "entries": [
+    "main \"main\" src/main/java/com/acme/App.java:6 -> sym:src/main/java/com/acme/App.java#App.main",
+    "http \"GET /users/{id}\" src/main/java/com/acme/web/UserController.java:10 -> sym:src/main/java/com/acme/web/UserController.java#UserController.get",
+    "http \"POST /users\" src/main/java/com/acme/web/UserController.java:16 -> sym:src/main/java/com/acme/web/UserController.java#UserController.create"
+  ],
+  "stats": [
+    "src/main/java/com/acme/App.java: exact 1, resolved 2, heuristic 1, ambiguous 0, unresolved 1",
+    "src/main/java/com/acme/Util.java: exact 0, resolved 0, heuristic 0, ambiguous 0, unresolved 1",
+    "src/main/java/com/acme/core/Repo.java: exact 1, resolved 0, heuristic 0, ambiguous 0, unresolved 0",
+    "src/main/java/com/acme/web/UserController.java: exact 0, resolved 1, heuristic 1, ambiguous 0, unresolved 0"
+  ],
+  "supers": [],
+  "symbols": [
+    "class sym:src/main/java/com/acme/App.java#App L5-15 exported",
+    "method sym:src/main/java/com/acme/App.java#App.main L6-12 exported",
+    "method sym:src/main/java/com/acme/App.java#App.helper L14-14",
+    "class sym:src/main/java/com/acme/Util.java#Util L3-7 exported",
+    "method sym:src/main/java/com/acme/Util.java#Util.format L4-6 exported",
+    "class sym:src/main/java/com/acme/core/Repo.java#Repo L3-14 exported",
+    "method sym:src/main/java/com/acme/core/Repo.java#Repo.persistEntity L4-6 exported",
+    "method sym:src/main/java/com/acme/core/Repo.java#Repo.validate L8-8",
+    "method sym:src/main/java/com/acme/core/Repo.java#Repo.toString L11-13 exported",
+    "class sym:src/main/java/com/acme/web/UserController.java#UserController L7-18 exported",
+    "method sym:src/main/java/com/acme/web/UserController.java#UserController.get L11-14 exported",
+    "method sym:src/main/java/com/acme/web/UserController.java#UserController.create L17-17 exported"
+  ]
+}

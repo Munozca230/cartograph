@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/cartograph-core",
+    "crates/cartograph-index",
+    "crates/cartograph-cli",
+    "crates/cartograph-server",
+    "crates/cartograph-query",
+    "crates/cartograph-mcp",
+]
+# Fixture repos contain their own Cargo.toml; they are test data, not members.
+exclude = ["tests/fixtures"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Munozca230/cartograph"
+rust-version = "1.90"

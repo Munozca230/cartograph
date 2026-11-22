@@ -1,0 +1,19 @@
+# Rules for the query-app fixture (tests of cartograph-query).
+[[layers]]
+name = "ui"
+paths = ["src/ui/**"]
+forbid = ["infra"]
+
+[[layers]]
+name = "core"
+paths = ["src/core"]
+allow = []
+
+[[layers]]
+name = "infra"
+paths = ["src/infra/**"]
+allow = ["core"]
+
+[rules]
+max_fan_out = 4
+no_cycles = ["src/core/**"]

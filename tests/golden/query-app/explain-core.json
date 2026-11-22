@@ -1,0 +1,103 @@
+{
+  "id": "dir:src/core",
+  "node": "dir",
+  "lang": null,
+  "loc": 22,
+  "files": 5,
+  "kind": null,
+  "layer": "core",
+  "entry": null,
+  "unresolved": 0,
+  "imports": {
+    "total": 2,
+    "folders": [
+      {
+        "dir": "dir:src",
+        "count": 1,
+        "files": [
+          "only-tested.ts"
+        ]
+      },
+      {
+        "dir": "dir:src/ui",
+        "count": 1,
+        "files": [
+          "widgets.ts"
+        ]
+      }
+    ],
+    "folders_more": 0
+  },
+  "imported_by": {
+    "total": 6,
+    "folders": [
+      {
+        "dir": "dir:src",
+        "count": 2,
+        "files": [
+          "big.ts",
+          "dead.ts"
+        ]
+      },
+      {
+        "dir": "dir:src/ui",
+        "count": 2,
+        "files": [
+          "app.ts",
+          "widgets.ts"
+        ]
+      },
+      {
+        "dir": "dir:scripts",
+        "count": 1,
+        "files": [
+          "seed.ts"
+        ]
+      },
+      {
+        "dir": "dir:src/infra",
+        "count": 1,
+        "files": [
+          "db.ts"
+        ]
+      }
+    ],
+    "folders_more": 0
+  },
+  "tested_by": {
+    "total": 0,
+    "folders": [],
+    "folders_more": 0
+  },
+  "libraries": [],
+  "libraries_more": 0,
+  "subfolders": [],
+  "subfolders_more": 0,
+  "findings": [
+    {
+      "id": "layer_violation:core->ui",
+      "severity": "violation",
+      "title": "layer core depends on ui (not in its allow list): 1 import"
+    },
+    {
+      "id": "cycle:file:src/core/model.ts",
+      "severity": "violation",
+      "title": "3 files tangled in a cycle (shortest loop: repo.ts → service.ts)"
+    },
+    {
+      "id": "folder_cycle:dir:src/core",
+      "severity": "violation",
+      "title": "folders src/core/ and src/ui/ depend on each other"
+    }
+  ],
+  "findings_more": 0,
+  "symbols": {
+    "total": 5,
+    "exported": 5,
+    "main": [],
+    "more": 0
+  },
+  "git": null,
+  "git_note": "not indexed (run `cartograph index` without --no-git)",
+  "annotation": null
+}

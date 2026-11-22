@@ -1,0 +1,11 @@
+symbols in src/core/ · 5 in 4 files (exported 5) · pub = exported, ←N = call sites reaching it
+calls made here: 4 resolved (exact 0, resolved 4, heuristic 0), ambiguous 0, unresolved 0
+src/core/model.ts (1)
+  class Model L3-5 pub ←4
+src/core/repo.ts (2)
+  function save L3-5 pub ←1
+  function load L6-8 pub ←1
+src/core/service.ts (1)
+  function run L4-6 pub ←2
+src/core/util.ts (1)
+  const util L3 pub

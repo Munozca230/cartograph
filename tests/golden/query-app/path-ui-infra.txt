@@ -1,0 +1,3 @@
+src/ui/ → src/infra/: shortest path 1 step (path:line = the import)
+paths:
+  src/ui/app.ts:2 → src/infra/db.ts

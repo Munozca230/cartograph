@@ -1,0 +1,27 @@
+{
+  "targets": [
+    "file:src/client.ts"
+  ],
+  "targets_more": 0,
+  "target_files": 1,
+  "dependents": 0,
+  "direct": 0,
+  "folders": [],
+  "folders_more": 0,
+  "tests": [],
+  "tests_more": 0,
+  "tests_direct": 0,
+  "tests_in_repo": 0,
+  "test_folders": [],
+  "test_folders_more": 0,
+  "entries": [],
+  "entries_more": 0,
+  "also_changes": [
+    {
+      "id": "file:src/server.ts",
+      "together": 10,
+      "confidence": 100
+    }
+  ],
+  "also_changes_more": 0
+}

@@ -1,0 +1,35 @@
+{
+  "calls": [
+    "src/model.rs:14 sym:src/model.rs#Store.key -> sym:src/persist.rs#Named.label [resolved]",
+    "src/model.rs:20 sym:src/model.rs#Store.fmt -> sym:src/model.rs#Store.name [exact]",
+    "src/model.rs:26 sym:src/model.rs#Store.flush -> sym:src/persist.rs#Persist.save_all [resolved]",
+    "src/persist.rs:13 sym:src/persist.rs#Persist.save_all -> sym:src/persist.rs#Named.label [resolved]",
+    "src/service.rs:9 sym:src/service.rs#Service.run -> sym:src/persist.rs#Persist.save_all [resolved]",
+    "src/service.rs:11 sym:src/service.rs#Service.run -> sym:src/persist.rs#Persist.save_all [resolved]"
+  ],
+  "entries": [],
+  "stats": [
+    "src/model.rs: exact 1, resolved 2, heuristic 0, ambiguous 0, unresolved 1",
+    "src/persist.rs: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 1",
+    "src/service.rs: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 1"
+  ],
+  "supers": [
+    "sym:src/model.rs#Store : Named -> sym:src/persist.rs#Named [resolved] src/model.rs:6",
+    "sym:src/model.rs#Store : Persist -> sym:src/persist.rs#Persist [resolved] src/model.rs:12",
+    "sym:src/model.rs#Store : fmt::Display -> ? [-] src/model.rs:18",
+    "sym:src/persist.rs#Persist : Named -> sym:src/persist.rs#Named [exact] src/persist.rs:9"
+  ],
+  "symbols": [
+    "struct sym:src/model.rs#Store L4-4 exported",
+    "method sym:src/model.rs#Store.name L7-9 exported",
+    "method sym:src/model.rs#Store.key L13-15 exported",
+    "method sym:src/model.rs#Store.fmt L19-21 exported",
+    "method sym:src/model.rs#Store.flush L25-27 exported",
+    "trait sym:src/persist.rs#Named L1-7 exported",
+    "method sym:src/persist.rs#Named.label L4-6 exported",
+    "trait sym:src/persist.rs#Persist L9-16 exported",
+    "method sym:src/persist.rs#Persist.save_all L12-15 exported",
+    "struct sym:src/service.rs#Service L3-5 exported",
+    "method sym:src/service.rs#Service.run L8-12 exported"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  // Shared compiler options. Comments and trailing commas are allowed here.
+  "compilerOptions": {
+    "baseUrl": ".",
+    /* Aliases for every app. */
+    "paths": {
+      "@/*": ["apps/web/src/*"],
+      "@shared/*": ["packages/shared/src/*"],
+      "@missing/*": ["nowhere/*"],
+    },
+  },
+}

@@ -1,0 +1,36 @@
+{
+  "total": 4,
+  "in_tests": 0,
+  "by_kind": {
+    "cli": 2,
+    "http": 1,
+    "main": 1
+  },
+  "items": [
+    {
+      "kind": "main",
+      "name": "main",
+      "at": "src/main.rs:14",
+      "target": "sym:src/main.rs#main"
+    },
+    {
+      "kind": "http",
+      "name": "GET /health",
+      "at": "src/routes.rs:6",
+      "target": "sym:src/routes.rs#health"
+    },
+    {
+      "kind": "cli",
+      "name": "index",
+      "at": "src/main.rs:10",
+      "target": "sym:src/main.rs#Command"
+    },
+    {
+      "kind": "cli",
+      "name": "serve-all",
+      "at": "src/main.rs:11",
+      "target": "sym:src/main.rs#Command"
+    }
+  ],
+  "more": 0
+}

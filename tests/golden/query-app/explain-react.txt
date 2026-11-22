@@ -1,0 +1,4 @@
+external npm:react
+imported by (1 file):
+  src/ 1: big.ts
+findings: none

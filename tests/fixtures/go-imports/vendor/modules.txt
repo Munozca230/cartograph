@@ -1,0 +1,4 @@
+# github.com/vend/dep v1.0.0
+## explicit; go 1.20
+github.com/vend/dep
+github.com/vend/dep/sub

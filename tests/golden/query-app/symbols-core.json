@@ -1,0 +1,86 @@
+{
+  "node": "dir:src/core",
+  "files": 4,
+  "total": 5,
+  "exported": 5,
+  "calls_out": {
+    "exact": 0,
+    "resolved": 4,
+    "heuristic": 0,
+    "ambiguous": 0,
+    "unresolved": 0
+  },
+  "groups": [
+    {
+      "file": "file:src/core/model.ts",
+      "total": 1,
+      "symbols": [
+        {
+          "id": "sym:src/core/model.ts#Model",
+          "kind": "class",
+          "line": 3,
+          "end_line": 5,
+          "exported": true,
+          "callers": 4
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/core/repo.ts",
+      "total": 2,
+      "symbols": [
+        {
+          "id": "sym:src/core/repo.ts#save",
+          "kind": "function",
+          "line": 3,
+          "end_line": 5,
+          "exported": true,
+          "callers": 1
+        },
+        {
+          "id": "sym:src/core/repo.ts#load",
+          "kind": "function",
+          "line": 6,
+          "end_line": 8,
+          "exported": true,
+          "callers": 1
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/core/service.ts",
+      "total": 1,
+      "symbols": [
+        {
+          "id": "sym:src/core/service.ts#run",
+          "kind": "function",
+          "line": 4,
+          "end_line": 6,
+          "exported": true,
+          "callers": 2
+        }
+      ],
+      "more": 0
+    },
+    {
+      "file": "file:src/core/util.ts",
+      "total": 1,
+      "symbols": [
+        {
+          "id": "sym:src/core/util.ts#util",
+          "kind": "const",
+          "line": 3,
+          "end_line": 3,
+          "exported": true,
+          "callers": 0
+        }
+      ],
+      "more": 0
+    }
+  ],
+  "groups_more": 0,
+  "entries": [],
+  "entries_more": 0
+}
