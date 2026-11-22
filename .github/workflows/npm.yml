@@ -1,0 +1,101 @@
+name: npm
+
+# Publishing a GitHub release publishes cartograph to npm (see docs/release.md#npm): the
+# archives of the release become the four platform packages, then @munozca230/cartograph.
+# Every version comes from the release tag (scripts/npm-packages.mjs sets it), so there is
+# nothing to bump by hand. A package@version already on npm is skipped, so a re-run finishes
+# what a failed run left. A version published to npm cannot be replaced.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of a published release to publish to npm (v<version>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: NPM_TOKEN is set
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error title=NPM_TOKEN is missing::Add an npm access token that can publish @munozca230 packages as the repository secret NPM_TOKEN (docs/release.md, section npm)."
+            exit 1
+          fi
+
+      - name: Version of the tag
+        id: version
+        run: |
+          version="${TAG#v}"
+          if [ "$version" = "$TAG" ] || ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::$TAG is not a release tag v<major>.<minor>.<patch>[-<pre>]"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A prerelease (1.2.0-rc.1) goes to the dist-tag "next", so it never becomes "latest".
+          case "$version" in
+            *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT" ;;
+            *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # On a release this is the tagged commit; on a manual run, the branch it runs from (so a
+      # release tagged before this workflow existed can still be published).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Download the release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "false" ]; then
+            echo "::error::release $TAG is a draft: publish it first"
+            exit 1
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets \
+            --pattern 'cartograph-*.zip' --pattern 'cartograph-*.tar.gz' --pattern 'cartograph-*.sha256'
+          ls -l assets
+
+      # Checks every archive against its .sha256, and that the Linux binary is executable and
+      # prints `cartograph <version of the tag>`.
+      - name: Build the npm packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/npm-packages.mjs --version "$VERSION" --assets assets --out npm-out
+
+      # Platform packages first: the main package depends on all four.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_TAG: ${{ steps.version.outputs.dist_tag }}
+        run: |
+          for dir in cartograph-win32-x64 cartograph-linux-x64 cartograph-darwin-arm64 cartograph-darwin-x64 cartograph; do
+            name=$(node -p "require('./npm-out/$dir/package.json').name")
+            published=$(npm view "$name@$VERSION" version 2>/dev/null || true)
+            if [ "$published" = "$VERSION" ]; then
+              echo "$name@$VERSION is already on npm: skipped"
+              continue
+            fi
+            echo "publishing $name@$VERSION (dist-tag $DIST_TAG)"
+            (cd "npm-out/$dir" && npm publish --access public --provenance --tag "$DIST_TAG")
+          done
