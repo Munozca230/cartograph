@@ -81,6 +81,7 @@ URL with a one-line description of what it shows.
 |---|---|
 | unknown id | `isError: true`, "did you mean: a, b, c?" from fuzzy matches, or a pointer to `find` |
 | ambiguous symbol name | `isError: true` with the candidate ids |
+| `callers` of a name no symbol has | the symbols whose name starts with it (else contains it, 3 characters at least): one is answered for, with a first line that says so (no `formatAction`; showing `formatActionCommand`); several are the ambiguous error above; none is the unknown-id error |
 | bad enum value (`dir: "up"`) | `isError: true` with the accepted values |
 | wrong type, missing field | `isError: true`, "failed to deserialize parameters: missing field `node`" |
 | unknown tool | JSON-RPC error -32602 |

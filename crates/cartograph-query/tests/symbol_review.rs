@@ -345,3 +345,56 @@ fn entries_skip_test_fixture_and_example_trees() {
     let with = symbols::entries(&r, main, None, true).unwrap();
     assert_eq!(with.data.total, 3, "{}", with.text);
 }
+
+/// `callers` of a name no symbol has: the one symbol whose name starts with it (or, failing
+/// that, contains it) is answered for, saying so; several are ambiguous; a short or fuzzier
+/// name stays unknown, with suggestions.
+#[test]
+fn callers_complete_a_partial_name() {
+    let r = repo(&[
+        (
+            "src/fmt.ts",
+            "export function formatActionCommand(a: string) { return a; }\n\
+             export function renderRow(a: string) { return a; }\n\
+             export function renderRowCompact(a: string) { return a; }\n",
+        ),
+        (
+            "src/app.ts",
+            "import { formatActionCommand, renderRow } from './fmt';\n\
+             export function run() { formatActionCommand('x'); renderRow('y'); }\n",
+        ),
+    ]);
+    let c = symbols::callers(&r, "formatAction").unwrap();
+    assert_eq!(c.data.symbol, "sym:src/fmt.ts#formatActionCommand");
+    assert_eq!(c.data.instead_of.as_deref(), Some("formatAction"));
+    assert!(
+        c.text
+            .starts_with("no `formatAction`; showing `formatActionCommand`"),
+        "{}",
+        c.text
+    );
+    assert!(c.text.contains("src/app.ts"), "{}", c.text);
+    // Inside the name, in one file.
+    let c = symbols::callers(&r, "src/fmt.ts#ActionCommand").unwrap();
+    assert_eq!(c.data.symbol, "sym:src/fmt.ts#formatActionCommand");
+    // An exact name answers as before, without the note.
+    let c = symbols::callers(&r, "renderRow").unwrap();
+    assert!(c.data.instead_of.is_none());
+    // Several symbols start with it: ambiguous, with the candidates.
+    match symbols::callers(&r, "render") {
+        Err(QueryError::Ambiguous { candidates, .. }) => {
+            assert!(candidates.contains(&"sym:src/fmt.ts#renderRow".to_string()));
+            assert!(candidates.contains(&"sym:src/fmt.ts#renderRowCompact".to_string()));
+        }
+        other => panic!("{other:?}"),
+    }
+    // Too short, or only a typo away: unknown.
+    assert!(matches!(
+        symbols::callers(&r, "fo"),
+        Err(QueryError::UnknownNode { .. })
+    ));
+    assert!(matches!(
+        symbols::callers(&r, "formatActonCommand"),
+        Err(QueryError::UnknownNode { .. })
+    ));
+}

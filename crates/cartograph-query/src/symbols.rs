@@ -269,6 +269,56 @@ impl SymbolTable {
     }
 }
 
+/// Symbols a partial name fits ([`SymbolTable::partial`]).
+#[derive(Debug, PartialEq)]
+pub enum Partial {
+    One(String),
+    Many(Vec<String>),
+    None,
+}
+
+/// Shortest partial name [`SymbolTable::partial`] completes.
+const PARTIAL_MIN_CHARS: usize = 3;
+
+impl SymbolTable {
+    /// The symbols whose name or `Class.method` starts with what was typed (case
+    /// insensitive), else those that contain it, for a name no symbol has: `formatAction`
+    /// → `formatActionCommand`. `path#part` looks in that file only. Fewer than
+    /// [`PARTIAL_MIN_CHARS`] characters complete nothing; neither does a fuzzier match (a
+    /// typo): those stay suggestions of the unknown-name error.
+    pub fn partial(&self, input: &str) -> Partial {
+        let raw = input.trim();
+        let s = raw.strip_prefix("sym:").unwrap_or(raw).replace('\\', "/");
+        let s = s.strip_prefix("./").unwrap_or(&s);
+        let s = s.strip_prefix("file:").unwrap_or(s);
+        let (scope, name): (Vec<usize>, &str) = match self.split_ref(s) {
+            Some((path, name)) => (self.of_file(path).to_vec(), name),
+            None => ((0..self.symbols.len()).collect(), s),
+        };
+        let want = name.to_lowercase();
+        if want.chars().count() < PARTIAL_MIN_CHARS {
+            return Partial::None;
+        }
+        let (mut prefix, mut inside) = (Vec::new(), Vec::new());
+        for i in scope {
+            let x = &self.symbols[i];
+            let n = x.name.to_lowercase();
+            let q = x.qualified().to_lowercase();
+            if n.starts_with(&want) || q.starts_with(&want) {
+                prefix.push(x.id());
+            } else if n.contains(&want) || q.contains(&want) {
+                inside.push(x.id());
+            }
+        }
+        let mut ids = dedup(if prefix.is_empty() { inside } else { prefix });
+        match ids.len() {
+            0 => Partial::None,
+            1 => Partial::One(ids.remove(0)),
+            _ => Partial::Many(ids),
+        }
+    }
+}
+
 fn dedup(v: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     v.into_iter().filter(|x| seen.insert(x.clone())).collect()
@@ -681,6 +731,10 @@ pub struct CallerFile {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CallersResult {
+    /// What was asked for when no symbol has that name and `symbol` is the only one whose
+    /// name starts with it or contains it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instead_of: Option<String>,
     pub symbol: String,
     pub kind: SymbolKind,
     /// `path:line` of the definition.
@@ -708,9 +762,21 @@ pub struct CallersResult {
 /// grouped by calling file, each with the calling function and the confidence of the
 /// match. Production callers come first (most calls first); callers in tests follow as a
 /// summary (file and count), unless no other file calls the symbol.
+///
+/// A name no symbol has falls back to the symbols whose name starts with it, else contains
+/// it ([`SymbolTable::partial`]): one is answered for, saying so (`no formatAction; showing
+/// formatActionCommand`); several are an [`QueryError::Ambiguous`] listing them.
 pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryError> {
     let t = &repo.symbols;
-    let id = t.resolve(sym)?;
+    let (id, instead) = match t.resolve(sym) {
+        Ok(id) => (id, None),
+        Err(e @ QueryError::UnknownNode { .. }) => match t.partial(sym) {
+            Partial::One(id) => (id, Some(sym.trim().to_string())),
+            Partial::Many(ids) => return Err(t.ambiguous(sym.trim(), ids)),
+            Partial::None => return Err(e),
+        },
+        Err(e) => return Err(e),
+    };
     let Some(def) = t.first_of(&id) else {
         return Err(QueryError::UnknownNode {
             input: sym.to_string(),
@@ -766,6 +832,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
         |k| {
             let (max_files, per) = steps[k.min(steps.len() - 1)];
             CallersResult {
+                instead_of: instead.as_deref().map(|x| clip(x, 120)),
                 symbol: clip(&id, 240),
                 kind: def.kind,
                 defined_at: format!("{}:{}", clip(&def.file, 200), def.line),
@@ -812,12 +879,20 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
 }
 
 fn render_callers(r: &CallersResult) -> String {
-    let mut s = format!(
+    let mut s = String::new();
+    if let Some(asked) = &r.instead_of {
+        let shown = split_symbol_id(&r.symbol).map_or(r.symbol.as_str(), |(_, n)| n);
+        s.push_str(&format!(
+            "no `{asked}`; showing `{}`, the only symbol whose name has it\n",
+            clip(shown, 120)
+        ));
+    }
+    s.push_str(&format!(
         "callers of {} ({}, {})",
         clip(&r.symbol, 160),
         r.kind.as_str(),
         clip(&r.defined_at, 160)
-    );
+    ));
     if r.total == 0 {
         s.push_str(
             " · no resolved call sites (calls that did not resolve are only counted; see `symbols` of the calling folder)\n",

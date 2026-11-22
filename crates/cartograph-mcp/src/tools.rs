@@ -482,7 +482,8 @@ impl Cartograph {
             file with line numbers and confidence (exact, resolved, heuristic); callers in \
             tests come last, summed up per file. `symbol`: \
             sym:src/a.rs#name, src/a.rs#Type.method, Class.method or a bare name (an ambiguous \
-            name lists the candidates).",
+            name lists the candidates; part of a name is completed when one symbol has it, \
+            and the answer says so).",
         annotations(read_only_hint = true)
     )]
     async fn callers(&self, Parameters(a): Parameters<CallersArgs>) -> CallToolResult {
