@@ -99,6 +99,8 @@ export class Controller {
   private pendingFly: { id: string; view: string } | null = null;
   /** The folder just opened or closed: the plan keeps it where it is on screen once redrawn. */
   private pendingAnchor: { id: string; view: string } | null = null;
+  /** The view of the last plan drawn (the plan reports each drawing through takePendingFly). */
+  private drawnView: string | null = null;
 
   onCamera(l: CameraListener): () => void {
     this.cameraListeners.add(l);
@@ -394,6 +396,7 @@ export class Controller {
    * The plan calls this whenever it draws a new layout.
    */
   takePendingFly(view: ViewSpec | null): string | null {
+    this.drawnView = view ? viewKey(view) : null;
     const p = this.pendingFly;
     if (!p || view === null || p.view !== viewKey(view)) return null;
     this.pendingFly = null;
@@ -443,6 +446,22 @@ export class Controller {
       else this.pendingFly = { id, view: viewKey(target) };
     }
     void this.loadDetail(id);
+  }
+
+  /**
+   * Selects and shows a node named by a link (`?focus=`): like a pick in the palette, but it
+   * may come before the plan is drawn (right after the first load), so the fly waits for the
+   * drawing of the view instead of going to a plan that isn't on screen yet. A library turns
+   * the libraries on (only then does it have a card).
+   */
+  focus(id: string) {
+    const ext = id.startsWith("ext:");
+    const redraw = ext && !store.get().showExternals;
+    if (ext) store.set({ showExternals: true });
+    this.select(id, { fly: true });
+    const s = store.get();
+    if (s.selected !== id || this.pendingFly) return;
+    if (redraw || this.drawnView !== viewKey(s.view)) this.pendingFly = { id, view: viewKey(s.view) };
   }
 
   /** Double-click or Enter on a card or box: a closed folder opens, an open one closes, a file is selected. */
