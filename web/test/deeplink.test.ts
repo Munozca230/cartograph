@@ -111,8 +111,8 @@ function setup(search: string) {
         store.set({ mode: "flows", flowFrom: { id, entry: null }, flowError: id.includes("nope") ? "unknown node" : null });
       },
       setMode: (mode) => store.set({ mode }),
-      loadEntries: async () => {
-        opened.push("first entry");
+      loadEntries: async ({ openFirst = false } = {}) => {
+        opened.push(openFirst ? "first entry" : "entries");
       },
     },
     notify: (title, description) => notices.push(`${title}: ${description}`),
@@ -167,14 +167,15 @@ describe("deep links on the page", () => {
     links.start();
     await flush();
     expect(store.get().mode).toBe("flows");
-    expect(opened).toEqual(["sym:src/a.ts#run"]);
+    expect(opened).toEqual(["entries", "sym:src/a.ts#run"]);
     expect(win.location.search).toBe("?view=flows&focus=sym:src/a.ts%23run");
 
     // Back/forward to another link applies it too.
     win.location.search = "?view=flows&focus=sym:src/nope.ts%23x";
     win.pop();
     await flush();
-    expect(opened).toEqual(["sym:src/a.ts#run", "sym:src/nope.ts#x", "first entry"]);
+    // (The fake never stores the entries, so they are asked for again.)
+    expect(opened).toEqual(["entries", "sym:src/a.ts#run", "entries", "sym:src/nope.ts#x", "first entry"]);
     expect(notices).toHaveLength(1);
     expect(store.get().flowFrom).toBeNull();
   });

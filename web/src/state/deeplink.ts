@@ -72,6 +72,8 @@ export class DeepLinks {
         this.deps.flows.setMode("flows");
         return;
       }
+      // The entry list beside the flow (Flujos loads it on its first visit otherwise).
+      if (store.get().flowEntries === null) void this.deps.flows.loadEntries();
       await this.deps.flows.open(focus);
       const s = store.get();
       if (s.flowFrom?.id === focus && s.flowError !== null) {
