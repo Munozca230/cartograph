@@ -208,9 +208,9 @@ pub(super) fn sdp(cx: &Ctx<'_>) -> Vec<Finding> {
     let t = &cx.cfg.thresholds;
     // Code files per folder.
     let mut members: BTreeMap<DirIx, usize> = BTreeMap::new();
-    for f in 0..g.files.len() {
+    for (f, file) in g.files.iter().enumerate() {
         if is_code(cx, f) {
-            *members.entry(g.files[f].dir).or_default() += 1;
+            *members.entry(file.dir).or_default() += 1;
         }
     }
     let mut pkgs: BTreeMap<DirIx, Package> = members
