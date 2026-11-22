@@ -116,27 +116,36 @@ the `id-token: write` permission and a public repository).
 npm only issues granular access tokens (classic and automation tokens were removed in
 late 2025).
 
-1. On npmjs.com, signed in as `munozca230`: avatar, **Access Tokens**, **Generate New
-   Token**.
+1. On npmjs.com, signed in as `munozca230`, open the account's access tokens page and
+   generate a new granular access token.
 2. Fill in the form:
    - name: `cartograph GitHub Actions`;
    - **Bypass two-factor authentication**: checked. Without it a publish from CI asks for
      a one-time password and fails. It is off by default, and it covers package publishing
      only.
-   - **Packages and scopes**: permission **Read and write**, on **All Packages** or on the
-     `@munozca230` scope. A token limited to selected packages cannot create the five
-     packages, which do not exist yet.
+   - **Packages and scopes**: permission **Read and write (publish and stage)**, not "stage
+     only" (that one stages versions for review and never publishes them). Select **All
+     Packages** for the first publish: the five packages do not exist yet, so they cannot
+     be picked one by one.
    - **Expiration**: npm caps tokens that can write at 90 days. Note the date: once it
      passes, the workflow fails at the publish step until the secret is replaced.
 3. On GitHub, in the repository: **Settings**, **Secrets and variables**, **Actions**, **New
    repository secret**. Name `NPM_TOKEN`, and the token as the value.
 
 npm announces that granular tokens will stop publishing directly in January 2027. The way
-forward is trusted publishing (OIDC): once the five packages exist, add in each package's
-settings on npmjs.com a trusted publisher for GitHub Actions with repository
-`Munozca230/cartograph` and workflow `npm.yml`. The npm CLI tries OIDC before the token, so
-the workflow keeps working. The `NPM_TOKEN` check of its first step can then be dropped,
-along with the secret and the token.
+forward is trusted publishing (OIDC). Once the five packages exist, add a trusted publisher
+in each package's settings on npmjs.com:
+
+- provider GitHub Actions, user `Munozca230`, repository `cartograph`, workflow filename
+  `npm.yml`, no environment;
+- under the allowed actions, enable direct `npm publish`, since the workflow does not stage;
+- a new configuration expires if no publish uses it within 2 days, so set it up shortly
+  before a release.
+
+The npm CLI (11.5.1 or newer; Node.js 24 ships it) tries OIDC before the token, and
+provenance is then automatic. Once every package has its trusted publisher, remove the
+`NPM_TOKEN` step at the start of `npm.yml` (it would fail without the secret), then the
+secret and the token.
 
 ### Publishing a version
 
@@ -147,7 +156,8 @@ along with the secret and the token.
 If the run fails halfway (a network error, an expired token), fix the cause and run the
 workflow again from the Actions tab with the same tag: what was published is skipped.
 
-For 0.1.0, which was tagged before the workflow existed, run it by hand from `main` with
+For 0.1.0, which was tagged before the workflow existed, publishing the release starts
+nothing (a release runs the workflows of its tagged commit). Run it by hand from `main` with
 `tag` = `v0.1.0` once the release is published. The script and the workflow then come from
 `main`, and the packages from the 0.1.0 archives.
 
@@ -160,7 +170,8 @@ from the repository root), plus the main package:
 node scripts/npm-packages.mjs --local target/release/cartograph.exe --out <dir>
 ```
 
-The version defaults to `Cargo.toml`'s; `--version` overrides it. Then, in `<dir>`:
+The version defaults to `Cargo.toml`'s; `--version` overrides it (with a warning when the
+binary reports another version). Then, in `<dir>`:
 `npm pack` in `cartograph-win32-x64` and in `cartograph`, `npm install` the two tarballs into
 an empty project, and run `npx cartograph --version`. `npm install` reports nothing for the
 three platform packages that are not on the registry: optional dependencies that cannot be

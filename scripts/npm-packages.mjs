@@ -20,7 +20,8 @@
 //
 // Writes <out>/cartograph and <out>/cartograph-<platform>-<arch>, replacing those
 // directories if they exist; nothing else in <out> is touched. When the binary of the
-// machine running the script is among them, its `--version` must print the version.
+// machine running the script is among them, its `--version` must print the version (with
+// --local a mismatch is only a warning).
 //
 // No dependencies. Extraction uses `tar` for .tar.gz, and for .zip PowerShell
 // `Expand-Archive` on Windows, `unzip` (or `tar`) elsewhere.
@@ -241,8 +242,11 @@ function mainPackage(version, out) {
   return { name: MAIN, dir };
 }
 
-/** The binary built for this machine must report the version it is published as. */
-function checkHostBinary(built, version) {
+/**
+ * The binary built for this machine must report the version it is published as. With
+ * --local (a test build) a mismatch is only a warning.
+ */
+function checkHostBinary(built, version, strict) {
   const host = built.find((b) => b.platform.key === `${process.platform}-${process.arch}`);
   if (!host) return;
   if (process.platform !== "win32" && (statSync(host.bin).mode & 0o111) === 0) {
@@ -250,7 +254,10 @@ function checkHostBinary(built, version) {
   }
   const out = execFileSync(host.bin, ["--version"], { encoding: "utf8" }).trim();
   if (out !== `cartograph ${version}`) {
-    die(`${host.name}: the binary reports "${out}", expected "cartograph ${version}"`);
+    const msg = `${host.name}: the binary reports "${out}", expected "cartograph ${version}"`;
+    if (strict) die(msg);
+    console.warn(`npm-packages: warning: ${msg}`);
+    return;
   }
   console.log(`checked ${host.name}: ${out}`);
 }
@@ -309,7 +316,7 @@ function main() {
     rmSync(staging, { recursive: true, force: true });
   }
 
-  checkHostBinary(built, version);
+  checkHostBinary(built, version, !args.local);
   built.push(mainPackage(version, out));
   for (const b of built) {
     console.log(`${b.name}@${version}  ${b.dir}  ${(sizeOf(b.dir) / 1e6).toFixed(1)} MB`);
