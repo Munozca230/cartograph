@@ -207,6 +207,7 @@ pub fn copy_dir(from: &Path, to: &Path) {
 }
 
 /// Resident memory of a process in KiB, when the platform lets us read it.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(unused_variables))]
 pub fn rss_kib(pid: u32) -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
