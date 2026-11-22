@@ -35,9 +35,11 @@ offline, and writes nothing inside the analyzed repository unless you let it.
   gix (no `git` binary needed) and updated incrementally.
 - **MCP server.** `cartograph mcp <repo>` is a stdio MCP server for any MCP client or
   coding agent. Its tools are `overview`, `explain`, `deps`, `impact`, `find`, `path`,
-  `symbols`, `callers`, `hierarchy`, `entries`, `findings`, `check`, `diff`, `hotspots`
-  and `annotate`. Each answer is compact text within a token budget, and the index stays
-  fresh while the agent edits.
+  `symbols`, `callers`, `hierarchy`, `entries`, `findings`, `check`, `diff`, `hotspots`,
+  `annotate` and `open_map`. Each answer is compact text within a token budget, and the
+  index stays fresh while the agent edits. When the user asks to see the architecture or
+  a flow, `open_map` opens the web map in the browser, focused on the folder, file or
+  function at hand, served from inside the MCP server (no `cartograph serve` needed).
 - **Evals and stats.** `cartograph eval` runs a suite of agent questions through the real
   MCP server and checks the answers (`evals/cases.toml`). `cartograph stats` summarizes
   tool usage (calls, latency, errors, answer size) without recording arguments or paths.
