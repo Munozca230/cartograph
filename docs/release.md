@@ -2,6 +2,8 @@
 
 Publishing is a manual decision. Nothing in this repository pushes a tag, uploads an
 archive or publishes a release on its own: the release workflow stops at a **draft**.
+Publishing that draft by hand also publishes to npm, and an npm version cannot be
+replaced (see [npm](#npm)).
 
 ## What a release contains
 
@@ -39,13 +41,131 @@ for the bundled SQLite and the tree-sitter grammars, which was not set up.
 
    Then one job collects the archives, writes `SHA256SUMS` and creates a draft release
    with generated notes.
-5. Review the draft on GitHub and publish it by hand.
+5. Review the draft on GitHub and publish it by hand. That starts
+   `.github/workflows/npm.yml`, which publishes the same archives to npm (see [npm](#npm)).
 
 Actions are pinned by commit SHA, with the version in a comment (checked on GitHub on
-2026-11-21): `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0,
+2026-11-21; `npm.yml` uses the same pins): `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0,
 `actions/upload-artifact` v7.0.2, `actions/download-artifact` v8.0.2,
 `Swatinem/rust-cache` v2.9.3, `softprops/action-gh-release` v3.0.4. Rust comes from the
 runner's `rustup` (stable).
+
+## npm
+
+The npm distribution follows the esbuild pattern: one package per platform with the
+binary, and a main package with a launcher that depends on all of them as optional
+dependencies. npm installs only the platform package whose `os`, `cpu` (and `libc`)
+match.
+
+| Package | Content |
+|---|---|
+| `@munozca230/cartograph` | `bin/cartograph.js` (the `cartograph` command), `README.md`, license files |
+| `@munozca230/cartograph-win32-x64` | `bin/cartograph.exe` from the `x86_64-pc-windows-msvc` archive |
+| `@munozca230/cartograph-linux-x64` | `bin/cartograph` from the `x86_64-unknown-linux-gnu` archive (`libc: glibc`) |
+| `@munozca230/cartograph-darwin-arm64` | `bin/cartograph` from the `aarch64-apple-darwin` archive |
+| `@munozca230/cartograph-darwin-x64` | `bin/cartograph` from the `x86_64-apple-darwin` archive |
+
+Each platform package also carries `LICENSE-MIT`, `LICENSE-APACHE` and
+`THIRD_PARTY_NOTICES.md` from its archive.
+
+- `npm/cartograph/` holds the main package as committed: `package.json`, `README.md` (the
+  page on npmjs.com) and the launcher `bin/cartograph.js`. The launcher is plain CommonJS
+  with no dependencies. It resolves `@munozca230/cartograph-<platform>-<arch>/bin/cartograph[.exe]`
+  with `require.resolve` and runs it with `spawnSync` and `stdio: "inherit"`, so stdin and
+  stdout (the MCP protocol) pass through untouched. It passes on the exit code and a
+  terminating signal. On another platform, or when the platform package is missing, it
+  prints the supported platforms and the other ways to install, and exits 1.
+- The platform packages are not in the repository: `scripts/npm-packages.mjs` generates
+  them from the release archives.
+
+### Versions
+
+**The tag is the only version to set.** `scripts/npm-packages.mjs --version` writes it into
+all five `package.json` files and into the main package's `optionalDependencies` (exact
+versions). `npm/cartograph/package.json` keeps the placeholder `0.0.0` and is never bumped.
+The tag already has to match `Cargo.toml` (`release.yml`), and the script fails unless the
+archives are named after the version and the binary of the machine running it prints
+`cartograph <version>`, so the npm version, the archives and the binary agree.
+
+A prerelease tag (`v1.2.0-rc.1`) is published under the npm dist-tag `next`, so
+`npx @munozca230/cartograph` keeps resolving to the last stable version.
+
+### The workflow
+
+`.github/workflows/npm.yml` runs when a release is published (`release: published`), or by
+hand from the Actions tab (`workflow_dispatch` with the `tag` input: to publish a release
+that was published before the workflow existed, or to finish a failed run). On
+`ubuntu-24.04` it:
+
+1. fails at once if the secret `NPM_TOKEN` is not set;
+2. checks that the tag reads `v<major>.<minor>.<patch>[-<pre>]` and that the release is
+   not a draft;
+3. downloads the archives and `.sha256` files of the release (`gh release download`);
+4. runs `node scripts/npm-packages.mjs --version <tag version> --assets assets --out npm-out`,
+   which checks every archive against its `.sha256`, extracts it, writes the five packages
+   (the unix binaries keep mode 755) and runs the Linux binary's `--version`;
+5. publishes with `npm publish --access public --provenance`, the four platform packages
+   first and the main package last. A `package@version` that `npm view` already finds is
+   skipped, so running the workflow again only publishes what is missing.
+
+`--provenance` links each version on npmjs.com to the workflow run that built it (it needs
+the `id-token: write` permission and a public repository).
+
+### One-time setup
+
+npm only issues granular access tokens (classic and automation tokens were removed in
+late 2025).
+
+1. On npmjs.com, signed in as `munozca230`: avatar, **Access Tokens**, **Generate New
+   Token**.
+2. Fill in the form:
+   - name: `cartograph GitHub Actions`;
+   - **Bypass two-factor authentication**: checked. Without it a publish from CI asks for
+     a one-time password and fails. It is off by default, and it covers package publishing
+     only.
+   - **Packages and scopes**: permission **Read and write**, on **All Packages** or on the
+     `@munozca230` scope. A token limited to selected packages cannot create the five
+     packages, which do not exist yet.
+   - **Expiration**: npm caps tokens that can write at 90 days. Note the date: once it
+     passes, the workflow fails at the publish step until the secret is replaced.
+3. On GitHub, in the repository: **Settings**, **Secrets and variables**, **Actions**, **New
+   repository secret**. Name `NPM_TOKEN`, and the token as the value.
+
+npm announces that granular tokens will stop publishing directly in January 2027. The way
+forward is trusted publishing (OIDC): once the five packages exist, add in each package's
+settings on npmjs.com a trusted publisher for GitHub Actions with repository
+`Munozca230/cartograph` and workflow `npm.yml`. The npm CLI tries OIDC before the token, so
+the workflow keeps working. The `NPM_TOKEN` check of its first step can then be dropped,
+along with the secret and the token.
+
+### Publishing a version
+
+1. Release as above (tag, workflow, review the draft).
+2. Publish the draft on GitHub. `npm.yml` starts; follow it in the Actions tab.
+3. Check: `npx -y @munozca230/cartograph@<version> --version` prints `cartograph <version>`.
+
+If the run fails halfway (a network error, an expired token), fix the cause and run the
+workflow again from the Actions tab with the same tag: what was published is skipped.
+
+For 0.1.0, which was tagged before the workflow existed, run it by hand from `main` with
+`tag` = `v0.1.0` once the release is published. The script and the workflow then come from
+`main`, and the packages from the 0.1.0 archives.
+
+### Testing the packages locally
+
+`--local` builds this platform's package from a local binary (license files and notices
+from the repository root), plus the main package:
+
+```
+node scripts/npm-packages.mjs --local target/release/cartograph.exe --out <dir>
+```
+
+The version defaults to `Cargo.toml`'s; `--version` overrides it. Then, in `<dir>`:
+`npm pack` in `cartograph-win32-x64` and in `cartograph`, `npm install` the two tarballs into
+an empty project, and run `npx cartograph --version`. `npm install` reports nothing for the
+three platform packages that are not on the registry: optional dependencies that cannot be
+fetched are skipped. `npm publish --dry-run` in each package directory lists what would be
+published.
 
 ## Local package (Windows)
 

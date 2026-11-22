@@ -66,8 +66,32 @@ the tools. Every tool but `annotate` is marked read-only.
 ## Register the server
 
 `cartograph mcp <repo>` speaks MCP over stdio. Register it in your MCP client's
-configuration as a stdio server; most clients accept this shape (some call the top-level
-key `servers` instead of `mcpServers`):
+configuration as a stdio server; most clients accept the shapes below (some call the
+top-level key `servers` instead of `mcpServers`).
+
+With npx, nothing has to be installed first beyond Node.js 18 or newer: npx downloads the
+npm package [`@munozca230/cartograph`](https://www.npmjs.com/package/@munozca230/cartograph),
+which runs the prebuilt binary for the platform (stdio passes through it untouched):
+
+```json
+{
+  "mcpServers": {
+    "cartograph": {
+      "command": "npx",
+      "args": ["-y", "@munozca230/cartograph", "mcp", "."]
+    }
+  }
+}
+```
+
+- `-y` skips npx's install prompt, which would otherwise wait on the stdin the protocol
+  uses. Pin a version with `@munozca230/cartograph@<version>`.
+- On Windows `npx` is a `.cmd` script; a client that starts the command without a shell
+  needs `"command": "cmd"` and `"args": ["/c", "npx", "-y", "@munozca230/cartograph", "mcp", "."]`.
+- After `npm i -g @munozca230/cartograph`, `"command": "cartograph"` with
+  `"args": ["mcp", "."]` skips npx's registry check at every start.
+
+With a binary from a release archive or built from source:
 
 ```json
 {

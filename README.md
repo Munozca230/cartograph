@@ -44,6 +44,38 @@ offline, and writes nothing inside the analyzed repository unless you let it.
 
 ## Install
 
+### With npm
+
+The npm package [`@munozca230/cartograph`](https://www.npmjs.com/package/@munozca230/cartograph)
+runs the prebuilt binary for your platform (Windows x86_64, Linux x86_64 with glibc, macOS
+arm64 and x86_64). It needs Node.js 18 or newer, and nothing else.
+
+Run it without installing:
+
+```sh
+npx -y @munozca230/cartograph --help
+```
+
+Register it as an MCP server in your MCP client, for the repository the client starts in:
+
+```json
+{
+  "mcpServers": {
+    "cartograph": { "command": "npx", "args": ["-y", "@munozca230/cartograph", "mcp", "."] }
+  }
+}
+```
+
+Or install it globally, which puts `cartograph` on your `PATH`:
+
+```sh
+npm i -g @munozca230/cartograph
+```
+
+npm installs only the platform package that matches your system
+(`@munozca230/cartograph-<platform>-<arch>`, an optional dependency), so do not install
+with `--omit=optional`.
+
 ### From a release archive
 
 Download the archive for your platform from the releases page (Windows x86_64, Linux
@@ -87,7 +119,8 @@ and defaults to the current directory. Add `.cartograph/` to `.gitignore`, or pa
 `--data-dir DIR` to keep the index outside the repository so that nothing is written
 inside it. `cartograph <command> --help` lists every option.
 
-To use the MCP server, register it in your client as a stdio server:
+To use the MCP server, register it in your client as a stdio server, either through npx
+(see [With npm](#with-npm)) or with the path of the binary:
 
 ```json
 {
@@ -108,7 +141,7 @@ server's freshness and robustness guarantees.
 - [docs/mcp.md](docs/mcp.md): the MCP server, its tools, evals and usage stats.
 - [docs/diff.md](docs/diff.md): `diff` and `check --base`.
 - [docs/api-f2.md](docs/api-f2.md): the HTTP API behind the web UI.
-- [docs/release.md](docs/release.md): building release archives.
+- [docs/release.md](docs/release.md): building release archives and publishing to npm.
 - [web/README.md](web/README.md) and [web/DESIGN.md](web/DESIGN.md): the web UI.
 
 The web UI is in Spanish.
