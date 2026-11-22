@@ -434,6 +434,95 @@ fn js_exported(n: Node<'_>) -> bool {
     false
 }
 
+/// Calls that hand an object literal to another context under a name:
+/// `contextBridge.exposeInMainWorld("api", {…})` (Electron preload scripts).
+const JS_EXPOSE_CALLS: &[&str] = &["exposeInMainWorld"];
+
+/// The name of a JS object literal whose methods and function properties are symbols, and
+/// whether they are visible outside the file:
+/// - a module-level `const x = {…}` (`x`; exported with `export`), also `{…} as const` and
+///   `{…} satisfies T`;
+/// - `export default {…}` (`default`) and `module.exports = {…}` (`module.exports`);
+/// - the object an exposing call hands over (`exposeInMainWorld("api", {…})`: `api`, exported);
+/// - an object under a key of one of those (`x.key`).
+///
+/// Any other object (a local, an argument, an array element) has none: its functions stay
+/// local, as before.
+fn js_object_owner(obj: Node<'_>, src: &[u8], depth: u8) -> Option<(String, bool)> {
+    if depth > 4 {
+        return None;
+    }
+    let mut cur = obj;
+    let mut p = obj.parent()?;
+    while matches!(
+        p.kind(),
+        "as_expression" | "satisfies_expression" | "parenthesized_expression"
+    ) {
+        cur = p;
+        p = p.parent()?;
+    }
+    match p.kind() {
+        "variable_declarator" => {
+            if p.child_by_field_name("value") != Some(cur) {
+                return None;
+            }
+            let name = p
+                .child_by_field_name("name")
+                .filter(|n| n.kind() == "identifier")?;
+            let decl = p
+                .parent()
+                .filter(|d| matches!(d.kind(), "lexical_declaration" | "variable_declaration"))?;
+            match decl.parent()?.kind() {
+                "program" => Some((text(name, src), false)),
+                "export_statement" => Some((text(name, src), true)),
+                _ => None,
+            }
+        }
+        "export_statement" => {
+            (p.child_by_field_name("value") == Some(cur)).then(|| ("default".to_string(), true))
+        }
+        "assignment_expression" => {
+            let left = p.child_by_field_name("left")?;
+            (p.child_by_field_name("right") == Some(cur)
+                && text(left, src).split_whitespace().collect::<String>() == "module.exports")
+                .then(|| ("module.exports".to_string(), true))
+        }
+        "pair" => {
+            if p.child_by_field_name("value") != Some(cur) {
+                return None;
+            }
+            let key = p.child_by_field_name("key")?;
+            let key = match key.kind() {
+                "property_identifier" => text(key, src),
+                "string" => string_value(key, src)?,
+                _ => return None,
+            };
+            let outer = p.parent().filter(|o| o.kind() == "object")?;
+            let (name, exported) = js_object_owner(outer, src, depth + 1)?;
+            Some((format!("{name}.{key}"), exported))
+        }
+        "arguments" => {
+            let call = p.parent().filter(|c| c.kind() == "call_expression")?;
+            let callee = call.child_by_field_name("function")?;
+            let callee = match callee.kind() {
+                "member_expression" => callee.child_by_field_name("property")?,
+                _ => callee,
+            };
+            if !JS_EXPOSE_CALLS.contains(&text(callee, src).as_str()) {
+                return None;
+            }
+            match named_args(p).as_slice() {
+                [first, second] if *second == cur => {
+                    let name = string_value(*first, src).filter(|n| !n.is_empty())?;
+                    Some((name, true))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// One definition capture.
 struct DefCap<'t> {
     cap: String,
@@ -607,6 +696,26 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
             code.calls.push(call);
         }
     }
+    // `exposeInMainWorld("api", deskApi)`: the members of the module-level object `deskApi`
+    // are reachable from another context, so they count as exported.
+    if lang == Lang::Js {
+        let exposed: HashSet<String> = call_list
+            .iter()
+            .filter(|c| JS_EXPOSE_CALLS.contains(&text(c.name, src).as_str()))
+            .filter_map(|c| match named_args(c.args?).as_slice() {
+                [_, obj] if obj.kind() == "identifier" => Some(text(*obj, src)),
+                _ => None,
+            })
+            .collect();
+        for d in &mut code.defs {
+            if let Some(c) = &d.container {
+                let root = c.split('.').next().unwrap_or(c);
+                if exposed.contains(root) {
+                    d.exported = true;
+                }
+            }
+        }
+    }
 
     for n in &imports {
         bindings(lang, *n, src, &mut code.bindings);
@@ -699,7 +808,17 @@ fn definition(
             return None;
         }
     }
-    let scope = scope_of(lang, d.node, src);
+    // A JS object literal's method or function property: a member of the object when the
+    // object has a name ([`js_object_owner`]), else local like the rest of the object.
+    let mut object_exported = None;
+    let scope = match d.node.parent() {
+        Some(obj) if lang == Lang::Js && d.cap == "def.method" && obj.kind() == "object" => {
+            let (owner, exp) = js_object_owner(obj, src, 0)?;
+            object_exported = Some(exp);
+            Scope::Member(owner)
+        }
+        _ => scope_of(lang, d.node, src),
+    };
     let mut container = match scope {
         Scope::Local => return None,
         Scope::Top => None,
@@ -713,6 +832,8 @@ fn definition(
             }
             (name, decl)
         }
+        // `"on-status": () => …`: the key without its quotes.
+        (None, Some(n)) if lang == Lang::Js && n.kind() == "string" => (string_value(n, src)?, n),
         (None, Some(n)) => (text(n, src), n),
         (None, None) => return None,
     };
@@ -795,7 +916,8 @@ fn definition(
     } else {
         (line(node), end_line(node))
     };
-    let exported = exported(lang, node, &name, &container, kind, src, code, listed);
+    let exported = object_exported
+        .unwrap_or_else(|| exported(lang, node, &name, &container, kind, src, code, listed));
     let overrides = kind == SymbolKind::Method
         && match lang {
             Lang::Rust => node.parent().and_then(|p| p.parent()).is_some_and(|g| {
@@ -835,6 +957,7 @@ fn definition(
         declares,
         supers,
         class_name: d.cap == "def.class_name",
+        object: object_exported.is_some(),
     })
 }
 

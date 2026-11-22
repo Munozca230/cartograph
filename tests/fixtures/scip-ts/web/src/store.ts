@@ -12,8 +12,8 @@ export function makeStore(): Store {
   return new Store();
 }
 
-export const api = {
+export const api = Object.freeze({
   fetch(): string[] {
     return makeStore().loadAll();
   },
-};
+});

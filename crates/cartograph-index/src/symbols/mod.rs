@@ -163,6 +163,12 @@ pub struct Def {
     /// A GDScript `class_name` statement: the class is the whole script.
     #[serde(rename = "g", default, skip_serializing_if = "std::ops::Not::not")]
     pub class_name: bool,
+    /// A member of a JS object literal (`api.start` of `const api = {…}`). Reached through
+    /// the object (`api.start()`, `this.start()`, an import of `api`), never by its name
+    /// alone: a preload bridge repeats the names of the services it wraps, and would make
+    /// their `svc.m()` calls ambiguous.
+    #[serde(rename = "j", default, skip_serializing_if = "std::ops::Not::not")]
+    pub object: bool,
 }
 
 impl Def {
@@ -334,8 +340,10 @@ pub const QUERIES: [&str; 11] = [
 /// in the type's crate, else the other rules decide; 13: [`Def::declares`] (TS abstract and
 /// ambient classes); 14: supertypes ([`Def::supers`], [`Code::impls`], [`Code::extends`]),
 /// `super(Class, self)`; 15: [`Def::class_name`] (an inner GDScript class on line 1 is not
-/// the script).
-pub const REVISION: u32 = 15;
+/// the script); 16: methods and function properties of named JS object literals
+/// (module-level `const x = {…}`, `export default {…}`, `module.exports = {…}`,
+/// `exposeInMainWorld("api", {…})`) as `x.prop`.
+pub const REVISION: u32 = 16;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

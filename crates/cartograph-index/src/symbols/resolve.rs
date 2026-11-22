@@ -4,9 +4,12 @@
 //!
 //! Rules, in order; the first that names a definition decides:
 //! 1. **exact**: a definition in the same file (`f()`, `this.f()`, `self.f()`, `Type::f()`,
-//!    a method of the enclosing class for languages with an implicit `this`).
+//!    a method of the enclosing class for languages with an implicit `this`, `obj.f()` of a
+//!    JS object literal `obj` with that member).
 //! 2. **resolved**: through an import that resolved to a file defining the name (named,
 //!    default and namespace imports, re-exports followed up to three hops, glob imports,
+//!    `obj.f()` of an imported JS object literal (`export const obj = {…}`,
+//!    `export default {…}`),
 //!    a Go package, Java's package, C/C++ includes and the header's source file, Godot
 //!    global class names and autoloads), or, for a Rust call through a path that no rule
 //!    above resolves (`krate::m::f()`, `crate::m::f()`, `super::f()`, `krate::Type::new()`),
@@ -38,7 +41,8 @@
 //! 3. **heuristic**: a name unique in the repo, only where a name can be in scope without a
 //!    visible import (C/C++ functions, Java/C#/C++ type names, JS files that are not ES
 //!    modules), and `obj.m()` when `m` is the only method of that name in the language and
-//!    its file is the caller's file or one it imports.
+//!    its file is the caller's file or one it imports (members of JS object literals are
+//!    left out of this count: [`Def::object`]).
 //!
 //! A name bound by an import that did not resolve to a definition (a library, a missing
 //! file) stops there: it is never matched by name elsewhere. Several candidates with
@@ -407,7 +411,7 @@ impl<'a> Ctx<'a> {
                             .push(sid);
                         // Every method counts for uniqueness; implementations of a trait or
                         // an interface are never the unique match themselves (see below).
-                        if d.kind == SymbolKind::Method {
+                        if d.kind == SymbolKind::Method && !d.object {
                             ctx.methods.entry((fam, name)).or_default().push(sid);
                             if d.overrides {
                                 ctx.overrides.insert(sid);
@@ -1180,6 +1184,12 @@ fn resolve_call_by_rules(
             if let Some(bd) = b.by_name.get(q) {
                 return via_qualifier(ctx, binds, h, bd, q, name);
             }
+            // A JS object literal of this file: `api.start()` of `const api = {…}`.
+            if fam == Fam::Js
+                && let Some(o) = ctx.decide(ctx.members(fi, q, name), Confidence::Exact)
+            {
+                return o;
+            }
             // A type of this file: `Type.f()` / `Type::f()`.
             let local = ctx.top_types(fi, q);
             if !local.is_empty() {
@@ -1382,8 +1392,29 @@ fn via_qualifier(
                     {
                         return o;
                     }
-                } else if ctx.is_module_named(t, tname) {
-                    v.extend(ctx.export_lookup(binds, t, name, Via::Named, 3, &mut Vec::new()));
+                } else {
+                    let before = v.len();
+                    if fam == Fam::Js {
+                        // A member of an exported object literal: `api.start()` of
+                        // `export const api = {…}`, `plugin.run()` of `export default {…}`.
+                        for s in ctx.export_lookup(binds, t, tname, Via::Named, 3, &mut Vec::new())
+                        {
+                            let obj = &ctx.symbols[s as usize].name;
+                            v.extend(
+                                ctx.members(ctx.owner[s as usize], obj, name)
+                                    .iter()
+                                    .copied(),
+                            );
+                        }
+                        if bd.kind == BindKind::Default
+                            && ctx.files[t].code.default_export.is_none()
+                        {
+                            v.extend(ctx.members(t, "default", name).iter().copied());
+                        }
+                    }
+                    if v.len() == before && ctx.is_module_named(t, tname) {
+                        v.extend(ctx.export_lookup(binds, t, name, Via::Named, 3, &mut Vec::new()));
+                    }
                 }
             }
         }

@@ -1,6 +1,7 @@
 ; N2 symbols for JavaScript / JSX (TypeScript and TSX add `typescript.scm`).
 ; Captures read by `symbols/extract.rs`:
-;   @def.<kind> + @name   a definition (kind: function, method, class, interface, enum, type, var)
+;   @def.<kind> + @name   a definition (kind: function, method, class, interface, enum, type, var);
+;                         an object literal's methods are `@def.method` too
 ;   @call + @name         `f()`, `<Comp/>`
 ;   @call.member + @name (+ @recv, @args)   `x.f()`, `this.f()`, `<ui.Panel/>`
 ;   @call.new + @name (+ @recv)              `new F()`, `new ns.F()`
@@ -13,6 +14,10 @@
 (class_declaration name: (_) @name) @def.class
 (method_definition name: (_) @name) @def.method
 (variable_declarator name: (identifier) @name value: (_)) @def.var
+;  object literal members: kept only for a named object (see `js_object_owner` in extract.rs)
+(pair
+  key: [(property_identifier) (string)] @name
+  value: [(arrow_function) (function_expression)]) @def.method
 
 (call_expression function: (identifier) @name) @call
 (call_expression

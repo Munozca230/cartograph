@@ -145,7 +145,8 @@ pub fn index() -> Index {
                 refer(&store("Store#"), 10, 29, 34),
                 refer(&store("Store#"), 11, 13, 18),
                 def(&store("api."), 14, 18),
-                // An object literal's method: N2 has no symbol for it.
+                // A method of an object literal passed to a call (`Object.freeze({…})`): N2 has
+                // no symbol for it.
                 def(&store("api.fetch()."), 15, 17),
                 refer(&store("makeStore()."), 16, 11, 20),
                 refer_legacy(&store("Store#loadAll()."), 16, 23, 30),

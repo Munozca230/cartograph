@@ -151,7 +151,7 @@ fn none_at(s: &Symbols, at: &str) -> bool {
     !s.calls.iter().any(|c| c.file == file && c.line == line)
 }
 
-const FIXTURES: [&str; 17] = [
+const FIXTURES: [&str; 18] = [
     "symbols-ts",
     "symbols-py",
     "symbols-rust",
@@ -169,6 +169,7 @@ const FIXTURES: [&str; 17] = [
     "inherit-cs",
     "inherit-cpp",
     "inherit-gd",
+    "electron-app",
 ];
 
 #[test]
@@ -176,6 +177,70 @@ fn goldens() {
     for name in FIXTURES {
         golden(name, &symbols_of(name));
     }
+}
+
+#[test]
+fn object_literal_members() {
+    let s = symbols_of("electron-app");
+    let has = |id: &str| s.symbols.iter().any(|x| x.id() == id);
+    let caller_at = |at: &str| {
+        let (file, line) = at.rsplit_once(':').unwrap();
+        let line: u32 = line.parse().unwrap();
+        s.calls
+            .iter()
+            .find(|c| c.file == file && c.line == line)
+            .and_then(|c| c.caller.clone())
+    };
+    // Functions of a named object are its members: a module-level const (with a nested
+    // object and a quoted key), an object handed to `exposeInMainWorld`, `export default`,
+    // `module.exports`.
+    for id in [
+        "sym:src/electron/preload.ts#deskApi.ping",
+        "sym:src/electron/preload.ts#deskApi.save",
+        "sym:src/electron/preload.ts#deskApi.updater.check",
+        "sym:src/electron/preload.ts#deskApi.on-status",
+        "sym:src/electron/preload.ts#tools.format",
+        "sym:src/electron/preload.ts#tools.reload",
+        "sym:src/electron/api.ts#api.start",
+        "sym:src/electron/api.ts#default.run",
+        "sym:src/electron/legacy.js#module.exports.ping",
+    ] {
+        assert!(has(id), "{id}");
+    }
+    // A local object's functions are not symbols.
+    assert!(!s.symbols.iter().any(|x| x.name == "skip"));
+    // Exposed or exported objects export their members; a private const does not.
+    let exported = |id: &str| s.symbols.iter().any(|x| x.id() == id && x.exported);
+    assert!(exported("sym:src/electron/preload.ts#deskApi.save"));
+    assert!(exported("sym:src/electron/preload.ts#tools.reload"));
+    assert!(!exported("sym:src/electron/api.ts#helpers.twice"));
+    // Calls inside them belong to them.
+    assert_eq!(
+        caller_at("src/electron/preload.ts:14").as_deref(),
+        Some("sym:src/electron/preload.ts#deskApi.updater.check")
+    );
+    assert_eq!(
+        caller_at("src/electron/preload.ts:26").as_deref(),
+        Some("sym:src/electron/preload.ts#tools.format")
+    );
+    // `obj.m()` reaches the member, in the file and through an import.
+    use Confidence::*;
+    assert_eq!(
+        call(
+            &s,
+            "src/electron/api.ts:18",
+            "sym:src/electron/api.ts#helpers.twice"
+        ),
+        Some(Exact)
+    );
+    assert_eq!(
+        call(&s, "src/ui/app.ts:4", "sym:src/electron/api.ts#api.stop"),
+        Some(Resolved)
+    );
+    assert_eq!(
+        call(&s, "src/ui/app.ts:5", "sym:src/electron/api.ts#default.run"),
+        Some(Resolved)
+    );
 }
 
 #[test]

@@ -192,7 +192,7 @@ fn definitions_match_n2_symbols_and_fill_its_gaps() {
     // Store, save, loadAll, makeStore, api (store.ts); format, save (util.ts); run, helper,
     // read (app.ts); show (view.ts).
     assert_eq!(st.symbols_matched, 11, "{st:?}");
-    // `api.fetch` (an object literal's method) is N2's blind spot.
+    // `api.fetch` (a method of an object literal passed to a call) is N2's blind spot.
     assert_eq!(st.symbols_added, 1);
     let fetch = s
         .symbols
