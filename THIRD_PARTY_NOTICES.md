@@ -28,11 +28,11 @@ that are not dev dependencies, without type-only ones). Do not edit it by hand.
   SIL Open Font License 1.1. Its copyright notice and license text are reproduced at the
   end of this file.
 
-## Rust crates (304)
+## Rust crates (303)
 
 | License | Crates |
 |---|---|
-| MIT OR Apache-2.0 | 181 |
+| MIT OR Apache-2.0 | 180 |
 | MIT | 63 |
 | Apache-2.0 OR MIT | 11 |
 | Unlicense OR MIT | 11 |
@@ -233,7 +233,6 @@ that are not dev dependencies, without type-only ones). Do not edit it by hand.
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT | https://github.com/hsivonen/multiversion_no_op |
 | nonempty | 0.12.0 | MIT | https://github.com/cloudhead/nonempty |
 | notify | 8.2.2 | CC0-1.0 | https://github.com/notify-rs/notify.git |
-| notify-debouncer-mini | 0.7.0 | MIT OR Apache-2.0 | https://github.com/notify-rs/notify.git |
 | notify-types | 2.2.0 | MIT OR Apache-2.0 | https://github.com/notify-rs/notify.git |
 | nu-ansi-term | 0.50.3 | MIT | https://github.com/nushell/nu-ansi-term |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | https://github.com/rust-num/num-traits |

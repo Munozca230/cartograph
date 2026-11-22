@@ -1,4 +1,7 @@
-//! File watcher: a notify debouncer (300 ms) over the repo root. Events for paths the
+//! File watcher: notify events over the repo root, batched until 300 ms pass without a new
+//! one. Reads are not changes: on Linux inotify also reports files being opened, and the
+//! indexer opens every file, so access events are dropped (else indexing re-triggers
+//! itself). Events for paths the
 //! walker would never index (the data dir, `.git`, the always-excluded dirs, gitignored
 //! paths) are dropped here, so writing the database never retriggers indexing; the rest
 //! become one `Watch` request on the scheduler.
@@ -16,15 +19,28 @@ use cartograph_index::walk::EXCLUDED_DIRS;
 use cartograph_index::{DATA_DIRS, DATA_FILES};
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify::RecursiveMode;
-use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
+use notify::event::{AccessKind, AccessMode};
+use notify::{EventKind, RecursiveMode, Watcher as _};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-/// Debounce window.
+/// Debounce window: a batch is handed over once this long passes without a new event.
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
+/// Longest a batch waits under a steady stream of events.
+const MAX_BATCH_WAIT: Duration = Duration::from_secs(2);
+
+/// Whether an event can change a file: anything but a read (open, read, close after read).
+/// A close after writing is kept: some editors only report that.
+fn is_change(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
 
 /// Decides which changed paths matter. Mirrors the walker (`ignore::WalkBuilder` with
 /// `hidden(false)`, `parents(false)`, `require_git(false)`, no global gitignore):
@@ -271,7 +287,8 @@ impl GitWatch {
 
 /// Keeps the watcher alive; dropping it stops watching.
 pub struct Watcher {
-    _debouncer: Debouncer<notify::RecommendedWatcher>,
+    // Dropping the watcher closes the channel, which ends the batching thread.
+    _watcher: notify::RecommendedWatcher,
 }
 
 fn touches_ignore_rules(p: &Path) -> bool {
@@ -308,18 +325,16 @@ pub fn start_with(
         .as_ref()
         .map(|g| g.extra_watches(root))
         .unwrap_or_default();
-    let mut debouncer = new_debouncer(DEBOUNCE, move |res: DebounceEventResult| match res {
-        Ok(events) => {
-            if events.iter().any(|e| touches_ignore_rules(&e.path)) {
+    let handle = move |res: Result<Vec<PathBuf>, String>| match res {
+        Ok(paths) => {
+            if paths.iter().any(|p| touches_ignore_rules(p)) {
                 filter.reload();
             }
-            let changed: BTreeSet<String> = events
-                .iter()
-                .filter_map(|e| filter.relevant(&e.path))
-                .collect();
+            let changed: BTreeSet<String> =
+                paths.iter().filter_map(|p| filter.relevant(p)).collect();
             let git_changed = git
                 .as_ref()
-                .is_some_and(|g| events.iter().any(|e| g.matches(&e.path)));
+                .is_some_and(|g| paths.iter().any(|p| g.matches(p)));
             if !changed.is_empty() {
                 tracing::debug!(count = changed.len(), paths = ?changed, "watched changes");
                 on_change(changed);
@@ -335,19 +350,113 @@ pub fn start_with(
             tracing::warn!(error = %e, "watcher error; scheduling a full re-index");
             on_change(BTreeSet::new());
         }
+    };
+    let (tx, rx) = mpsc::channel::<Result<Vec<PathBuf>, String>>();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let msg = match res {
+            Ok(ev) if !is_change(&ev.kind) || ev.paths.is_empty() => return,
+            Ok(ev) => Ok(ev.paths),
+            Err(e) => Err(e.to_string()),
+        };
+        // The receiver is gone only when the batching thread ended.
+        let _ = tx.send(msg);
     })
     .map_err(|e| format!("cannot create the file watcher: {e}"))?;
-    debouncer
-        .watcher()
+    std::thread::Builder::new()
+        .name("cartograph-watch".into())
+        .spawn(move || batch_events(&rx, handle))
+        .map_err(|e| format!("cannot start the watcher thread: {e}"))?;
+    watcher
         .watch(root, RecursiveMode::Recursive)
         .map_err(|e| format!("cannot watch {}: {e}", root.display()))?;
     for (dir, mode) in extra {
         // Without it, new commits show up at the next file change instead.
-        if let Err(e) = debouncer.watcher().watch(&dir, mode) {
+        if let Err(e) = watcher.watch(&dir, mode) {
             tracing::warn!(dir = %dir.display(), error = %e, "cannot watch the git dir");
         }
     }
-    Ok(Watcher {
-        _debouncer: debouncer,
-    })
+    Ok(Watcher { _watcher: watcher })
+}
+
+/// Hand `handle` one batch per burst of events: the paths seen until [`DEBOUNCE`] passes
+/// without a new one (at most [`MAX_BATCH_WAIT`]), deduplicated. An error ends the batch
+/// and is handed over on its own. Returns when the watcher is dropped.
+fn batch_events(
+    rx: &mpsc::Receiver<Result<Vec<PathBuf>, String>>,
+    handle: impl Fn(Result<Vec<PathBuf>, String>),
+) {
+    while let Ok(first) = rx.recv() {
+        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut error = None;
+        let started = Instant::now();
+        let mut next = Some(first);
+        loop {
+            match next.take() {
+                Some(Ok(p)) => paths.extend(p),
+                Some(Err(e)) => error = Some(e),
+                None => {}
+            }
+            if started.elapsed() >= MAX_BATCH_WAIT {
+                break;
+            }
+            match rx.recv_timeout(DEBOUNCE) {
+                Ok(msg) => next = Some(msg),
+                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        if let Some(e) = error {
+            handle(Err(e));
+        }
+        if !paths.is_empty() {
+            handle(Ok(paths.into_iter().collect()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+    use notify::event::{CreateKind, ModifyKind};
+
+    #[test]
+    fn reads_are_not_changes() {
+        assert!(!is_change(&EventKind::Access(AccessKind::Open(
+            AccessMode::Any
+        ))));
+        assert!(!is_change(&EventKind::Access(AccessKind::Read)));
+        assert!(!is_change(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(is_change(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        assert!(is_change(&EventKind::Modify(ModifyKind::Any)));
+        assert!(is_change(&EventKind::Create(CreateKind::File)));
+        assert!(is_change(&EventKind::Any));
+    }
+
+    #[test]
+    fn a_burst_becomes_one_deduplicated_batch() {
+        let (tx, rx) = mpsc::channel();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s2 = seen.clone();
+        let t = std::thread::spawn(move || {
+            batch_events(&rx, move |b| s2.lock().unwrap().push(b));
+        });
+        tx.send(Ok(vec![PathBuf::from("a"), PathBuf::from("b")]))
+            .unwrap();
+        tx.send(Ok(vec![PathBuf::from("a")])).unwrap();
+        std::thread::sleep(DEBOUNCE * 3);
+        tx.send(Ok(vec![PathBuf::from("c")])).unwrap();
+        drop(tx);
+        t.join().unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            *seen,
+            vec![
+                Ok(vec![PathBuf::from("a"), PathBuf::from("b")]),
+                Ok(vec![PathBuf::from("c")])
+            ]
+        );
+    }
 }
