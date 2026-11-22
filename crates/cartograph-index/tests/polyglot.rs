@@ -411,7 +411,8 @@ fn invalid_unicode_names_are_recorded_with_distinct_relative_paths() {
     let root = tmp.path();
     write(root, "sub/ok.py", b"x = 1\n");
     for byte in [0xFFu8, 0xFE] {
-        let name = OsStr::from_bytes(&[byte, b'a']);
+        let bytes = [byte, b'a'];
+        let name = OsStr::from_bytes(&bytes);
         fs::write(root.join("sub").join(name), b"x").unwrap();
     }
     let out = index_to_store(root, &IndexOptions::default()).unwrap();
