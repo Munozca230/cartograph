@@ -30,15 +30,6 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - name: NPM_TOKEN is set
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "::error title=NPM_TOKEN is missing::Add an npm access token that can publish @munozca230 packages as the repository secret NPM_TOKEN (docs/release.md, section npm)."
-            exit 1
-          fi
-
       - name: Version of the tag
         id: version
         run: |
@@ -63,6 +54,12 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      # Trusted publishing (OIDC) needs npm 11.5.1 or later.
+      - name: npm for trusted publishing
+        run: |
+          npm install -g npm@^11.5.1
+          npm --version
+
       - name: Download the release archives
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,10 +79,11 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: node scripts/npm-packages.mjs --version "$VERSION" --assets assets --out npm-out
 
-      # Platform packages first: the main package depends on all four.
+      # Platform packages first: the main package depends on all four. No token: npm trusts
+      # this workflow (trusted publishing, OIDC through `id-token: write`), configured once per
+      # package with `npm trust github` (docs/release.md, section npm). Provenance is automatic.
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           DIST_TAG: ${{ steps.version.outputs.dist_tag }}
         run: |
@@ -97,5 +95,5 @@ jobs:
               continue
             fi
             echo "publishing $name@$VERSION (dist-tag $DIST_TAG)"
-            (cd "npm-out/$dir" && npm publish --access public --provenance --tag "$DIST_TAG")
+            (cd "npm-out/$dir" && npm publish --access public --tag "$DIST_TAG")
           done

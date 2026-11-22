@@ -97,55 +97,51 @@ hand from the Actions tab (`workflow_dispatch` with the `tag` input: to publish 
 that was published before the workflow existed, or to finish a failed run). On
 `ubuntu-24.04` it:
 
-1. fails at once if the secret `NPM_TOKEN` is not set;
-2. checks that the tag reads `v<major>.<minor>.<patch>[-<pre>]` and that the release is
+1. checks that the tag reads `v<major>.<minor>.<patch>[-<pre>]` and that the release is
    not a draft;
-3. downloads the archives and `.sha256` files of the release (`gh release download`);
-4. runs `node scripts/npm-packages.mjs --version <tag version> --assets assets --out npm-out`,
+2. downloads the archives and `.sha256` files of the release (`gh release download`);
+3. runs `node scripts/npm-packages.mjs --version <tag version> --assets assets --out npm-out`,
    which checks every archive against its `.sha256`, extracts it, writes the five packages
    (the unix binaries keep mode 755) and runs the Linux binary's `--version`;
-5. publishes with `npm publish --access public --provenance`, the four platform packages
-   first and the main package last. A `package@version` that `npm view` already finds is
-   skipped, so running the workflow again only publishes what is missing.
+4. publishes with `npm publish --access public`, the four platform packages first and the
+   main package last. A `package@version` that `npm view` already finds is skipped, so
+   running the workflow again only publishes what is missing.
 
-`--provenance` links each version on npmjs.com to the workflow run that built it (it needs
-the `id-token: write` permission and a public repository).
+There is no token: the workflow publishes through npm **trusted publishing** (OIDC, the
+`id-token: write` permission, npm 11.5.1 or newer). Provenance is then automatic: each
+version on npmjs.com links to the workflow run that built it.
 
 ### One-time setup
 
-npm only issues granular access tokens (classic and automation tokens were removed in
-late 2025).
+Trusted publishing can only be set up for a package that exists, so the first version is
+published by hand, with your own npm login and two-factor authentication. No access token
+is needed at any point.
 
-1. On npmjs.com, signed in as `munozca230`, open the account's access tokens page and
-   generate a new granular access token.
-2. Fill in the form:
-   - name: `cartograph GitHub Actions`;
-   - **Bypass two-factor authentication**: checked. Without it a publish from CI asks for
-     a one-time password and fails. It is off by default, and it covers package publishing
-     only.
-   - **Packages and scopes**: permission **Read and write (publish and stage)**, not "stage
-     only" (that one stages versions for review and never publishes them). Select **All
-     Packages** for the first publish: the five packages do not exist yet, so they cannot
-     be picked one by one.
-   - **Expiration**: npm caps tokens that can write at 90 days. Note the date: once it
-     passes, the workflow fails at the publish step until the secret is replaced.
-3. On GitHub, in the repository: **Settings**, **Secrets and variables**, **Actions**, **New
-   repository secret**. Name `NPM_TOKEN`, and the token as the value.
+1. **First publish** (from a checkout of this repository, once the GitHub release of that
+   version exists, draft or published):
 
-npm announces that granular tokens will stop publishing directly in January 2027. The way
-forward is trusted publishing (OIDC). Once the five packages exist, add a trusted publisher
-in each package's settings on npmjs.com:
+   ```
+   npm login
+   gh release download v<version> --dir npm-assets --pattern 'cartograph-*'
+   node scripts/npm-packages.mjs --version <version> --assets npm-assets --out npm-out
+   ```
 
-- provider GitHub Actions, user `Munozca230`, repository `cartograph`, workflow filename
-  `npm.yml`, no environment;
-- under the allowed actions, enable direct `npm publish`, since the workflow does not stage;
-- a new configuration expires if no publish uses it within 2 days, so set it up shortly
-  before a release.
+   then, in `npm-out`, `npm publish --access public` in `cartograph-win32-x64`,
+   `cartograph-linux-x64`, `cartograph-darwin-arm64`, `cartograph-darwin-x64` and last
+   `cartograph`. Each publish confirms with your second factor.
+2. **Trust this workflow**, shortly before the next release (npm drops a trusted publisher
+   that no publish uses within 2 days). For each of the five packages:
 
-The npm CLI (11.5.1 or newer; Node.js 24 ships it) tries OIDC before the token, and
-provenance is then automatic. Once every package has its trusted publisher, remove the
-`NPM_TOKEN` step at the start of `npm.yml` (it would fail without the secret), then the
-secret and the token.
+   ```
+   npm trust github @munozca230/cartograph --file npm.yml --repository Munozca230/cartograph
+   ```
+
+   (and the same for `-win32-x64`, `-linux-x64`, `-darwin-arm64`, `-darwin-x64`). Check
+   with `npm trust list <package>`. The workflow publishes directly, so on npmjs.com, in
+   each package's **Settings**, **Trusted publishing**, the allowed actions must include
+   `npm publish` (new configurations default to staged publishing only).
+
+From then on, publishing a GitHub release publishes to npm with no further step.
 
 ### Publishing a version
 
@@ -153,13 +149,11 @@ secret and the token.
 2. Publish the draft on GitHub. `npm.yml` starts; follow it in the Actions tab.
 3. Check: `npx -y @munozca230/cartograph@<version> --version` prints `cartograph <version>`.
 
-If the run fails halfway (a network error, an expired token), fix the cause and run the
+If the run fails halfway (a network error, a missing trusted publisher), fix the cause and run the
 workflow again from the Actions tab with the same tag: what was published is skipped.
 
-For 0.1.0, which was tagged before the workflow existed, publishing the release starts
-nothing (a release runs the workflows of its tagged commit). Run it by hand from `main` with
-`tag` = `v0.1.0` once the release is published. The script and the workflow then come from
-`main`, and the packages from the 0.1.0 archives.
+For 0.1.0, the first version, publish to npm by hand first (one-time setup, step 1), then
+publish the GitHub release: its run finds the five packages on npm and skips them.
 
 ### Testing the packages locally
 
