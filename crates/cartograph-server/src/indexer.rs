@@ -15,7 +15,7 @@ use cartograph_core::{Graph, History, Store, Symbols};
 use cartograph_index::{DB_FILE, IndexOptions, Progress};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -127,19 +127,7 @@ pub async fn run_worker(state: Arc<AppState>, index_fn: IndexFn, max_file_bytes:
         match outcome {
             Ok(snap) => {
                 let generation = snap.generation;
-                let counts = json!(snap.counts);
-                state.set_snapshot(Arc::new(snap));
-                state.finish(None);
-                let mut ev = json!({
-                    "generation": generation,
-                    "ms": ms,
-                    "changed": changed,
-                    "counts": counts,
-                });
-                if changed_total > MAX_CHANGED {
-                    ev["changed_total"] = json!(changed_total);
-                }
-                state.emit("index-finished", ev);
+                publish(&state, snap, ms, &job.changed);
                 tracing::info!(generation, ms, "index finished");
                 if git {
                     update_history(&state).await;
@@ -152,6 +140,44 @@ pub async fn run_worker(state: Arc<AppState>, index_fn: IndexFn, max_file_bytes:
             }
         }
     }
+}
+
+/// Serve `snap` and tell every `/api/events` client (`index-finished`): the end of a
+/// successful run, of this server's worker or of the indexer that feeds a server started
+/// with [`crate::start_fed`]. `ms` is how long the run took; `changed` the paths it was for.
+pub fn publish(state: &AppState, snap: Snapshot, ms: u64, changed: &BTreeSet<String>) {
+    let (list, changed_total) = changed_json(changed);
+    let generation = snap.generation;
+    let counts = json!(snap.counts);
+    state.set_snapshot(Arc::new(snap));
+    state.finish(None);
+    let mut ev = json!({
+        "generation": generation,
+        "ms": ms,
+        "changed": list,
+        "counts": counts,
+    });
+    if changed_total > MAX_CHANGED {
+        ev["changed_total"] = json!(changed_total);
+    }
+    state.emit("index-finished", ev);
+}
+
+/// The snapshot of the index the data dir's store holds now (the last committed run, with
+/// its symbols and git history), as `generation`. For a server fed by another indexer: it
+/// reads what that indexer wrote and indexes nothing.
+pub fn snapshot_from_store(
+    data_dir: &Path,
+    generation: u64,
+    config: Result<cartograph_query::Config, cartograph_query::ConfigError>,
+) -> Result<Snapshot, String> {
+    let store = Store::open(data_dir.join(DB_FILE)).map_err(|e| e.to_string())?;
+    let (graph, meta) = store.load_snapshot().map_err(|e| e.to_string())?;
+    let history = stored_history(data_dir);
+    let symbols = stored_symbols(data_dir);
+    Ok(Snapshot::build_all(
+        graph, &meta, generation, config, &history, &symbols,
+    ))
 }
 
 /// The history stored in the data dir (empty when there is none or it cannot be read).
