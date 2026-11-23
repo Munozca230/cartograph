@@ -84,7 +84,7 @@ fn ext(name: &str) -> String {
 /// when the folder has code: caches, output, and copies (`_backup*`, `backup-<date>`,
 /// `backup_<x>`, `*.bak`) always; `logs`, `log`, `tmp`, `temp`, `backup`, `backups` only
 /// without code.
-fn by_name(name: &str) -> Option<(&'static str, bool)> {
+pub(crate) fn by_name(name: &str) -> Option<(&'static str, bool)> {
     let lower = name.to_ascii_lowercase();
     if CACHE_NAMES.contains(&lower.as_str()) {
         return Some(("a tool's cache", true));

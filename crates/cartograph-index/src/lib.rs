@@ -33,6 +33,7 @@ pub mod spec;
 pub mod symbols;
 mod syntax;
 pub mod walk;
+pub mod workspace;
 
 use cartograph_core::{
     Confidence, Edge, EdgeKind, Graph, Node, NodeKind, SkipReason, SkippedFile, Store, node_id,

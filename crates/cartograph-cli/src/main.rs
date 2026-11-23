@@ -233,12 +233,33 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         data_dir: Option<PathBuf>,
     },
+    /// Workspaces: several repositories mapped as one (see docs/workspace.md).
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceCmd,
+    },
     /// Check that cartograph can run here: database, grammars, write access.
     Doctor {
         #[arg(default_value = ".")]
         path: PathBuf,
         #[command(flatten)]
         data: DataDirArg,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkspaceCmd {
+    /// Propose a cartograph-workspace.toml for PATH from its child folders that are git
+    /// repositories with code, and print it.
+    Init {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Write <PATH>/cartograph-workspace.toml (refuses to overwrite one without --force).
+        #[arg(long)]
+        write: bool,
+        /// With --write, overwrite an existing cartograph-workspace.toml.
+        #[arg(long, requires = "write")]
+        force: bool,
     },
 }
 
@@ -306,6 +327,9 @@ fn main() -> ExitCode {
             (scip, no_scip),
         ),
         Command::Report { path, data } => cmd_report(&path, &data),
+        Command::Workspace {
+            action: WorkspaceCmd::Init { path, write, force },
+        } => cmd_workspace_init(&path, write, force),
         Command::Doctor { path, data } => cmd_doctor(&path, &data),
         Command::Mcp {
             path,
@@ -618,6 +642,41 @@ fn cmd_serve(
         }
     })
     .with_context(|| format!("serving {}", path.display()))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_workspace_init(path: &Path, write: bool, force: bool) -> Result<ExitCode> {
+    use cartograph_index::workspace::{propose, render};
+    let (members, left) = propose(path).with_context(|| format!("reading {}", path.display()))?;
+    if members.is_empty() {
+        for l in &left {
+            eprintln!("{}: {}", l.path, l.why);
+        }
+        bail!(
+            "no child folder of {} is a git repository with code",
+            path.display()
+        );
+    }
+    let text = render(&cartograph_index::repo_name(path), &members, &left);
+    if !write {
+        print!("{text}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let target = path.join(cartograph_core::WORKSPACE_FILE);
+    if target.exists() && !force {
+        bail!("{} exists; pass --force to overwrite it", target.display());
+    }
+    std::fs::write(&target, text).with_context(|| format!("writing {}", target.display()))?;
+    println!(
+        "wrote {} ({} members: {})",
+        target.display(),
+        members.len(),
+        members
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     Ok(ExitCode::SUCCESS)
 }
 
