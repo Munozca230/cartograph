@@ -13,6 +13,7 @@
   "groups": [
     {
       "file": "file:src/model.rs",
+      "id_prefix": "sym:src/model.rs#",
       "total": 8,
       "symbols": [
         {
@@ -82,6 +83,7 @@
     },
     {
       "file": "file:src/main.rs",
+      "id_prefix": "sym:src/main.rs#",
       "total": 3,
       "symbols": [
         {
@@ -110,6 +112,7 @@
     },
     {
       "file": "file:src/routes.rs",
+      "id_prefix": "sym:src/routes.rs#",
       "total": 2,
       "symbols": [
         {
@@ -132,6 +135,7 @@
     },
     {
       "file": "file:src/util.rs",
+      "id_prefix": "sym:src/util.rs#",
       "total": 1,
       "symbols": [
         {

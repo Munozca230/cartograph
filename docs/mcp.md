@@ -26,7 +26,7 @@ the model, *instead of* the text, which reads worse and costs about twice the to
 | `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder) | `nodes` (list) | 1.5k |
 | `find` | glob/grep for a name | `query`, `kind` file/dir/ext/sym (all but sym; symbols too when no path has it) | 0.8k |
 | `path` | tracing why A depends on B by hand | `from`, `to` | 0.8k |
-| `symbols` | reading a file for its outline (a line per definition; when that does not fit, the members of the biggest objects and classes by name, `api (150): save, load, …`, then the other symbols that do not fit) | `node` | 1k |
+| `symbols` | reading a file for its outline (a line per definition; when that does not fit, the uncalled members of the biggest objects and classes by name, `api (150, pub): save, load, +148 more`, then the other symbols that do not fit) | `node` | 1k |
 | `callers` | grepping a function name before changing it | `symbol` | 1k |
 | `hierarchy` | grepping `extends` / `implements` / `impl … for` | `symbol` (a type, or a method of one) | 0.8k |
 | `entries` | searching for main, routes, commands, IPC handlers | `kind`, `within` | 1k |
@@ -41,6 +41,11 @@ Ids are stable and every answer uses them: `file:src/a.rs`, `dir:src`, `repo:`,
 `sym:src/a.rs#name`, libraries as `external:npm:react` (or `npm:react`). Inputs also
 accept plain repo paths (`src/a.rs`, `src/`), absolute paths inside the repo (made
 relative by the server), and `path#name` / `Class.method` / a bare name for symbols.
+
+The JSON of `symbols` carries each symbol's name, not its id: each file of the answer has
+`id_prefix` (`sym:src/a.ts#`), and the id is `id_prefix` + `name` for a symbol on a line
+(`symbols`) or in `others`, `id_prefix` + `container` + `.` + name for a member in
+`members`. Names are never clipped in the JSON (only in the text).
 
 `explain` shows the note `annotate` left on the node. Each note is kept by node id with
 the content hash of the node when it was written (for a folder, a hash over every file

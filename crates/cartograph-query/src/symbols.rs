@@ -406,7 +406,7 @@ impl CallCounts {
     }
 }
 
-/// A symbol in a file's listing: its id is `sym:<path of the file>#<name>`.
+/// A symbol in a file's listing: its id is the file's `id_prefix` + `name`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ListedSymbol {
     /// Qualified name in the file (`Class.method`, `api.save`).
@@ -424,14 +424,15 @@ pub struct ListedSymbol {
 }
 
 /// The members of one container (an object's functions, a class's methods) listed by name
-/// only, when listing each with its lines does not fit: `api (150): save, load, …`. A
-/// member's id is `sym:<path of the file>#<container>.<name>`.
+/// only, when listing each with its lines does not fit: `api (150, pub): save, load, +148
+/// more`. A member's id is the file's `id_prefix` + `<container>.<name>`. Members that
+/// call sites reach keep a line of their own instead.
 #[derive(Debug, Clone, Serialize)]
 pub struct MemberGroup {
     pub container: String,
     /// Line of its first member.
     pub line: u32,
-    /// Members of the container (types aside).
+    /// Members of the container in this group (types and called members aside).
     pub total: usize,
     /// Of them, those exported.
     pub exported: usize,
@@ -443,7 +444,10 @@ pub struct MemberGroup {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileSymbols {
+    /// `file:<path>`.
     pub file: String,
+    /// `sym:<path>#`: the id of a symbol listed here is this + its name.
+    pub id_prefix: String,
     pub total: usize,
     /// Symbols listed one per line, with kind and lines.
     pub symbols: Vec<ListedSymbol>,
@@ -455,8 +459,13 @@ pub struct FileSymbols {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub others: Vec<String>,
     /// Symbols left out: neither on a line, in `others` nor in a group (a group counts its
-    /// own).
+    /// own, `members_more` the members of groups left out).
     pub more: usize,
+    /// Member groups left out, and their members.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub groups_more: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub members_more: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -577,7 +586,7 @@ fn pick(t: &SymbolTable, list: &[usize], n: usize) -> Vec<usize> {
 fn listed(t: &SymbolTable, i: usize) -> ListedSymbol {
     let r = row(t, i);
     ListedSymbol {
-        name: clip(&t.symbols[i].qualified(), 200),
+        name: t.symbols[i].qualified(),
         kind: r.kind,
         line: r.line,
         end_line: r.end_line,
@@ -620,8 +629,17 @@ fn listed_text(r: &ListedSymbol) -> String {
     )
 }
 
+/// Names for a text line, each clipped.
+fn names_text(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| clip(n, 100))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn group_text(g: &MemberGroup) -> String {
-    let mut names = g.names.join(", ");
+    let mut names = names_text(&g.names);
     if g.more > 0 {
         names.push_str(&format!(", +{} more", g.more));
     }
@@ -637,14 +655,16 @@ fn group_text(g: &MemberGroup) -> String {
     )
 }
 
-/// How a file is listed: containers with at least `group_min` members (not types) list
-/// them by name only, at most `names` per container; at most `rows` other symbols get a
-/// line each, and at most `names` of the rest are listed by name.
+/// How a file is listed: containers with at least `group_min` members (not types, not
+/// called) list them by name only, at most `names` per container and at most `groups`
+/// containers (the biggest); at most `rows` other symbols get a line each, and at most
+/// `names` of the rest are listed by name.
 #[derive(Debug, Clone, Copy)]
 struct Plan {
     group_min: usize,
     rows: usize,
     names: usize,
+    groups: usize,
 }
 
 const ALL: usize = usize::MAX;
@@ -655,14 +675,28 @@ impl Plan {
             group_min: ALL,
             rows,
             names: 0,
+            groups: 0,
         }
     }
 
-    const fn grouped(group_min: usize, rows: usize, names: usize) -> Plan {
+    /// Every container with at least `group_min` members by name, every other symbol on a
+    /// line.
+    const fn grouped(group_min: usize) -> Plan {
         Plan {
             group_min,
+            rows: ALL,
+            names: ALL,
+            groups: ALL,
+        }
+    }
+
+    /// At most `rows` lines, `names` names in a list, and as many groups as lines.
+    const fn cut(rows: usize, names: usize) -> Plan {
+        Plan {
+            group_min: 2,
             rows,
             names,
+            groups: rows,
         }
     }
 }
@@ -672,20 +706,20 @@ impl Plan {
 /// every container's, then fewer lines (the symbols left without one by name) and names.
 const FILE_PLANS: &[Plan] = &[
     Plan::rows(ALL),
-    Plan::grouped(40, ALL, ALL),
-    Plan::grouped(16, ALL, ALL),
-    Plan::grouped(6, ALL, ALL),
-    Plan::grouped(2, ALL, ALL),
-    Plan::grouped(2, 80, 400),
-    Plan::grouped(2, 60, 300),
-    Plan::grouped(2, 40, 200),
-    Plan::grouped(2, 30, 150),
-    Plan::grouped(2, 20, 100),
-    Plan::grouped(2, 14, 60),
-    Plan::grouped(2, 10, 40),
-    Plan::grouped(2, 6, 20),
-    Plan::grouped(2, 3, 10),
-    Plan::grouped(2, 1, 4),
+    Plan::grouped(40),
+    Plan::grouped(16),
+    Plan::grouped(6),
+    Plan::grouped(2),
+    Plan::cut(80, 400),
+    Plan::cut(60, 300),
+    Plan::cut(40, 200),
+    Plan::cut(30, 150),
+    Plan::cut(20, 100),
+    Plan::cut(14, 60),
+    Plan::cut(10, 40),
+    Plan::cut(6, 20),
+    Plan::cut(3, 10),
+    Plan::cut(1, 4),
 ];
 
 /// The listing of one file under `plan`.
@@ -693,18 +727,26 @@ fn file_listing(t: &SymbolTable, path: &str, list: &[usize], plan: Plan) -> File
     let mut members: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for &i in list {
         let x = &t.symbols[i];
+        // A member that call sites reach keeps its line (and its count).
         if let Some(c) = &x.container
             && !x.kind.is_type()
+            && t.callers_of(&x.id()).is_empty()
         {
             members.entry(c.as_str()).or_default().push(i);
         }
     }
     members.retain(|_, v| v.len() >= plan.group_min);
-    let grouped: HashSet<usize> = members.values().flatten().copied().collect();
+    // At most `plan.groups`: the biggest, then the earliest.
+    let mut members: Vec<(&str, Vec<usize>)> = members.into_iter().collect();
+    members.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.1[0].cmp(&b.1[0])));
+    let dropped = members.split_off(plan.groups.min(members.len()));
+    let dropped_members: HashSet<usize> =
+        dropped.iter().flat_map(|x| x.1.iter()).copied().collect();
+    let grouped: HashSet<usize> = members.iter().flat_map(|x| x.1.iter()).copied().collect();
     let rest: Vec<usize> = list
         .iter()
         .copied()
-        .filter(|i| !grouped.contains(i))
+        .filter(|i| !grouped.contains(i) && !dropped_members.contains(i))
         .collect();
     let rows = pick(t, &rest, plan.rows);
     let shown: HashSet<usize> = rows.iter().copied().collect();
@@ -715,17 +757,17 @@ fn file_listing(t: &SymbolTable, path: &str, list: &[usize], plan: Plan) -> File
         .collect();
     let others: Vec<String> = pick(t, &unlisted, plan.names)
         .into_iter()
-        .map(|i| clip(&t.symbols[i].qualified(), 100))
+        .map(|i| t.symbols[i].qualified())
         .collect();
     let mut groups: Vec<MemberGroup> = members
         .into_iter()
         .map(|(c, v)| {
             let names: Vec<String> = pick(t, &v, plan.names)
                 .into_iter()
-                .map(|i| clip(&t.symbols[i].name, 100))
+                .map(|i| t.symbols[i].name.clone())
                 .collect();
             MemberGroup {
-                container: clip(c, 200),
+                container: c.to_string(),
                 line: v.iter().map(|&i| t.symbols[i].line).min().unwrap_or(0),
                 total: v.len(),
                 exported: v.iter().filter(|&&i| t.symbols[i].exported).count(),
@@ -737,11 +779,14 @@ fn file_listing(t: &SymbolTable, path: &str, list: &[usize], plan: Plan) -> File
     groups.sort_by(|a, b| a.line.cmp(&b.line).then(a.container.cmp(&b.container)));
     FileSymbols {
         file: format!("file:{}", clip(path, 240)),
+        id_prefix: format!("sym:{path}#"),
         total: list.len(),
         more: unlisted.len() - others.len(),
         symbols: rows.into_iter().map(|i| listed(t, i)).collect(),
         members: groups,
         others,
+        groups_more: dropped.len(),
+        members_more: dropped_members.len(),
     }
 }
 
@@ -887,8 +932,10 @@ fn render_symbols(r: &SymbolsResult) -> String {
             s.push_str(&format!("{} ({})\n", clip(&short(&gr.file), 120), gr.total));
             "  "
         };
-        // Lines and member groups in line order (a group at its first member).
+        // Lines and member groups in line order (a group at its first member, under its
+        // container's line when that comes right before).
         let (mut rows, mut groups) = (gr.symbols.iter().peekable(), gr.members.iter().peekable());
+        let mut last: Option<&str> = None;
         loop {
             let row_first = match (rows.peek(), groups.peek()) {
                 (Some(x), Some(m)) => x.line <= m.line,
@@ -903,12 +950,25 @@ fn render_symbols(r: &SymbolsResult) -> String {
                     ""
                 };
                 s.push_str(&format!("{indent}{nested}{}\n", listed_text(x)));
+                last = Some(&x.name);
             } else if let Some(m) = groups.next() {
-                s.push_str(&format!("{indent}  {}\n", group_text(m)));
+                let under = if last == Some(m.container.as_str()) {
+                    "  "
+                } else {
+                    ""
+                };
+                s.push_str(&format!("{indent}{under}{}\n", group_text(m)));
+                last = None;
             }
         }
+        if gr.groups_more > 0 {
+            s.push_str(&format!(
+                "{indent}+{} more members of {} more containers\n",
+                gr.members_more, gr.groups_more
+            ));
+        }
         if !gr.others.is_empty() {
-            let mut names = gr.others.join(", ");
+            let mut names = names_text(&gr.others);
             if gr.more > 0 {
                 names.push_str(&format!(", +{} more", gr.more));
             }

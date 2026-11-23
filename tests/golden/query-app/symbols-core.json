@@ -13,6 +13,7 @@
   "groups": [
     {
       "file": "file:src/core/model.ts",
+      "id_prefix": "sym:src/core/model.ts#",
       "total": 1,
       "symbols": [
         {
@@ -28,6 +29,7 @@
     },
     {
       "file": "file:src/core/repo.ts",
+      "id_prefix": "sym:src/core/repo.ts#",
       "total": 2,
       "symbols": [
         {
@@ -51,6 +53,7 @@
     },
     {
       "file": "file:src/core/service.ts",
+      "id_prefix": "sym:src/core/service.ts#",
       "total": 1,
       "symbols": [
         {
@@ -66,6 +69,7 @@
     },
     {
       "file": "file:src/core/util.ts",
+      "id_prefix": "sym:src/core/util.ts#",
       "total": 1,
       "symbols": [
         {

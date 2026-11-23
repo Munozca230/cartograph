@@ -13,6 +13,7 @@
   "groups": [
     {
       "file": "file:src/core/repo.ts",
+      "id_prefix": "sym:src/core/repo.ts#",
       "total": 2,
       "symbols": [
         {
