@@ -519,7 +519,7 @@ fn index_layout(layout: &Layout, opts: &IndexOptions) -> Result<IndexOutput, Ind
 /// the workspace file, the context path defaulting to the mount's Spring
 /// `server.servlet.context-path` (`src/main/resources/application.{properties,yml,yaml}`).
 fn http_servers(src: &Source<'_>, configs: &[(String, String)]) -> symbols::resolve::HttpServers {
-    let mut out = symbols::resolve::HttpServers::new();
+    let mut out = symbols::resolve::HttpServers::default();
     for m in &src.mounts {
         let declared: cartograph_core::MemberHttp = m
             .meta
@@ -541,7 +541,7 @@ fn http_servers(src: &Source<'_>, configs: &[(String, String)]) -> symbols::reso
         if declared.hosts.is_empty() && context.is_none() && !declared.public {
             continue;
         }
-        out.insert(
+        out.members.insert(
             m.prefix.to_string(),
             cartograph_core::MemberHttp {
                 context_path: context,

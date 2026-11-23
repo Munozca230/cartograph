@@ -70,16 +70,32 @@ struct Url {
 
 impl Url {
     /// A parameter stands for the path (or its end), with at most a base before it: the
-    /// function is a wrapper. A parameter after a literal ending in `/` (`/users/${id}`), a
-    /// `?` or a `=` is a value inside a path of its own: the call is a client site.
+    /// function is a wrapper. A base is anything before the parameter that is not a path of
+    /// its own: a hole (`this.base`), a scheme and host with at most a path without a
+    /// trailing `/` (`http://h/api`), or nothing, each with a `/` of its own after it
+    /// (`${base}/${path}`, `path.join(base, p)`). A parameter after a path ending in `/`
+    /// (`/users/${id}`), a `?` or a `=` is a value inside a path of its own: a client site.
     fn wraps(&self) -> bool {
         let Some(i) = self.parts.iter().position(|p| matches!(p, RPart::Param(_))) else {
             return false;
         };
-        match i.checked_sub(1).map(|j| &self.parts[j]) {
-            None | Some(RPart::Hole(..)) | Some(RPart::Param(_)) => true,
-            Some(RPart::Lit(s)) => !(s.ends_with('/') || s.contains('?') || s.ends_with('=')),
+        let Some(RPart::Lit(s)) = i.checked_sub(1).map(|j| &self.parts[j]) else {
+            return true;
+        };
+        if s.contains('?') || s.ends_with('=') {
+            return false;
         }
+        let path = match s.find("://") {
+            // The path after the host.
+            Some(k) => s[k + 3..].find('/').map_or("", |j| &s[k + 3 + j..]),
+            None => s.as_str(),
+        };
+        if !path.ends_with('/') {
+            return true;
+        }
+        // Only the separator after a base (or after the host): the parameter is the path.
+        let before = path.trim_end_matches('/');
+        before.is_empty() && (s.contains("://") || path == "/")
     }
 
     fn push(&mut self, p: RPart) {
@@ -135,8 +151,8 @@ enum Seg {
 /// Marks an unknown part inside the text of a path.
 const HOLE: char = '\u{1}';
 
-/// The segments of a path's text: cut at `?` / `#`, empty segments dropped; `{x}`, `:x`
-/// and holes are parameters; a last `*` / `**` is a tail wildcard (`true`).
+/// The segments of a path's text: cut at `?` / `#`, empty segments dropped; `{x}`, `:x`,
+/// `<x>` / `<int:x>` (Flask) and holes are parameters; a last `*` / `**` is a tail wildcard (`true`).
 fn segments(text: &str) -> (Vec<Seg>, bool) {
     let mut cut = text.find(['?', '#']).map_or(text, |i| &text[..i]);
     // `/items${query}`: an unknown tail glued to a literal is a query string or a suffix,
@@ -157,21 +173,22 @@ fn segments(text: &str) -> (Vec<Seg>, bool) {
             break;
         }
         let whole_var = (s.starts_with('{') && s.ends_with('}') && s.matches('{').count() == 1)
+            || (s.starts_with('<') && s.ends_with('>') && s.matches('<').count() == 1)
             || (s.starts_with(':') && s.len() > 1)
             || *s == HOLE.to_string()
             || *s == "*";
         if whole_var {
             segs.push(Seg::Param);
-        } else if s.contains(HOLE) || s.contains('{') {
+        } else if s.contains(HOLE) || s.contains('{') || (s.contains('<') && s.contains('>')) {
             let mut pat = String::new();
             let mut in_var = false;
             for ch in s.chars() {
                 match ch {
-                    '{' => {
+                    '{' | '<' => {
                         in_var = true;
                         pat.push('*');
                     }
-                    '}' => in_var = false,
+                    '}' | '>' => in_var = false,
                     HOLE => pat.push('*'),
                     c if !in_var => pat.push(c),
                     _ => {}
@@ -306,9 +323,12 @@ impl Site {
     }
 }
 
-/// How each member serves HTTP, by member (`""` for a single repo): `[member.http]`, with
-/// the context path read from the member's Spring config when not given.
-pub type HttpServers = HashMap<String, cartograph_core::MemberHttp>;
+/// How the repo serves HTTP.
+#[derive(Debug, Clone, Default)]
+pub struct HttpServers {
+    /// `[member.http]` by member (`""` for a single repo), in name order.
+    pub members: BTreeMap<String, cartograph_core::MemberHttp>,
+}
 
 fn is_local_host(name: &str) -> bool {
     matches!(
@@ -319,10 +339,25 @@ fn is_local_host(name: &str) -> bool {
 
 /// The base and the path text of a URL's parts. An absolute URL written after a base
 /// (`${base}https://x/…` once a wrapper's base meets an absolute argument) wins.
-fn split_base(parts: &[RPart], member: &str, ctx: &Ctx<'_>, hosts: &HttpServers) -> (Base, String) {
-    let abs = parts
-        .iter()
-        .rposition(|p| matches!(p, RPart::Lit(s) if s.contains("://")));
+fn split_base(
+    parts: &[RPart],
+    member: &str,
+    file_of: &dyn Fn(usize) -> String,
+    hosts: &HttpServers,
+) -> (Base, String) {
+    // An absolute URL counts only before the query: `?next=http://…` is a value.
+    let mut abs = None;
+    for (i, p) in parts.iter().enumerate() {
+        if let RPart::Lit(s) = p {
+            let q = s.find(['?', '#']);
+            if s.find("://").is_some_and(|k| q.is_none_or(|q| k < q)) {
+                abs = Some(i);
+            }
+            if q.is_some() {
+                break;
+            }
+        }
+    }
     let parts = match abs {
         Some(i) => {
             let RPart::Lit(s) = &parts[i] else {
@@ -342,7 +377,7 @@ fn split_base(parts: &[RPart], member: &str, ctx: &Ctx<'_>, hosts: &HttpServers)
     };
     match parts.first() {
         Some(RPart::Hole(h, f)) => (
-            Base::Unknown(format!("{h}@{}", ctx.files[*f].path)),
+            Base::Unknown(format!("{h}@{}", file_of(*f))),
             text_of(&parts[1..]),
         ),
         Some(RPart::Lit(_)) => {
@@ -364,8 +399,14 @@ fn split_base(parts: &[RPart], member: &str, ctx: &Ctx<'_>, hosts: &HttpServers)
             let host_end = rest.find('/').unwrap_or(rest.len());
             let path = text[skip + host_end..].to_string();
             let host_text = &rest[..host_end];
-            // A port only known at run time is still that host.
-            let (name, port) = host_text.split_once(':').unwrap_or((host_text, ""));
+            // A port only known at run time is still that host; `[::1]:8080` is IPv6.
+            let (name, port) = match host_text.strip_prefix('[').and_then(|r| r.split_once(']')) {
+                Some((ip, rest)) => (
+                    &host_text[..ip.len() + 2],
+                    rest.strip_prefix(':').unwrap_or(""),
+                ),
+                None => host_text.split_once(':').unwrap_or((host_text, "")),
+            };
             if name.contains(HOLE) || name.is_empty() {
                 return (Base::Unknown(format!("host@{member}")), path);
             }
@@ -374,10 +415,16 @@ fn split_base(parts: &[RPart], member: &str, ctx: &Ctx<'_>, hosts: &HttpServers)
             } else {
                 format!("{name}:{port}")
             };
-            let known = hosts
-                .iter()
-                .find(|(_, m)| m.hosts.iter().any(|h| *h == host || *h == name))
-                .map(|(m, _)| m.clone());
+            // The member that declares `host:port` itself, else the host name alone; members
+            // in name order, so the same member always wins.
+            let declares = |want: &str| {
+                hosts
+                    .members
+                    .iter()
+                    .find(|(_, m)| m.hosts.iter().any(|h| h == want))
+                    .map(|(m, _)| m.clone())
+            };
+            let known = declares(&host).or_else(|| declares(name));
             let base = match known {
                 Some(m) => Base::Host(format!("{host}@{m}")),
                 None if is_local_host(name) => Base::Host(host),
@@ -578,6 +625,7 @@ fn routes(cx: &Cx<'_, '_>) -> Vec<Route> {
         let member = cx.member(fi);
         let context = cx
             .hosts
+            .members
             .get(&member)
             .and_then(|m| m.context_path.clone())
             .unwrap_or_default();
@@ -1073,7 +1121,8 @@ fn site(cx: &Cx<'_, '_>, r: &Raw) -> Site {
             other => other.clone(),
         })
         .collect();
-    let (base, path) = split_base(&parts, &member, cx.ctx, cx.hosts);
+    let file_of = |f: usize| cx.ctx.files[f].path.to_string();
+    let (base, path) = split_base(&parts, &member, &file_of, cx.hosts);
     let (segs, _) = segments(&path);
     let literal = segs.iter().filter(|s| matches!(s, Seg::Lit(_))).count();
     let dynamic = literal == 0 || matches!(&base, Base::Unknown(b) if b.is_empty());
@@ -1363,7 +1412,7 @@ fn matching(routes: &[Route], sites: &[Site], servers: &HttpServers, found: &mut
     for (i, r) in routes.iter().enumerate() {
         // A public member serves clients outside the workspace: a route no member calls is
         // not unused.
-        let public = servers.get(&r.member).is_some_and(|m| m.public);
+        let public = servers.members.get(&r.member).is_some_and(|m| m.public);
         let detail = if used.contains(&i) {
             None
         } else if member_hit.contains(r.member.as_str()) && !public {
@@ -1392,6 +1441,95 @@ fn matching(routes: &[Route], sites: &[Site], servers: &HttpServers, found: &mut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lit(s: &str) -> RPart {
+        RPart::Lit(s.into())
+    }
+
+    fn hole(s: &str) -> RPart {
+        RPart::Hole(s.into(), 0)
+    }
+
+    fn url(parts: Vec<RPart>) -> Url {
+        Url {
+            parts,
+            resolved: false,
+        }
+    }
+
+    /// `${base}/${path}` and `path.join(base, p)` pass the path on: a wrapper. A value after
+    /// a path of its own (`/users/${id}`) is a path variable.
+    #[test]
+    fn a_parameter_after_a_base_and_a_slash_is_a_path() {
+        assert!(url(vec![hole("this.base"), lit("/"), RPart::Param(0)]).wraps());
+        assert!(url(vec![lit("/"), RPart::Param(0)]).wraps());
+        assert!(url(vec![lit("http://localhost:8080/"), RPart::Param(0)]).wraps());
+        assert!(url(vec![lit("http://localhost:8080/api"), RPart::Param(0)]).wraps());
+        assert!(!url(vec![lit("/users/"), RPart::Param(0)]).wraps());
+        assert!(!url(vec![hole("b"), lit("/users/"), RPart::Param(0)]).wraps());
+        assert!(!url(vec![lit("/users?id="), RPart::Param(0)]).wraps());
+    }
+
+    #[test]
+    fn flask_variables_are_path_variables() {
+        assert_eq!(template(&segments("/users/<id>").0, false), "/users/{}");
+        assert_eq!(
+            template(&segments("/users/<int:id>/posts").0, false),
+            "/users/{}/posts"
+        );
+        assert_eq!(
+            template(&segments("/files/<name>.json").0, false),
+            "/files/*.json"
+        );
+    }
+
+    fn servers(list: &[(&str, &[&str])]) -> HttpServers {
+        let mut s = HttpServers::default();
+        for (m, hosts) in list {
+            s.members.insert(
+                m.to_string(),
+                cartograph_core::MemberHttp {
+                    hosts: hosts.iter().map(|h| h.to_string()).collect(),
+                    ..Default::default()
+                },
+            );
+        }
+        s
+    }
+
+    fn base_of(parts: Vec<RPart>, s: &HttpServers) -> (Base, String) {
+        split_base(&parts, "web", &|_| "a.ts".to_string(), s)
+    }
+
+    /// An absolute URL inside a query string is a value, not where the call goes.
+    #[test]
+    fn a_url_in_the_query_is_not_the_host() {
+        let s = HttpServers::default();
+        let (b, path) = base_of(vec![lit("/auth/login?next=http://localhost:3000/home")], &s);
+        assert_eq!(b, Base::Root("web".into()));
+        assert!(path.starts_with("/auth/login"), "{path}");
+        // After a base, an absolute argument wins.
+        let (b, path) = base_of(vec![hole("base"), lit("https://x.example.com/v1/a")], &s);
+        assert_eq!(b, Base::External("x.example.com".into()));
+        assert_eq!(path, "/v1/a");
+    }
+
+    /// Hosts of members: an exact `host:port` first, then the host name alone, the same
+    /// whatever the map's order; `[::1]` is a local host.
+    #[test]
+    fn hosts_pick_the_exact_member_and_read_ipv6() {
+        let s = servers(&[("b", &["localhost"]), ("a", &["localhost:8080"])]);
+        for _ in 0..8 {
+            let (b, _) = base_of(vec![lit("http://localhost:8080/x")], &s);
+            assert_eq!(b, Base::Host("localhost:8080@a".into()));
+            let (b, _) = base_of(vec![lit("http://localhost:9000/x")], &s);
+            assert_eq!(b, Base::Host("localhost:9000@b".into()));
+        }
+        let none = HttpServers::default();
+        let (b, path) = base_of(vec![lit("http://[::1]:8080/api/x")], &none);
+        assert_eq!(b, Base::Host("[::1]:8080".into()));
+        assert_eq!(path, "/api/x");
+    }
 
     fn route(method: Option<&str>, path: &str) -> Route {
         let (segs, tail) = segments(path);
