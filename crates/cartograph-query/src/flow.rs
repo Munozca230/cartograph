@@ -165,13 +165,22 @@ impl CallIndex {
             targets.sort();
             targets.dedup();
             for target in targets {
+                // A base class's method runs as it is when an override calls it
+                // (`super.save()`): only an interface's is always another's.
+                let interface = crate::spring::type_of_method(t, &target)
+                    .and_then(|ty| t.symbol(&ty))
+                    .is_some_and(|s| s.kind == SymbolKind::Interface);
+                if !interface {
+                    continue;
+                }
                 let impls = crate::spring::dispatch(t, &target);
                 if impls.is_empty() {
                     continue;
                 }
+                let target_id = target.clone();
                 let list = ix.out.entry(target).or_default();
                 for (m, _) in impls {
-                    if list.iter().any(|c| c.target == m) {
+                    if list.iter().any(|c| c.target == m) || m == target_id {
                         continue;
                     }
                     let line = t.symbol(&m).map_or(0, |s| s.line);

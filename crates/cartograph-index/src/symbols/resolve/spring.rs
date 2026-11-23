@@ -13,7 +13,7 @@
 use super::bridge::{Consts, callables};
 use super::{Bindings, Ctx, Fam, Out, Sid, caller_of, resolve_type};
 use crate::symbols::{Call, Form};
-use cartograph_core::{Confidence, DataSink, SpringBean, SpringInjection, symbol_id};
+use cartograph_core::{Confidence, DataSink, InjectedUse, SpringBean, SpringInjection, symbol_id};
 use std::collections::HashMap;
 
 /// A type named in file `fi`, when the file or its imports find it.
@@ -94,6 +94,7 @@ pub(super) fn run(
                     crate::symbols::decapitalize(&e.class),
                     Confidence::Heuristic,
                 ),
+                None if e.store == "cassandra" => (e.class.to_lowercase(), Confidence::Heuristic),
                 None => (snake(&e.class), Confidence::Heuristic),
             };
             let path = ctx.files[fi].path;
@@ -102,10 +103,10 @@ pub(super) fn run(
                 name: name.clone(),
                 entity: Some(id(t)),
                 symbol: Some(id(t)),
-                via: if e.store == "mongo" {
-                    "@Document"
-                } else {
-                    "@Entity"
+                via: match e.store.as_str() {
+                    "mongo" => "@Document",
+                    "jpa" => "@Entity",
+                    _ => "@Table",
                 }
                 .to_string(),
                 file: path.to_string(),
@@ -148,21 +149,37 @@ pub(super) fn run(
     for &fi in &java {
         let f = &ctx.files[fi];
         let path = f.path;
+        let calls_of = callables(ctx, fi);
+        // A name written as an expression: its value, empty when it is not known.
+        let value = |e: &crate::symbols::strexpr::StrExpr| {
+            let v = consts.eval(fi, e, 0);
+            if v.known() && !v.key.contains('*') {
+                v.key
+            } else {
+                String::new()
+            }
+        };
         for b in &f.code.beans {
             let t = match b.factory {
                 None => own_type(ctx, fi, &b.ty),
                 Some(_) => type_in(ctx, binds, fi, &b.ty),
             };
             let Some(t) = t else { continue };
+            let mut names: Vec<String> = b.names.iter().map(&value).collect();
+            if names.is_empty() {
+                names.push(b.default_name.clone());
+            }
+            let name = names.remove(0);
             beans.push(SpringBean {
                 ty: id(t),
-                name: b.name.clone(),
+                name,
+                aliases: names,
                 stereotype: b.stereotype.clone(),
                 file: path.to_string(),
                 line: b.line,
                 factory: b.factory.as_ref().map(|q| symbol_id(path, q)),
                 primary: b.primary,
-                qualifiers: b.qualifiers.clone(),
+                qualifiers: b.qualifiers.iter().map(&value).collect(),
             });
         }
         for i in &f.code.injections {
@@ -171,20 +188,37 @@ pub(super) fn run(
             else {
                 continue;
             };
-            // Calls on the field or parameter itself, inside the receiving class.
+            // Calls on what is injected here: the declaration their receiver comes from
+            // is this parameter, or a field that holds it.
             let od = &f.code.defs[(owner - f.first) as usize];
-            let mut uses: Vec<u32> = f
+            let param = i.how != "field";
+            let mut uses: Vec<InjectedUse> = f
                 .code
                 .calls
                 .iter()
-                .filter(|c| c.form == Form::Member && (od.start..=od.end).contains(&c.line))
-                .filter(|c| {
-                    c.qualifier.as_deref() == Some(i.member.as_str())
-                        || c.field.as_deref() == Some(i.member.as_str())
+                .filter(|c| c.form == Form::Member)
+                .filter_map(|c| {
+                    let each = match (&c.recv_decl, &c.field) {
+                        (Some(d), _) => {
+                            let own = param && d.name == i.member && d.line == i.line;
+                            let held = i.fields.iter().any(|(n, l)| *n == d.name && *l == d.line);
+                            (own || held).then_some(d.each)?
+                        }
+                        // `this.x.m()` in the receiving class itself.
+                        (None, Some(x)) => {
+                            let here = (od.start..=od.end).contains(&c.line)
+                                && caller_of(&calls_of, c.line).is_none_or(|(d, _)| {
+                                    d.container.as_deref() == Some(i.class.as_str())
+                                });
+                            let held = i.fields.iter().any(|(n, _)| n == x);
+                            (here && held).then_some(false)?
+                        }
+                        _ => return None,
+                    };
+                    Some(InjectedUse { line: c.line, each })
                 })
-                .map(|c| c.line)
                 .collect();
-            uses.sort_unstable();
+            uses.sort();
             uses.dedup();
             injections.push(SpringInjection {
                 owner: id(owner),
@@ -192,13 +226,12 @@ pub(super) fn run(
                 member: i.member.clone(),
                 wrapper: i.wrapper.clone(),
                 ty: id(t),
-                qualifier: i.qualifier.clone(),
+                qualifier: i.qualifier.as_ref().map(value),
                 file: path.to_string(),
                 line: i.line,
                 uses,
             });
         }
-        let calls_of = callables(ctx, fi);
         let caller = |line: u32| caller_of(&calls_of, line).map(|(_, s)| id(s));
         for s in &f.code.sinks {
             let entity = s.entity.as_deref().and_then(|e| type_in(ctx, binds, fi, e));

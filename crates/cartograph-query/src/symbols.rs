@@ -68,6 +68,11 @@ impl crate::spring::Types for SymbolTable {
         self.symbol(id).is_some()
     }
 
+    fn is_interface(&self, id: &str) -> bool {
+        self.symbol(id)
+            .is_some_and(|s| s.kind == SymbolKind::Interface)
+    }
+
     fn types_in(&self, file: &str) -> Vec<(String, String)> {
         self.of_file(file)
             .iter()
@@ -1169,8 +1174,11 @@ pub struct SpringCallers {
     /// The type (`PriceRule`).
     #[serde(rename = "type")]
     pub ty: String,
-    /// Beans of the type (its own and its subtypes').
+    /// Beans of the type: its subtypes', and those `@Bean` methods make of it.
     pub beans: usize,
+    /// The type is a bean itself.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bean: bool,
     /// Their labels, when no injection point lists them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bean_names: Vec<String>,
@@ -1194,7 +1202,7 @@ pub struct SpringPoint {
     pub declared: String,
     /// `path:line`.
     pub at: String,
-    /// `all`, `qualified`, `only`, `primary`, `by name`, `ambiguous`, `none`.
+    /// `all`, `qualified`, `only`, `primary`, `by name`, `ambiguous`, `unknown`, `none`.
     pub why: String,
     /// Beans it receives.
     pub count: usize,
@@ -1421,6 +1429,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                 .as_deref()
                 .map_or(String::new(), |x| clip(crate::spring::leaf(x), 80)),
             beans: 0,
+            bean: false,
             bean_names: Vec::new(),
             points: Vec::new(),
             points_more: 0,
@@ -1728,8 +1737,11 @@ fn spring_callers(
     points.sort_by_key(|a| key(a.0));
     points.dedup_by(|a, b| std::ptr::eq(a.0, b.0));
     // A type nobody injects and no bean implements: nothing Spring adds.
-    let implementors: Vec<&cartograph_core::SpringBean> =
-        own_beans.iter().copied().filter(|b| b.ty != ty).collect();
+    let implementors: Vec<&cartograph_core::SpringBean> = own_beans
+        .iter()
+        .copied()
+        .filter(|b| b.ty != ty || b.factory.is_some())
+        .collect();
     if points.is_empty() && implementors.is_empty() {
         return None;
     }
@@ -1747,6 +1759,7 @@ fn spring_callers(
                 h => format!("{h} {}", i.member),
             };
             let declared = match &i.qualifier {
+                Some(q) if q.is_empty() => format!("{} @Qualifier(?)", declared(i)),
                 Some(q) => format!("{} @Qualifier(\"{}\")", declared(i), clip(q, 60)),
                 None => declared(i),
             };
@@ -1762,6 +1775,7 @@ fn spring_callers(
                     Why::Primary => "primary",
                     Why::Name => "by name",
                     Why::Ambiguous => "ambiguous",
+                    Why::Unknown => "unknown",
                     Why::None => "none",
                 }
                 .to_string(),
@@ -1780,6 +1794,7 @@ fn spring_callers(
     Some(SpringCallers {
         ty: clip(leaf(ty), 80),
         beans: implementors.len(),
+        bean: is_bean,
         bean_names: if rows.is_empty() {
             implementors
                 .iter()
@@ -1836,8 +1851,10 @@ fn render_spring(r: &CallersResult, s: &mut String) {
         return;
     }
     if sp.beans == 0 {
-        // A bean's own method: where its supertypes are injected with it.
-        s.push_str(&format!("Spring: the {} bean\n", sp.ty));
+        // A bean itself (where it, or its supertypes, are injected), or a type without one.
+        let what = if sp.bean { "the" } else { "no" };
+        let end = if sp.bean { "" } else { " in the repo" };
+        s.push_str(&format!("Spring: {what} {} bean{end}\n", sp.ty));
     } else {
         s.push_str(&format!(
             "Spring: {} bean{} of {}\n",
@@ -1859,6 +1876,11 @@ fn render_spring(r: &CallersResult, s: &mut String) {
             "only" => format!("{} (the only bean)", spring_names(&p.names, p.names_more)),
             "primary" => format!("{} (@Primary, of {})", spring_names(&p.names, 0), p.of),
             "by name" => format!("{} (by name, of {})", spring_names(&p.names, 0), p.of),
+            "unknown" => format!(
+                "qualified by a name not known, {} fit: {}",
+                p.count,
+                spring_names(&p.names, p.names_more)
+            ),
             "ambiguous" => format!(
                 "ambiguous, {} fit: {}",
                 p.count,

@@ -132,10 +132,14 @@ pub struct RawBean {
     /// `Component`, `Service`, … or `Bean`.
     #[serde(rename = "s")]
     pub stereotype: String,
-    /// The name given (`@Service("orders")`, `@Bean(name = "orders")`); else Spring's
-    /// default (the class name decapitalized, the `@Bean` method's name).
+    /// Spring's default name (the class name decapitalized, the `@Bean` method's name),
+    /// when none is given.
     #[serde(rename = "n")]
-    pub name: String,
+    pub default_name: String,
+    /// The names given (`@Service("orders")`, `@Bean({"orders", "alias"})`), literals or
+    /// constants.
+    #[serde(rename = "a", default, skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<StrExpr>,
     /// A `@Bean` method (qualified name) that makes it.
     #[serde(rename = "f", default, skip_serializing_if = "Option::is_none")]
     pub factory: Option<String>,
@@ -143,7 +147,7 @@ pub struct RawBean {
     pub primary: bool,
     /// `@Qualifier("x")` values on the class or `@Bean` method.
     #[serde(rename = "q", default, skip_serializing_if = "Vec::is_empty")]
-    pub qualifiers: Vec<String>,
+    pub qualifiers: Vec<StrExpr>,
 }
 
 /// A place where Spring injects beans of a type.
@@ -170,7 +174,11 @@ pub struct RawInjection {
     pub ty: String,
     /// `@Qualifier("x")`, `@Named("x")`, `@Resource(name = "x")`.
     #[serde(rename = "q", default, skip_serializing_if = "Option::is_none")]
-    pub qualifier: Option<String>,
+    pub qualifier: Option<StrExpr>,
+    /// The fields that hold what is injected here, as `(name, line)`: the field itself, or
+    /// those the parameter is assigned to.
+    #[serde(rename = "f", default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<(String, u32)>,
 }
 
 /// A persistent class: `@Document(collection = "x")` (Mongo), `@Entity` / `@Table(name =
@@ -181,7 +189,7 @@ pub struct RawEntity {
     pub line: u32,
     #[serde(rename = "c")]
     pub class: String,
-    /// `mongo` or `jpa`.
+    /// `mongo`, `jpa`, `jdbc` or `cassandra`.
     #[serde(rename = "k")]
     pub store: String,
     /// The collection or table as written; `None`: the store's default for the class.
@@ -674,6 +682,10 @@ pub struct Call {
     /// `var`, a lambda parameter of anything else) or not at all: the other rules decide.
     #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
     pub recv_type: Option<String>,
+    /// Java `x.f()`: the variable the receiver is, or comes from (the collection a loop or
+    /// lambda variable reads, `x` of `x.get(0).f()`), as it is declared.
+    #[serde(rename = "d", default, skip_serializing_if = "Option::is_none")]
+    pub recv_decl: Option<RecvDecl>,
     /// TS/JS: the string-like arguments among the first ones (literals, templates,
     /// constant-looking names), `None` for the others; empty when none is. A bridge reads
     /// them when the called function passes one on as a channel or URL (a wrapper).
@@ -698,6 +710,20 @@ pub struct Call {
 
 fn is_zero(n: &u8) -> bool {
     *n == 0
+}
+
+/// The declaration a Java receiver comes from (see [`Call::recv_decl`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecvDecl {
+    #[serde(rename = "n")]
+    pub name: String,
+    /// Line of the declarator or parameter: tells a field from a parameter or local that
+    /// shadows it.
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// Read element by element (a stream, `forEach`, a loop).
+    #[serde(rename = "e", default, skip_serializing_if = "std::ops::Not::not")]
+    pub each: bool,
 }
 
 /// What an import binds.
@@ -832,8 +858,11 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// ([`Code::keys`]); 26: Java receivers typed through a collection's elements (stream
 /// lambdas, `for (var …)`, `list.get(i)`), Spring beans and injection points
 /// ([`Code::beans`], [`Code::injections`]), entities, repositories and store calls
-/// ([`Code::entities`], [`Code::repos`], [`Code::sinks`]).
-pub const REVISION: u32 = 26;
+/// ([`Code::entities`], [`Code::repos`], [`Code::sinks`]); 27: the declaration a Java
+/// receiver comes from ([`Call::recv_decl`]), bean names and qualifiers as expressions,
+/// fields an injected parameter is assigned to, raw generic injections, Spring Data
+/// repositories as beans, entities by the package of their annotation.
+pub const REVISION: u32 = 27;
 
 /// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
 /// `orderService`; `URLMaker`, two capitals first, stays as it is).

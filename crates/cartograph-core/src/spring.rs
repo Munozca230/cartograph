@@ -8,13 +8,48 @@
 use crate::Confidence;
 use serde::{Deserialize, Serialize};
 
+/// Generic types whose argument is what they hold several of.
+pub const COLLECTIONS: &[&str] = &[
+    "List",
+    "ArrayList",
+    "LinkedList",
+    "CopyOnWriteArrayList",
+    "Set",
+    "HashSet",
+    "LinkedHashSet",
+    "TreeSet",
+    "SortedSet",
+    "NavigableSet",
+    "Collection",
+    "Iterable",
+    "Queue",
+    "Deque",
+    "ArrayDeque",
+    "Stream",
+];
+
+/// Generic types whose second argument is what their values are.
+pub const MAPS: &[&str] = &[
+    "Map",
+    "HashMap",
+    "LinkedHashMap",
+    "TreeMap",
+    "SortedMap",
+    "NavigableMap",
+    "ConcurrentMap",
+    "ConcurrentHashMap",
+];
+
 /// A Spring bean: a stereotype class or what a `@Bean` method returns.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SpringBean {
     /// The bean's type (`sym:…`): the annotated class, or the `@Bean` method's return type.
     pub ty: String,
-    /// The bean name Spring matches qualifiers with.
+    /// The bean name Spring matches qualifiers with (empty: written as an expression whose
+    /// value is not known).
     pub name: String,
+    /// Other names of it (`@Bean({"name", "alias"})`).
+    pub aliases: Vec<String>,
     /// `Component`, `Service`, `Repository`, `Controller`, `RestController`,
     /// `Configuration` or `Bean`.
     pub stereotype: String,
@@ -42,45 +77,40 @@ pub struct SpringInjection {
     pub wrapper: String,
     /// The type injected (`sym:…`).
     pub ty: String,
-    /// `@Qualifier`, `@Named` or `@Resource(name)`.
+    /// `@Qualifier`, `@Named` or `@Resource(name)`: the name, empty when it is written as
+    /// an expression whose value is not known.
     pub qualifier: Option<String>,
     pub file: String,
     pub line: u32,
-    /// Lines of the calls made on the field or parameter itself (`gateway.charge()`,
-    /// `this.gateway.charge()`), in the receiving class.
-    pub uses: Vec<u32>,
+    /// The calls made on what is injected here: on the field or parameter, on a field the
+    /// parameter is assigned to, on the variable of a loop or lambda over it.
+    pub uses: Vec<InjectedUse>,
+}
+
+/// A call on what an injection point receives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct InjectedUse {
+    pub line: u32,
+    /// Reached over every element (a stream, `forEach`, a loop), not over one.
+    pub each: bool,
 }
 
 impl SpringInjection {
-    /// It receives every bean of its type (a collection, a map, a provider's stream), not
-    /// one.
+    /// It receives every bean of its type (a collection, a map, an array, a provider whose
+    /// elements are read one by one), not one.
     pub fn takes_all(&self) -> bool {
-        matches!(
-            self.wrapper.as_str(),
-            "List"
-                | "ArrayList"
-                | "LinkedList"
-                | "Set"
-                | "HashSet"
-                | "LinkedHashSet"
-                | "TreeSet"
-                | "SortedSet"
-                | "Collection"
-                | "Iterable"
-                | "Map"
-                | "HashMap"
-                | "LinkedHashMap"
-                | "TreeMap"
-                | "SortedMap"
-                | "[]"
-        )
+        let w = self.wrapper.as_str();
+        w == "[]"
+            || COLLECTIONS.contains(&w)
+            || MAPS.contains(&w)
+            || (w == "ObjectProvider" && self.uses.iter().any(|u| u.each))
     }
 }
 
 /// Where code reads or writes a store: a collection (Mongo) or a table (JPA).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DataSink {
-    /// `mongo` or `jpa`.
+    /// `mongo`, `jpa`, `jdbc` or `cassandra`.
     pub store: String,
     /// The collection or table.
     pub name: String,
@@ -103,6 +133,8 @@ pub fn store_label(store: &str) -> &str {
     match store {
         "mongo" => "Mongo",
         "jpa" => "JPA",
+        "jdbc" => "JDBC",
+        "cassandra" => "Cassandra",
         other => other,
     }
 }
@@ -122,13 +154,22 @@ mod tests {
             qualifier: None,
             file: "A.java".into(),
             line: 3,
-            uses: vec![5],
+            uses: vec![InjectedUse {
+                line: 5,
+                each: false,
+            }],
         };
         assert!(i.takes_all());
         i.wrapper = "ObjectProvider".into();
         assert!(!i.takes_all());
+        i.uses[0].each = true;
+        assert!(i.takes_all());
         i.wrapper = String::new();
         assert!(!i.takes_all());
+        for w in COLLECTIONS.iter().chain(MAPS) {
+            i.wrapper = w.to_string();
+            assert!(i.takes_all(), "{w}");
+        }
         assert_eq!(store_label("mongo"), "Mongo");
     }
 }

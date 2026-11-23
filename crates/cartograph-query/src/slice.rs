@@ -21,7 +21,7 @@
 
 use crate::spring::{dispatch, reaching};
 use crate::symbols::SymbolTable;
-use cartograph_core::{Bridge, BridgeKind, DataSink, SymbolCall, split_symbol_id};
+use cartograph_core::{Bridge, BridgeKind, DataSink, SymbolCall, SymbolKind, split_symbol_id};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -154,7 +154,7 @@ struct Graph<'t> {
     impls: RefCell<HashMap<String, Rc<Impls<'t>>>>,
 }
 
-type Impls<'t> = Vec<(String, &'t cartograph_core::SpringBean)>;
+type Impls<'t> = Vec<crate::spring::Runs<'t>>;
 
 impl<'t> Graph<'t> {
     fn build(t: &'t SymbolTable) -> Graph<'t> {
@@ -223,30 +223,14 @@ impl<'t> Graph<'t> {
                 continue;
             }
             if spring {
-                // An interface method: the beans Spring gives the caller.
+                // An interface or base class method: the beans Spring gives the caller.
                 let impls = self.dispatch(&c.target);
                 if !impls.is_empty() {
-                    let ty = crate::spring::type_of_method(self.t, &c.target);
-                    let picked = ty
-                        .as_deref()
-                        .and_then(|ty| reaching(self.t, Some(&n.id), &c.file, c.line, ty));
-                    let label = ty
-                        .as_deref()
-                        .map(|x| format!("Spring bean of {}", crate::spring::leaf(x)));
-                    for (m, bean) in impls.iter() {
-                        if picked
-                            .as_ref()
-                            .is_some_and(|p| !p.iter().any(|b| std::ptr::eq(*b, *bean)))
-                        {
-                            continue;
-                        }
-                        out.push(Edge {
-                            to: Node::whole(m),
-                            line: c.line,
-                            via: label.clone(),
-                        });
+                    let kept = self.bean_edges(&impls, n, c);
+                    if !kept.is_empty() {
+                        out.extend(kept);
+                        continue;
                     }
-                    continue;
                 }
             }
             out.push(Edge {
@@ -268,6 +252,44 @@ impl<'t> Graph<'t> {
             }
         }
         out
+    }
+
+    /// The edges of a call to a method `impls` run for, through Spring; empty for a call
+    /// that runs the method it names: a base class's, from a class below it
+    /// (`super.save()`, an inherited `save()`), or one no bean serves. An implementation
+    /// that calls its interface calls another one (a decorator).
+    fn bean_edges(&self, impls: &Impls<'t>, n: &Node, c: &SymbolCall) -> Vec<Edge> {
+        let ty = crate::spring::type_of_method(self.t, &c.target);
+        let picked = ty
+            .as_deref()
+            .and_then(|ty| reaching(self.t, Some(&n.id), &c.file, c.line, ty));
+        if picked.is_none()
+            && let (Some(ty), Some(own)) =
+                (ty.as_deref(), crate::spring::type_of_method(self.t, &n.id))
+            && !self
+                .t
+                .symbol(ty)
+                .is_some_and(|s| s.kind == SymbolKind::Interface)
+            && crate::spring::is_subtype(self.t, &own, ty)
+        {
+            return Vec::new();
+        }
+        let label = ty
+            .as_deref()
+            .map(|x| format!("Spring bean of {}", crate::spring::leaf(x)));
+        impls
+            .iter()
+            .filter(|(_, beans)| {
+                picked
+                    .as_ref()
+                    .is_none_or(|p| beans.iter().any(|b| p.iter().any(|x| std::ptr::eq(*x, *b))))
+            })
+            .map(|(m, _)| Edge {
+                to: Node::whole(m),
+                line: c.line,
+                via: label.clone(),
+            })
+            .collect()
     }
 
     /// [`dispatch`], once per method.

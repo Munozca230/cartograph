@@ -16,8 +16,8 @@
 //! Matching (which beans an injection point gets) runs after resolution, at query time.
 
 use super::bridge::{arg_nodes, str_expr};
-use super::java_types::holder;
-use super::{CallCap, Lang, line, string_value, text};
+use super::java_types::{generic_parts, holder};
+use super::{CallCap, Lang, line, text};
 use crate::symbols::strexpr::{Part, StrExpr};
 use crate::symbols::{RawBean, RawEntity, RawInjection, RawRepo, RawSink};
 use std::collections::HashMap;
@@ -76,6 +76,41 @@ const MONGO_CALLS: &[&str] = &[
     "stream",
     "bulkOps",
 ];
+/// Where the overloads of those calls that name a collection have it: `(call, arguments,
+/// position)`. With a class there instead, it is another overload.
+const COLLECTION_AT: &[(&str, usize, usize)] = &[
+    ("find", 3, 2),
+    ("findOne", 3, 2),
+    ("findAll", 2, 1),
+    ("findById", 3, 2),
+    ("findDistinct", 4, 2),
+    ("findDistinct", 5, 2),
+    ("findAndModify", 4, 3),
+    ("findAndModify", 5, 4),
+    ("findAndReplace", 3, 2),
+    ("findAndReplace", 4, 3),
+    ("findAndReplace", 5, 4),
+    ("findAndReplace", 6, 4),
+    ("findAndRemove", 3, 2),
+    ("insert", 2, 1),
+    ("save", 2, 1),
+    ("upsert", 3, 2),
+    ("upsert", 4, 3),
+    ("updateFirst", 3, 2),
+    ("updateFirst", 4, 3),
+    ("updateMulti", 3, 2),
+    ("updateMulti", 4, 3),
+    ("remove", 2, 1),
+    ("remove", 3, 2),
+    ("count", 2, 1),
+    ("count", 3, 2),
+    ("exists", 2, 1),
+    ("exists", 3, 2),
+    ("aggregate", 3, 1),
+    ("stream", 3, 2),
+    ("bulkOps", 2, 1),
+    ("bulkOps", 3, 2),
+];
 /// JPA `EntityManager` calls that name the entity class.
 const JPA_CALLS: &[&str] = &["find", "getReference"];
 
@@ -110,13 +145,14 @@ const ORIGINS: &[(&str, &[&str])] = &[
     ("Inject", &["javax.inject.", "jakarta.inject."]),
     ("Named", &["javax.inject.", "jakarta.inject."]),
     ("Resource", &["javax.annotation.", "jakarta.annotation."]),
-    ("Document", &["org.springframework.data."]),
+    ("Document", &["org.springframework.data.mongodb."]),
     (
         "Table",
         &[
             "javax.persistence.",
             "jakarta.persistence.",
-            "org.springframework.data.",
+            "org.springframework.data.relational.",
+            "org.springframework.data.cassandra.",
         ],
     ),
     ("Entity", &["javax.persistence.", "jakarta.persistence."]),
@@ -124,6 +160,7 @@ const ORIGINS: &[(&str, &[&str])] = &[
     ("ConfigurationProperties", &["org.springframework.boot."]),
     ("RequiredArgsConstructor", &["lombok."]),
     ("AllArgsConstructor", &["lombok."]),
+    ("NoRepositoryBean", &["org.springframework.data."]),
     ("MongoRepository", &["org.springframework.data."]),
     ("ReactiveMongoRepository", &["org.springframework.data."]),
     ("JpaRepository", &["org.springframework.data."]),
@@ -185,25 +222,33 @@ impl Imports {
     /// annotation or interface this extraction knows by that name; other names pass as
     /// they are (nothing reads them).
     fn known(&self, written: &str) -> Option<String> {
+        self.origin(written).map(|(simple, _)| simple)
+    }
+
+    /// [`Imports::known`], with the package it comes from (empty for a name this
+    /// extraction does not know).
+    fn origin(&self, written: &str) -> Option<(String, String)> {
         let simple = written.rsplit('.').next().unwrap_or(written).to_string();
         let Some((_, origins)) = ORIGINS.iter().find(|(n, _)| *n == simple) else {
-            return Some(simple);
+            return Some((simple, String::new()));
         };
         let from = |q: &str| origins.iter().any(|o| q.starts_with(o));
-        let ok = if written.contains('.') {
-            from(written)
+        let q = if written.contains('.') {
+            Some(written)
         } else if let Some(q) = self.named.get(&simple) {
-            from(q)
+            Some(q.as_str())
         } else {
-            self.globs.iter().any(|g| from(g))
+            self.globs.iter().map(String::as_str).find(|g| from(g))
         };
-        ok.then_some(simple)
+        q.filter(|q| from(q)).map(|q| (simple, q.to_string()))
     }
 }
 
 /// An annotation: its simple name and its arguments (`None` key: `value`).
 struct Annot<'t> {
     name: String,
+    /// Where it comes from (see [`Imports::origin`]).
+    origin: String,
     args: Vec<(Option<String>, Node<'t>)>,
 }
 
@@ -230,7 +275,7 @@ fn annotations<'t>(decl: Node<'t>, src: &[u8], imp: &Imports) -> Vec<Annot<'t>> 
             let Some(name) = a.child_by_field_name("name").map(|x| text(x, src)) else {
                 continue;
             };
-            let Some(name) = imp.known(&name) else {
+            let Some((name, origin)) = imp.origin(&name) else {
                 continue;
             };
             let mut args = Vec::new();
@@ -248,7 +293,7 @@ fn annotations<'t>(decl: Node<'t>, src: &[u8], imp: &Imports) -> Vec<Annot<'t>> 
                     }
                 }
             }
-            out.push(Annot { name, args });
+            out.push(Annot { name, origin, args });
         }
     }
     out
@@ -265,14 +310,31 @@ fn has_modifier(decl: Node<'_>, kw: &str) -> bool {
         })
 }
 
-/// The first string an annotation value holds (`"x"`, `{"x", "y"}`).
-fn first_string(v: Node<'_>, src: &[u8]) -> Option<String> {
+/// The strings an annotation value holds (`"x"`, `{"x", Names.Y}`), as written.
+fn strings(v: Node<'_>, src: &[u8]) -> Vec<StrExpr> {
     if v.kind() == "element_value_array_initializer" {
         let mut c = v.walk();
-        let first = v.named_children(&mut c).next()?;
-        return first_string(first, src);
+        return v
+            .named_children(&mut c)
+            .flat_map(|x| strings(x, src))
+            .collect();
     }
-    string_value(v, src).filter(|s| !s.is_empty())
+    let e = str_expr(Lang::Java, v, src);
+    match e.0.as_slice() {
+        [Part::Lit(l)] if l.is_empty() => Vec::new(),
+        [] => Vec::new(),
+        _ => vec![e],
+    }
+}
+
+/// `@Qualifier` and `@Named` values on a bean.
+fn qualifiers(annots: &[Annot<'_>], src: &[u8]) -> Vec<StrExpr> {
+    annots
+        .iter()
+        .filter(|a| a.name == "Qualifier" || a.name == "Named")
+        .filter_map(|a| a.arg(&["value"]))
+        .flat_map(|v| strings(v, src))
+        .collect()
 }
 
 /// An annotation value as a string expression: a literal, a constant, a concatenation.
@@ -292,11 +354,14 @@ fn value_expr(v: Node<'_>, src: &[u8]) -> Option<StrExpr> {
 
 /// The qualifier of a field or parameter: `@Qualifier("x")`, `@Named("x")`,
 /// `@Resource(name = "x")`.
-fn qualifier(annots: &[Annot<'_>], src: &[u8]) -> Option<String> {
-    annots.iter().find_map(|a| match a.name.as_str() {
-        "Qualifier" | "Named" => a.arg(&["value"]).and_then(|v| first_string(v, src)),
-        "Resource" => a.arg(&["name"]).and_then(|v| first_string(v, src)),
-        _ => None,
+fn qualifier(annots: &[Annot<'_>], src: &[u8]) -> Option<StrExpr> {
+    annots.iter().find_map(|a| {
+        let keys: &[&str] = match a.name.as_str() {
+            "Qualifier" | "Named" => &["value"],
+            "Resource" => &["name"],
+            _ => return None,
+        };
+        a.arg(keys).and_then(|v| strings(v, src).into_iter().next())
     })
 }
 
@@ -311,10 +376,12 @@ fn injected_type(ty: Node<'_>, src: &[u8]) -> Option<(String, String)> {
                 t.rsplit('.').next().unwrap_or(&t).to_string(),
             ))
         }
-        "generic_type" => holder(ty, src),
+        // Any other generic type is matched by its raw type.
+        "generic_type" => holder(ty, src)
+            .or_else(|| generic_parts(ty, src).map(|(name, _)| (String::new(), name))),
         "array_type" => {
-            let el = ty.child_by_field_name("element")?;
-            (el.kind() == "type_identifier").then(|| ("[]".to_string(), text(el, src)))
+            let (w, t) = injected_type(ty.child_by_field_name("element")?, src)?;
+            w.is_empty().then(|| ("[]".to_string(), t))
         }
         _ => None,
     }
@@ -338,6 +405,165 @@ fn plain_value(ty: &str) -> bool {
     )
 }
 
+/// The fields of a class body (name → its line and what its type injects), and the
+/// assignments to them.
+#[derive(Default)]
+struct Fields {
+    decls: HashMap<String, (u32, Option<(String, String)>)>,
+    /// `(field, id of the method or constructor, in a method, the parameter assigned)`.
+    sets: Vec<(String, usize, bool, Option<String>)>,
+    /// The constructors' parameters, by node id.
+    ctors: HashMap<usize, Vec<String>>,
+    /// `this(a, b)`: the constructor that delegates, and the variables it passes.
+    delegates: Vec<(usize, Vec<Option<String>>)>,
+}
+
+/// Calls that give back what they are given, or a copy of its elements.
+const PASSES: &[&str] = &[
+    "requireNonNull",
+    "copyOf",
+    "unmodifiableList",
+    "unmodifiableSet",
+    "unmodifiableCollection",
+    "unmodifiableMap",
+];
+
+impl Fields {
+    fn of(members: &[Node<'_>], src: &[u8]) -> Fields {
+        let mut out = Fields::default();
+        for m in members.iter().filter(|m| m.kind() == "field_declaration") {
+            let ty = m
+                .child_by_field_name("type")
+                .and_then(|ty| injected_type(ty, src));
+            let mut c = m.walk();
+            for d in m.children_by_field_name("declarator", &mut c) {
+                if let Some(n) = d.child_by_field_name("name") {
+                    out.decls.insert(text(n, src), (line(d), ty.clone()));
+                }
+            }
+        }
+        for m in members {
+            let method = m.kind() == "method_declaration";
+            if !method && m.kind() != "constructor_declaration" {
+                continue;
+            }
+            // Parameters hide the fields of their name.
+            let params: Vec<String> = m
+                .child_by_field_name("parameters")
+                .map(|ps| {
+                    let mut c = ps.walk();
+                    ps.named_children(&mut c)
+                        .filter_map(|p| p.child_by_field_name("name"))
+                        .map(|n| text(n, src))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !method {
+                out.ctors.insert(m.id(), params.clone());
+            }
+            let mut stack = vec![*m];
+            while let Some(n) = stack.pop() {
+                let mut c = n.walk();
+                stack.extend(n.named_children(&mut c));
+                if n.kind() == "explicit_constructor_invocation"
+                    && n.child_by_field_name("constructor")
+                        .is_some_and(|t| t.kind() == "this")
+                {
+                    let args = arg_nodes(n.child_by_field_name("arguments"))
+                        .into_iter()
+                        .map(|a| passed(a, src).filter(|x| params.contains(x)))
+                        .collect();
+                    out.delegates.push((m.id(), args));
+                }
+                if n.kind() != "assignment_expression" {
+                    continue;
+                }
+                let field = n.child_by_field_name("left").and_then(|l| match l.kind() {
+                    "identifier" => Some(text(l, src)).filter(|x| !params.contains(x)),
+                    "field_access" => l
+                        .child_by_field_name("object")
+                        .filter(|o| o.kind() == "this")
+                        .and_then(|_| l.child_by_field_name("field"))
+                        .map(|f| text(f, src)),
+                    _ => None,
+                });
+                let Some(field) = field.filter(|f| out.decls.contains_key(f)) else {
+                    continue;
+                };
+                let given = n
+                    .child_by_field_name("right")
+                    .and_then(|r| passed(r, src))
+                    .filter(|x| params.contains(x));
+                out.sets.push((field, m.id(), method, given));
+            }
+        }
+        out
+    }
+
+    /// The fields that hold what `param` of constructor or method `m` receives: assigned
+    /// from it there, or in the constructor `m` hands it to (`this(param, …)`), of its
+    /// type, and assigned in no other method.
+    fn holding(&self, m: usize, param: &str, ty: &str) -> Vec<(String, u32)> {
+        for (_, args) in self.delegates.iter().filter(|(from, _)| *from == m) {
+            let to: Vec<(&usize, &Vec<String>)> = self
+                .ctors
+                .iter()
+                .filter(|(id, ps)| **id != m && ps.len() == args.len())
+                .collect();
+            let at = args.iter().position(|a| a.as_deref() == Some(param));
+            if let ([(id, ps)], Some(at)) = (to.as_slice(), at)
+                && !self.delegates.iter().any(|(from, _)| from == *id)
+            {
+                return self.holding(**id, &ps[at], ty);
+            }
+        }
+        let mut out: Vec<(String, u32)> = self
+            .sets
+            .iter()
+            .filter(|(_, at, _, given)| *at == m && given.as_deref() == Some(param))
+            .filter_map(|(f, ..)| {
+                let (l, t) = self.decls.get(f)?;
+                let same = t.as_ref().is_some_and(|(_, t)| t == ty);
+                (same && !self.set_elsewhere(f, m)).then(|| (f.clone(), *l))
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Some method (not a constructor) other than `m` assigns field `f`.
+    fn set_elsewhere(&self, f: &str, m: usize) -> bool {
+        self.sets
+            .iter()
+            .any(|(x, at, method, _)| x == f && *method && *at != m)
+    }
+}
+
+/// The variable an expression passes on: `p`, `Objects.requireNonNull(p)`,
+/// `List.copyOf(p)`, `new ArrayList<>(p)`.
+fn passed(n: Node<'_>, src: &[u8]) -> Option<String> {
+    let args = match n.kind() {
+        "identifier" => return Some(text(n, src)),
+        "method_invocation" => {
+            let name = n.child_by_field_name("name").map(|x| text(x, src))?;
+            PASSES.contains(&name.as_str()).then_some(())?;
+            n.child_by_field_name("arguments")
+        }
+        "object_creation_expression" => {
+            let ty = n.child_by_field_name("type")?;
+            let (name, _) = generic_parts(ty, src)?;
+            let copies = cartograph_core::spring::COLLECTIONS.contains(&name.as_str())
+                || cartograph_core::spring::MAPS.contains(&name.as_str());
+            copies.then_some(())?;
+            n.child_by_field_name("arguments")
+        }
+        _ => return None,
+    };
+    let first = arg_nodes(args).into_iter().next()?;
+    (first.kind() == "identifier").then(|| text(first, src))
+}
+
 /// The parameters of a constructor or method as injection points.
 fn params_of(
     m: Node<'_>,
@@ -345,6 +571,7 @@ fn params_of(
     how: &str,
     src: &[u8],
     imp: &Imports,
+    fields: &Fields,
     out: &mut Vec<RawInjection>,
 ) {
     let Some(ps) = m.child_by_field_name("parameters") else {
@@ -373,6 +600,7 @@ fn params_of(
             line: line(p),
             class: class.to_string(),
             how: how.to_string(),
+            fields: fields.holding(m.id(), &text(name, src), &t),
             member: text(name, src),
             wrapper,
             ty: t,
@@ -416,7 +644,8 @@ fn generated_bean(n: Node<'_>, name: &str, annots: &[Annot<'_>], src: &[u8], out
             line: line(n),
             ty: name.to_string(),
             stereotype: a.name.clone(),
-            name: crate::symbols::decapitalize(name),
+            default_name: crate::symbols::decapitalize(name),
+            names: Vec::new(),
             factory: None,
             primary: annots.iter().any(|a| a.name == "Primary"),
             qualifiers: Vec::new(),
@@ -446,6 +675,23 @@ fn repo(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                 .named_child(0)
                 .filter(|e| e.kind() == "type_identifier")
         {
+            let annots = annotations(n, src, imp);
+            // An abstract base of repositories (`@NoRepositoryBean`, or of any entity).
+            let any = n.child_by_field_name("type_parameters").is_some();
+            if any || annots.iter().any(|a| a.name == "NoRepositoryBean") {
+                return;
+            }
+            // Spring Data writes its implementation: the bean.
+            out.beans.push(RawBean {
+                line: line(n),
+                ty: name.clone(),
+                stereotype: base.clone(),
+                default_name: crate::symbols::decapitalize(&name),
+                names: Vec::new(),
+                factory: None,
+                primary: annots.iter().any(|a| a.name == "Primary"),
+                qualifiers: qualifiers(&annots, src),
+            });
             out.repos.push(RawRepo {
                 line: line(n),
                 class: name.clone(),
@@ -475,22 +721,21 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
             line: line(n),
             ty: name.clone(),
             stereotype: st.name.clone(),
-            name: st
+            default_name: crate::symbols::decapitalize(&name),
+            names: st
                 .arg(&["value"])
-                .and_then(|v| first_string(v, src))
-                .unwrap_or_else(|| crate::symbols::decapitalize(&name)),
+                .map(|v| strings(v, src))
+                .unwrap_or_default(),
             factory: None,
             primary: annots.iter().any(|a| a.name == "Primary"),
-            qualifiers: annots
-                .iter()
-                .filter(|a| a.name == "Qualifier" || a.name == "Named")
-                .filter_map(|a| a.arg(&["value"]).and_then(|v| first_string(v, src)))
-                .collect(),
+            qualifiers: qualifiers(&annots, src),
         });
     }
     for a in &annots {
         let (store, keys): (&str, &[&str]) = match a.name.as_str() {
             "Document" => ("mongo", &["collection", "value"]),
+            "Table" if a.origin.contains(".data.relational.") => ("jdbc", &["name", "value"]),
+            "Table" if a.origin.contains(".data.cassandra.") => ("cassandra", &["value"]),
             "Table" => ("jpa", &["name"]),
             "Entity" if !annots.iter().any(|b| b.name == "Table") => ("jpa", &["name"]),
             _ => continue,
@@ -507,6 +752,7 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
     };
     let mut c = body.walk();
     let members: Vec<Node<'_>> = body.named_children(&mut c).collect();
+    let fields = Fields::of(&members, src);
     let ctors: Vec<Node<'_>> = members
         .iter()
         .copied()
@@ -523,10 +769,24 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
         .collect();
     // The constructor Spring calls: the one marked, else the only one of a bean class.
     match (marked.as_slice(), ctors.as_slice()) {
-        ([one], _) => params_of(*one, &name, "constructor", src, imp, &mut out.injections),
-        ([], [one]) if stereotype.is_some() => {
-            params_of(*one, &name, "constructor", src, imp, &mut out.injections)
-        }
+        ([one], _) => params_of(
+            *one,
+            &name,
+            "constructor",
+            src,
+            imp,
+            &fields,
+            &mut out.injections,
+        ),
+        ([], [one]) if stereotype.is_some() => params_of(
+            *one,
+            &name,
+            "constructor",
+            src,
+            imp,
+            &fields,
+            &mut out.injections,
+        ),
         _ => {}
     }
     let lombok = annots.iter().find_map(|a| match a.name.as_str() {
@@ -571,7 +831,13 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                     let Some(field) = d.child_by_field_name("name").map(|x| text(x, src)) else {
                         continue;
                     };
+                    let holds = if fields.set_elsewhere(&field, 0) {
+                        Vec::new()
+                    } else {
+                        vec![(field.clone(), line(d))]
+                    };
                     out.injections.push(RawInjection {
+                        fields: holds,
                         line: line(d),
                         class: name.clone(),
                         how: if injected { "field" } else { "constructor" }.to_string(),
@@ -602,22 +868,17 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                             line: line(*m),
                             ty: t,
                             stereotype: "Bean".to_string(),
-                            name: bean
+                            default_name: mname.clone(),
+                            names: bean
                                 .arg(&["name", "value"])
-                                .and_then(|v| first_string(v, src))
-                                .unwrap_or_else(|| mname.clone()),
+                                .map(|v| strings(v, src))
+                                .unwrap_or_default(),
                             factory: Some(format!("{name}.{mname}")),
                             primary: ma.iter().any(|a| a.name == "Primary"),
-                            qualifiers: ma
-                                .iter()
-                                .filter(|a| a.name == "Qualifier" || a.name == "Named")
-                                .filter_map(|a| {
-                                    a.arg(&["value"]).and_then(|v| first_string(v, src))
-                                })
-                                .collect(),
+                            qualifiers: qualifiers(&ma, src),
                         });
                     }
-                    params_of(*m, &name, "bean", src, imp, &mut out.injections);
+                    params_of(*m, &name, "bean", src, imp, &fields, &mut out.injections);
                 } else if ma.iter().any(|a| INJECTS.contains(&a.name.as_str())) {
                     let how = if mname.starts_with("set") {
                         "setter"
@@ -625,7 +886,7 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                         "method"
                     };
                     let before = out.injections.len();
-                    params_of(*m, &name, how, src, imp, &mut out.injections);
+                    params_of(*m, &name, how, src, imp, &fields, &mut out.injections);
                     // `@Resource(name = "x")` on a setter names its one bean.
                     if let Some(q) = qualifier(&ma, src) {
                         for i in &mut out.injections[before..] {
@@ -690,10 +951,10 @@ fn sinks(
             };
             ("mongo", name.clone(), Some(first))
         } else if mongo_recv && MONGO_CALLS.contains(&name.as_str()) {
-            let coll = args
+            let coll = COLLECTION_AT
                 .iter()
-                .rev()
-                .filter(|a| matches!(a.kind(), "string_literal" | "identifier" | "field_access"))
+                .filter(|(call, n, _)| *call == name && *n == args.len())
+                .filter_map(|(.., at)| args.get(*at))
                 .find(|a| {
                     a.kind() == "string_literal" || {
                         let t = text(**a, src);
@@ -760,6 +1021,22 @@ mod tests {
         extract(g, &tree, src.as_bytes()).unwrap()
     }
 
+    fn shown(e: &crate::symbols::strexpr::StrExpr) -> String {
+        match e.0.as_slice() {
+            [Part::Lit(l)] => l.clone(),
+            [Part::Ref(r)] => format!("@{r}"),
+            _ => "?".into(),
+        }
+    }
+
+    /// A bean's names as given, else its default.
+    fn named(b: &crate::symbols::RawBean) -> String {
+        if b.names.is_empty() {
+            return b.default_name.clone();
+        }
+        b.names.iter().map(shown).collect::<Vec<_>>().join("|")
+    }
+
     fn injections(c: &Code) -> Vec<String> {
         c.injections
             .iter()
@@ -772,8 +1049,8 @@ mod tests {
                     i.wrapper,
                     i.ty,
                     i.qualifier
-                        .as_deref()
-                        .map_or(String::new(), |q| format!(" @{q}"))
+                        .as_ref()
+                        .map_or(String::new(), |q| format!(" @{}", shown(q)))
                 )
             })
             .collect()
@@ -807,14 +1084,14 @@ class Plain {}
                     "{} {} {}{}{}{}",
                     b.stereotype,
                     b.ty,
-                    b.name,
+                    named(b),
                     if b.primary { " primary" } else { "" },
                     b.factory
                         .as_deref()
                         .map_or(String::new(), |f| format!(" by {f}")),
                     b.qualifiers
                         .iter()
-                        .map(|q| format!(" @{q}"))
+                        .map(|q| format!(" @{}", shown(q)))
                         .collect::<String>()
                 )
             })
@@ -898,6 +1175,142 @@ class WithLombok {
         );
     }
 
+    /// `line what name entity` of every sink.
+    fn sinks(c: &Code) -> Vec<String> {
+        c.sinks
+            .iter()
+            .map(|s| {
+                let n = s
+                    .name
+                    .as_ref()
+                    .map_or("-".to_string(), |n| match n.0.as_slice() {
+                        [Part::Lit(l)] => l.clone(),
+                        [Part::Ref(r)] => format!("@{r}"),
+                        _ => "?".into(),
+                    });
+                format!(
+                    "{} {} {n} {}",
+                    s.line,
+                    s.what,
+                    s.entity.as_deref().unwrap_or("-")
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_template_call_names_its_collection_only_where_the_overload_has_it() {
+        let c = code(
+            r#"import org.springframework.data.mongodb.core.MongoTemplate;
+class Store {
+    private MongoTemplate mongoTemplate;
+    void a() {
+        mongoTemplate.findById(ID, Order.class);
+        mongoTemplate.findById(ID, Order.class, COLL);
+        mongoTemplate.findDistinct(q, "city", Order.class, String.class);
+        mongoTemplate.findDistinct(q, "city", "orders", Order.class, String.class);
+        mongoTemplate.find(q, Order.class, "archive");
+        mongoTemplate.save(o, "orders");
+        mongoTemplate.remove(q, Order.class, COLL);
+        mongoTemplate.upsert(q, u, Order.class);
+        mongoTemplate.updateFirst(q, u, "orders");
+        mongoTemplate.aggregate(agg, "orders", Total.class);
+        mongoTemplate.aggregate(agg, Order.class, Total.class);
+        mongoTemplate.findAll(Order.class, "orders");
+        mongoTemplate.findAndModify(q, u, opts, Order.class, "orders");
+        mongoTemplate.count(q, "orders");
+    }
+}
+"#,
+        );
+        assert_eq!(
+            sinks(&c),
+            [
+                "5 mongoTemplate.findById - Order",
+                "6 mongoTemplate.findById @COLL Order",
+                "7 mongoTemplate.findDistinct - Order",
+                "8 mongoTemplate.findDistinct orders Order",
+                "9 mongoTemplate.find archive Order",
+                "10 mongoTemplate.save orders -",
+                "11 mongoTemplate.remove @COLL Order",
+                "12 mongoTemplate.upsert - Order",
+                "13 mongoTemplate.updateFirst orders -",
+                "14 mongoTemplate.aggregate orders Total",
+                "15 mongoTemplate.aggregate - Order",
+                "16 mongoTemplate.findAll orders Order",
+                "17 mongoTemplate.findAndModify orders Order",
+                "18 mongoTemplate.count orders -",
+            ]
+        );
+    }
+
+    #[test]
+    fn generic_types_are_injected_by_their_raw_type() {
+        let c = code(
+            r#"import org.springframework.stereotype.Service;
+@Service
+class Desk {
+    Desk(Handler<Order> one, Handler<Order>[] array, List<Handler<Order>> list, com.shop.Handler<Order> scoped) {}
+}
+"#,
+        );
+        assert_eq!(
+            injections(&c),
+            [
+                "Desk constructor one <Handler>",
+                "Desk constructor array []<Handler>",
+                "Desk constructor list List<Handler>",
+                "Desk constructor scoped <Handler>",
+            ]
+        );
+    }
+
+    #[test]
+    fn documents_and_tables_by_the_package_of_their_annotation() {
+        let ents = |src: &str| -> Vec<String> {
+            code(src)
+                .entities
+                .iter()
+                .map(|e| {
+                    let n = e
+                        .name
+                        .as_ref()
+                        .map_or("-".to_string(), |n| match n.0.as_slice() {
+                            [Part::Lit(l)] => l.clone(),
+                            _ => "?".into(),
+                        });
+                    format!("{} {} {n}", e.class, e.store)
+                })
+                .collect()
+        };
+        assert_eq!(
+            ents(
+                "import org.springframework.data.mongodb.core.mapping.Document; @Document(\"orders\") class O {}"
+            ),
+            ["O mongo orders"]
+        );
+        assert!(
+            ents("import org.springframework.data.elasticsearch.annotations.Document; @Document(indexName = \"o\") class O {}")
+                .is_empty()
+        );
+        assert_eq!(
+            ents(
+                "import org.springframework.data.relational.core.mapping.Table; @Table(\"orders\") class O {}"
+            ),
+            ["O jdbc orders"]
+        );
+        assert_eq!(
+            ents(
+                "import org.springframework.data.cassandra.core.mapping.*; @Table(value = \"orders\") class O {}"
+            ),
+            ["O cassandra orders"]
+        );
+        assert_eq!(
+            ents("import jakarta.persistence.*; @Entity @Table(name = \"orders\") class O {}"),
+            ["O jpa orders"]
+        );
+    }
+
     #[test]
     fn get_collection_outside_the_mongo_driver_is_no_sink() {
         let c = code(r#"class Shelf { void a(Library l) { l.getCollection("novels"); } }"#);
@@ -936,7 +1349,7 @@ class ShopProperties {}
         let beans: Vec<String> = c
             .beans
             .iter()
-            .map(|b| format!("{} {} {}", b.stereotype, b.ty, b.name))
+            .map(|b| format!("{} {} {}", b.stereotype, b.ty, named(b)))
             .collect();
         assert_eq!(
             beans,

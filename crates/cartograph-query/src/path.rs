@@ -439,7 +439,12 @@ fn render_slice(s: &mut String, r: &PathResult, b: &str) {
                 .entity
                 .as_deref()
                 .map_or(String::new(), |e| format!(", via {e}"));
-            format!("collection {} ({}{via})", clip(&k.name, 80), k.store)
+            let what = if k.store == "Mongo" {
+                "collection"
+            } else {
+                "table"
+            };
+            format!("{what} {} ({}{via})", clip(&k.name, 80), k.store)
         })
     };
     s.push_str(&format!(

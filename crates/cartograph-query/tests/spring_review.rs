@@ -1,0 +1,616 @@
+//! Spring and slices on small repos written by each test: handlers passed by reference,
+//! which sink a request writes, calls that run the declared method itself, receivers Spring
+//! did not inject, providers and less usual collections, qualifiers and bean names written
+//! as constants, Spring Data repositories as beans.
+
+mod common;
+
+use cartograph_index::{IndexOptions, index};
+use cartograph_query::{Config, Repo, path, symbols};
+use std::fs;
+
+const IMPORTS: &str = "import java.util.*; import java.util.concurrent.*;
+import org.springframework.stereotype.*; import org.springframework.beans.factory.*;
+import org.springframework.beans.factory.annotation.*;
+import org.springframework.context.annotation.*;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.data.mongodb.core.*;
+import org.springframework.data.mongodb.core.mapping.*;
+import org.springframework.data.mongodb.repository.*;
+";
+
+/// A repo of these files (Java ones get the imports on their first line, so line numbers
+/// are those of the text plus one), HTTP bridges on.
+fn repo(files: &[(&str, &str)]) -> Repo {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::write(root.join("cartograph.toml"), "[bridges]\nhttp = true\n").unwrap();
+    for (p, text) in files {
+        let at = root.join(p);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        let text = if p.ends_with(".java") {
+            format!("package com.shop; {}\n{text}", IMPORTS.replace('\n', " "))
+        } else {
+            text.to_string()
+        };
+        fs::write(at, text).unwrap();
+    }
+    let out = index(root, &IndexOptions::default()).unwrap();
+    let config = Config::load(root).unwrap();
+    Repo::with_symbols(&out.graph, &out.symbols, config)
+}
+
+fn callers(r: &Repo, sym: &str) -> String {
+    symbols::callers(r, sym).unwrap().text
+}
+
+/// The slice from a page to the client that posts to `/api/orders`, over a controller that
+/// calls `flow.save(x)` on the field this declares.
+fn slice(field: &str, java: &[(&str, &str)]) -> String {
+    let controller = format!(
+        "@RestController @RequestMapping(\"/api/orders\")
+public class OrderController {{
+    {field}
+    @PostMapping
+    public Order create(@RequestBody Order x) {{ return flow.save(x); }}
+}}
+"
+    );
+    let mut files = vec![
+        (
+            "ui/page.ts",
+            "import { post } from './client';\nexport function page() { return post({}); }\n",
+        ),
+        (
+            "ui/client.ts",
+            "export function post(x: unknown) {\n  return fetch('/api/orders', { method: 'POST', body: JSON.stringify(x) });\n}\n",
+        ),
+        ("api/OrderController.java", controller.as_str()),
+        (
+            "api/Order.java",
+            "@Document(\"orders\") public class Order { }",
+        ),
+        (
+            "api/Orders.java",
+            "public interface Orders extends MongoRepository<Order, String> { }",
+        ),
+    ];
+    files.extend_from_slice(java);
+    let r = repo(&files);
+    path::path(&r, "ui/page.ts", "ui/client.ts").unwrap().text
+}
+
+// 1 ----------------------------------------------------------------------------------
+
+#[test]
+fn a_handler_passed_by_reference_is_the_whole_function() {
+    let r = repo(&[
+        (
+            "package.json",
+            "{\"name\":\"d\",\"dependencies\":{\"electron\":\"30\"}}",
+        ),
+        (
+            "src/view.tsx",
+            "export function View() {\n  return window.api.load(1);\n}\n",
+        ),
+        (
+            "src/preload.ts",
+            "import { contextBridge, ipcRenderer } from 'electron';\ncontextBridge.exposeInMainWorld('api', {\n  load: (id: number) => ipcRenderer.invoke('order:load', id),\n});\n",
+        ),
+        (
+            "src/client.ts",
+            "export function fetchOrder(id: number) {\n  return fetch(`/api/orders/${id}`);\n}\n",
+        ),
+        (
+            "src/main.ts",
+            "import { ipcMain } from 'electron';\nimport { fetchOrder } from './client';\n\nfunction onLoad(_e: unknown, id: number) {\n  return fetchOrder(id);\n}\n\nexport function register() {\n  ipcMain.handle('order:load', onLoad);\n}\n",
+        ),
+        (
+            "api/OrderController.java",
+            "@RestController public class OrderController {\n    @GetMapping(\"/api/orders/{id}\")\n    public String get(@PathVariable String id) { return id; }\n}\n",
+        ),
+    ]);
+    let t = path::path(&r, "src/view.tsx", "src/client.ts")
+        .unwrap()
+        .text;
+    assert!(t.contains("src/main.ts:5 onLoad"), "{t}");
+    assert!(t.contains("OrderController.get"), "{t}");
+}
+
+// 2 ----------------------------------------------------------------------------------
+
+#[test]
+fn the_call_says_whether_it_writes_not_the_method_around_it() {
+    let t = slice(
+        "@Autowired private Flow flow;",
+        &[
+            (
+                "api/Customer.java",
+                "@Document(\"customers\") public class Customer { }",
+            ),
+            (
+                "api/Customers.java",
+                "public interface Customers extends MongoRepository<Customer, String> { }",
+            ),
+            (
+                "api/Flow.java",
+                "@Service public class Flow {
+    @Autowired private Customers customers;
+    @Autowired private Orders orders;
+    public Order save(Order x) {
+        customers.findById(\"1\");
+        return orders.save(x);
+    }
+}
+",
+            ),
+        ],
+    );
+    assert!(t.contains("→ collection orders (Mongo, via Order)"), "{t}");
+    assert!(t.contains("also reaches: customers (Mongo)"), "{t}");
+}
+
+#[test]
+fn find_and_modify_writes() {
+    let t = slice(
+        "@Autowired private Flow flow;",
+        &[
+            (
+                "api/Rate.java",
+                "@Document(\"a_rates\") public class Rate { }",
+            ),
+            (
+                "api/Flow.java",
+                "@Service public class Flow {
+    @Autowired private MongoTemplate mongoTemplate;
+    public Order save(Order x) { return next(x); }
+    private Order next(Order x) {
+        mongoTemplate.findOne(q, Rate.class);
+        return mongoTemplate.findAndModify(q, u, Order.class);
+    }
+}
+",
+            ),
+        ],
+    );
+    assert!(t.contains("→ collection orders (Mongo, via Order)"), "{t}");
+}
+
+// 3 ----------------------------------------------------------------------------------
+
+#[test]
+fn super_calls_run_the_base_method() {
+    let t = slice(
+        "@Autowired private OrderFlow flow;",
+        &[
+            (
+                "api/OrderFlow.java",
+                "public interface OrderFlow { Order save(Order x); }",
+            ),
+            (
+                "api/BaseFlow.java",
+                "public abstract class BaseFlow implements OrderFlow {
+    @Autowired private Orders orders;
+    @Override public Order save(Order x) { return orders.save(x); }
+}
+",
+            ),
+            (
+                "api/AuditedFlow.java",
+                "@Service public class AuditedFlow extends BaseFlow {
+    @Override public Order save(Order x) { return super.save(x); }
+}
+",
+            ),
+        ],
+    );
+    assert!(t.contains("AuditedFlow.save"), "{t}");
+    assert!(t.contains("BaseFlow.save"), "{t}");
+    assert!(t.contains("→ collection orders"), "{t}");
+}
+
+#[test]
+fn a_bean_that_keeps_a_default_method_runs_it() {
+    let t = slice(
+        "@Autowired @Qualifier(\"plain\") private OrderFlow flow;",
+        &[
+            (
+                "api/OrderFlow.java",
+                "public interface OrderFlow {
+    default Order save(Order x) { return Store.put(x); }
+}
+",
+            ),
+            (
+                "api/Store.java",
+                "public class Store {
+    static MongoTemplate mongoTemplate;
+    static Order put(Order x) { return mongoTemplate.save(x, \"orders\"); }
+}
+",
+            ),
+            (
+                "api/LoudFlow.java",
+                "@Service(\"loud\") public class LoudFlow implements OrderFlow {
+    @Override public Order save(Order x) { return x; }
+}
+",
+            ),
+            (
+                "api/PlainFlow.java",
+                "@Service(\"plain\") public class PlainFlow implements OrderFlow { }",
+            ),
+        ],
+    );
+    assert!(t.contains("→ collection orders"), "{t}");
+    assert!(!t.contains("LoudFlow"), "{t}");
+}
+
+#[test]
+fn two_beans_that_inherit_one_method_both_run_it() {
+    let t = slice(
+        "@Autowired @Qualifier(\"second\") private OrderFlow flow;",
+        &[
+            (
+                "api/OrderFlow.java",
+                "public interface OrderFlow { Order save(Order x); }",
+            ),
+            (
+                "api/BaseFlow.java",
+                "public abstract class BaseFlow implements OrderFlow {
+    @Autowired private Orders orders;
+    @Override public Order save(Order x) { return orders.save(x); }
+}
+",
+            ),
+            (
+                "api/AFlow.java",
+                "@Service(\"first\") public class AFlow extends BaseFlow { }",
+            ),
+            (
+                "api/BFlow.java",
+                "@Service(\"second\") public class BFlow extends BaseFlow { }",
+            ),
+        ],
+    );
+    assert!(t.contains("BaseFlow.save"), "{t}");
+    assert!(t.contains("→ collection orders"), "{t}");
+}
+
+#[test]
+fn a_call_no_bean_serves_keeps_its_own_edge() {
+    let t = slice(
+        "@Autowired @Qualifier(\"from-a-jar\") private OrderFlow flow;",
+        &[
+            (
+                "api/OrderFlow.java",
+                "public class OrderFlow {
+    @Autowired private Orders orders;
+    public Order save(Order x) { return orders.save(x); }
+}
+",
+            ),
+            (
+                "api/OtherFlow.java",
+                "@Service public class OtherFlow extends OrderFlow {
+    @Override public Order save(Order x) { return x; }
+}
+",
+            ),
+        ],
+    );
+    assert!(t.contains("OrderFlow.save"), "{t}");
+    assert!(t.contains("→ collection orders"), "{t}");
+}
+
+#[test]
+fn of_two_sinks_alike_the_first_line_wins() {
+    let t = slice(
+        "@Autowired private Flow flow;",
+        &[(
+            "api/Flow.java",
+            "@Service public class Flow {
+    private com.mongodb.client.MongoDatabase db;
+    public Order save(Order x) {
+        db.getCollection(\"zeta\");
+        db.getCollection(\"alpha\");
+        return x;
+    }
+}
+",
+        )],
+    );
+    // The file names the driver only by its package: it imports Spring Data Mongo.
+    assert!(t.contains("→ collection zeta (Mongo)"), "{t}");
+}
+
+#[test]
+fn a_decorator_calls_the_other_beans() {
+    let t = slice(
+        "@Autowired @Qualifier(\"outer\") private OrderFlow flow;",
+        &[
+            (
+                "api/OrderFlow.java",
+                "public interface OrderFlow { Order save(Order x); }",
+            ),
+            (
+                "api/Outer.java",
+                "@Service(\"outer\") public class Outer implements OrderFlow {
+    @Override public Order save(Order x) { OrderFlow next = find(); return next.save(x); }
+}
+",
+            ),
+            (
+                "api/Inner.java",
+                "@Service(\"inner\") public class Inner implements OrderFlow {
+    @Autowired private Orders orders;
+    @Override public Order save(Order x) { return orders.save(x); }
+}
+",
+            ),
+        ],
+    );
+    assert!(t.contains("Inner.save"), "{t}");
+    assert!(t.contains("→ collection orders"), "{t}");
+}
+
+#[test]
+fn flows_do_not_go_from_a_base_method_back_to_its_override() {
+    use cartograph_query::flow::{CallIndex, FlowOptions, flow};
+    let r = repo(&[
+        (
+            "api/BaseFlow.java",
+            "public class BaseFlow { public void save() { done(); } void done() { } }",
+        ),
+        (
+            "api/AuditedFlow.java",
+            "@Service public class AuditedFlow extends BaseFlow {
+    @Override public void save() { super.save(); }
+}
+",
+        ),
+    ]);
+    let ix = CallIndex::build(&r);
+    let g = flow(
+        &r,
+        &ix,
+        "sym:api/AuditedFlow.java#AuditedFlow.save",
+        &FlowOptions::default(),
+    )
+    .unwrap();
+    assert!(g.edges.iter().any(|e| e.dst.ends_with("BaseFlow.save")));
+    assert!(
+        !g.edges
+            .iter()
+            .any(|e| e.src.ends_with("#BaseFlow.save") && e.dst.ends_with("AuditedFlow.save")),
+        "{:?}",
+        g.edges
+    );
+}
+
+// 4 ----------------------------------------------------------------------------------
+
+const GATEWAYS: [(&str, &str); 3] = [
+    (
+        "api/Gateway.java",
+        "public interface Gateway { void charge(); }",
+    ),
+    (
+        "api/Card.java",
+        "@Service @Primary public class Card implements Gateway { @Override public void charge() { } }",
+    ),
+    (
+        "api/Wire.java",
+        "@Service(\"wire\") public class Wire implements Gateway { @Override public void charge() { } }",
+    ),
+];
+
+fn gateways(more: &[(&str, &str)]) -> Repo {
+    let mut v = GATEWAYS.to_vec();
+    v.extend_from_slice(more);
+    repo(&v)
+}
+
+#[test]
+fn a_receiver_spring_did_not_inject_is_not_narrowed() {
+    let r = gateways(&[(
+        "api/Till.java",
+        "@Service public class Till {
+    @Autowired private Gateway gateway;
+    void injected() { gateway.charge(); }
+    void given(Gateway g) { g.charge(); }
+    void shadowed(Gateway gateway) { gateway.charge(); }
+    void local() { Gateway gw = pick(); gw.charge(); }
+    void explicit() { this.gateway.charge(); }
+}
+",
+    )]);
+    let t = callers(&r, "Wire.charge");
+    for m in ["given", "shadowed", "local"] {
+        assert!(t.contains(&format!("Till.{m}()")), "{m}: {t}");
+    }
+    assert!(!t.contains("Till.injected()"), "{t}");
+    assert!(!t.contains("Till.explicit()"), "{t}");
+    let t = callers(&r, "Card.charge");
+    assert!(
+        t.contains("Till.injected() [resolved, via Gateway.charge (Spring bean)]"),
+        "{t}"
+    );
+    assert!(
+        t.contains("Till.given() [resolved, via Gateway.charge]"),
+        "{t}"
+    );
+}
+
+#[test]
+fn an_injected_parameter_is_followed_into_its_field_and_loops() {
+    let r = gateways(&[
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    private final Gateway main;
+    private Gateway other;
+    public Till(Gateway gateway) { this.main = Objects.requireNonNull(gateway); }
+    void viaField() { main.charge(); }
+    void notInjected() { other.charge(); }
+}
+",
+        ),
+        (
+            "api/Batch.java",
+            "@Service public class Batch {
+    private final List<Gateway> all;
+    public Batch(@Qualifier(\"wire\") List<Gateway> gateways) { this.all = List.copyOf(gateways); }
+    void loop() { for (Gateway g : all) { g.charge(); } }
+    void lambda() { this.all.forEach(g -> g.charge()); }
+    void typed() { all.stream().forEach((Gateway g) -> g.charge()); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Wire.charge");
+    assert!(!t.contains("Till.viaField()"), "{t}");
+    assert!(t.contains("Till.notInjected()"), "{t}");
+    for m in ["loop", "lambda", "typed"] {
+        let want = format!("Batch.{m}() [resolved, via Gateway.charge (Spring bean)]");
+        assert!(t.contains(&want), "{want}: {t}");
+    }
+    let t = callers(&r, "Card.charge");
+    assert!(!t.contains("Batch."), "{t}");
+}
+
+#[test]
+fn a_constructor_that_delegates_hands_its_parameters_over() {
+    let r = gateways(&[(
+        "api/Till.java",
+        "@Service public class Till {
+    private final Gateway main;
+    private final int tries;
+    @Autowired public Till(Gateway gateway) { this(gateway, 3); }
+    Till(Gateway any, int tries) { this.main = any; this.tries = tries; }
+    void pay() { main.charge(); }
+}
+",
+    )]);
+    let t = callers(&r, "Wire.charge");
+    assert!(!t.contains("Till.pay()"), "{t}");
+    let t = callers(&r, "Card.charge");
+    assert!(
+        t.contains("Till.pay() [resolved, via Gateway.charge (Spring bean)]"),
+        "{t}"
+    );
+}
+
+// 5 ----------------------------------------------------------------------------------
+
+#[test]
+fn every_collection_takes_every_bean_and_a_provider_streams_them() {
+    let r = gateways(&[(
+        "api/Pool.java",
+        "@Service public class Pool {
+    private final Deque<Gateway> queue;
+    private final ConcurrentMap<String, Gateway> byName;
+    private final ObjectProvider<Gateway> provider;
+    public Pool(Deque<Gateway> queue, ConcurrentMap<String, Gateway> byName,
+                ObjectProvider<Gateway> provider) {
+        this.queue = queue; this.byName = byName; this.provider = provider;
+    }
+    void deque() { queue.forEach(g -> g.charge()); }
+    void map() { byName.values().forEach(g -> g.charge()); }
+    void stream() { provider.orderedStream().forEach(g -> g.charge()); }
+    void each() { provider.forEach(g -> g.charge()); }
+    void one() { provider.getObject().charge(); }
+    void both() { provider.forEach(g -> g.charge()); provider.getObject().charge(); }
+}
+",
+    )]);
+    let t = callers(&r, "Wire.charge");
+    for m in ["deque", "map", "stream", "each", "both"] {
+        let want = format!("Pool.{m}() [resolved, via Gateway.charge (Spring bean)]");
+        assert!(t.contains(&want), "{want}: {t}");
+    }
+    assert!(!t.contains("Pool.one()"), "{t}");
+    let t = callers(&r, "Gateway.charge");
+    assert!(t.contains("Deque<Gateway>) api/Pool.java"), "{t}");
+    assert!(!t.contains("@Primary, of 2"), "{t}");
+}
+
+// 6 ----------------------------------------------------------------------------------
+
+#[test]
+fn qualifiers_and_names_written_as_constants_and_aliases() {
+    let r = gateways(&[
+        (
+            "api/Names.java",
+            "public class Names { public static final String WIRE = \"wire\"; public static final String SLOW = \"slow\"; }",
+        ),
+        (
+            "api/Slow.java",
+            "@Service(Names.SLOW) public class Slow implements Gateway { @Override public void charge() { } }",
+        ),
+        (
+            "api/Extra.java",
+            "@Configuration public class Extra { @Bean({\"first\", \"second\"}) Gateway made() { return null; } @Bean(Elsewhere.OTHER) Gateway odd() { return null; } }",
+        ),
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    @Autowired @Qualifier(Names.WIRE) private Gateway constant;
+    @Autowired @Qualifier(Names.SLOW) private Gateway slow;
+    @Autowired @Qualifier(\"second\") private Gateway alias;
+    @Autowired @Qualifier(Elsewhere.NAME) private Gateway unknown;
+    void byUnknown() { unknown.charge(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Gateway.charge");
+    for want in [
+        "field constant, Gateway @Qualifier(\"wire\")) api/Till.java:3: Wire (qualified)",
+        "field slow, Gateway @Qualifier(\"slow\")) api/Till.java:4: Slow (qualified)",
+        "field alias, Gateway @Qualifier(\"second\")) api/Till.java:5: first (@Bean) (qualified)",
+        "field unknown, Gateway @Qualifier(?)) api/Till.java:6: qualified by a name not known",
+    ] {
+        assert!(t.contains(want), "{want}: {t}");
+    }
+    // A bean whose name is not known is shown by the method that makes it.
+    assert!(t.contains("odd (@Bean)"), "{t}");
+    // Not narrowed: the primary one does not win over a qualifier.
+    let t = callers(&r, "Wire.charge");
+    assert!(t.contains("Till.byUnknown()"), "{t}");
+}
+
+// 10 ---------------------------------------------------------------------------------
+
+#[test]
+fn a_spring_data_repository_is_a_bean_and_a_type_without_one_is_not() {
+    let r = repo(&[
+        (
+            "api/Order.java",
+            "@Document(\"orders\") public class Order { }",
+        ),
+        (
+            "api/Orders.java",
+            "public interface Orders extends MongoRepository<Order, String> { Order findByCode(String c); }",
+        ),
+        (
+            "api/Remote.java",
+            "public interface Remote { void ping(); }",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired private Orders orders;
+    @Autowired private Remote remote;
+    void work() { orders.findByCode(\"a\"); remote.ping(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Orders.findByCode");
+    assert!(t.contains("Orders (the only bean)"), "{t}");
+    assert!(!t.contains("no bean of the type"), "{t}");
+    let t = callers(&r, "Remote.ping");
+    assert!(!t.contains("the Remote bean"), "{t}");
+    assert!(t.contains("no bean of the type in the repo"), "{t}");
+}

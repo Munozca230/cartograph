@@ -289,7 +289,8 @@ const MIGRATIONS: &[&str] = &[
         line       INTEGER NOT NULL,
         factory    TEXT,
         is_primary INTEGER NOT NULL,
-        qualifiers TEXT NOT NULL
+        qualifiers TEXT NOT NULL,
+        aliases    TEXT NOT NULL
     );
     CREATE TABLE spring_injections (
         owner     TEXT NOT NULL,
@@ -1507,8 +1508,8 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
 fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
     let mut stmt = tx.prepare(
         "INSERT INTO spring_beans
-         (ty, name, stereotype, file, line, factory, is_primary, qualifiers)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (ty, name, stereotype, file, line, factory, is_primary, qualifiers, aliases)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )?;
     for b in &s.beans {
         stmt.execute(params![
@@ -1519,7 +1520,8 @@ fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
             b.line,
             b.factory,
             b.primary,
-            serde_json::to_string(&b.qualifiers)?
+            serde_json::to_string(&b.qualifiers)?,
+            serde_json::to_string(&b.aliases)?
         ])?;
     }
     let mut stmt = tx.prepare(
@@ -1561,7 +1563,7 @@ fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
 
 fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT ty, name, stereotype, file, line, factory, is_primary, qualifiers
+        "SELECT ty, name, stereotype, file, line, factory, is_primary, qualifiers, aliases
          FROM spring_beans",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -1577,11 +1579,12 @@ fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
                 r.get::<_, Option<String>>(5)?,
                 r.get::<_, bool>(6)?,
                 r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
             ),
         ))
     })?;
     for row in rows {
-        let ((ty, name, stereotype, file), (line, factory, primary, qualifiers)) = row?;
+        let ((ty, name, stereotype, file), (line, factory, primary, qualifiers, aliases)) = row?;
         out.beans.push(crate::spring::SpringBean {
             ty,
             name,
@@ -1591,6 +1594,7 @@ fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
             factory,
             primary,
             qualifiers: serde_json::from_str(&qualifiers)?,
+            aliases: serde_json::from_str(&aliases)?,
         });
     }
     let mut stmt = conn.prepare(
@@ -2428,6 +2432,7 @@ mod tests {
             beans: vec![crate::SpringBean {
                 ty: "sym:src/CardPayments.java#CardPayments".into(),
                 name: "cardPayments".into(),
+                aliases: vec!["card".into()],
                 stereotype: "Service".into(),
                 file: "src/CardPayments.java".into(),
                 line: 3,
@@ -2444,7 +2449,10 @@ mod tests {
                 qualifier: None,
                 file: "src/Checkout.java".into(),
                 line: 9,
-                uses: vec![12, 14],
+                uses: vec![crate::InjectedUse {
+                    line: 12,
+                    each: true,
+                }],
             }],
             sinks: vec![crate::DataSink {
                 store: "mongo".into(),

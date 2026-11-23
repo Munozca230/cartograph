@@ -698,16 +698,22 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
 
     let mut call_list: Vec<CallCap<'_>> = calls.into_values().collect();
     call_list.sort_by_key(|c| (c.name.start_byte(), c.name.id()));
-    let recv_types = if lang == Lang::Java {
-        java_types::receiver_types(tree.root_node(), src)
+    let receivers = if lang == Lang::Java {
+        java_types::receivers(tree.root_node(), src)
     } else {
         HashMap::new()
     };
+    let recv_types: HashMap<usize, String> = receivers
+        .iter()
+        .map(|(id, r)| (*id, r.ty.clone()))
+        .collect();
     for c in &call_list {
         if let Some(mut call) = call_of(lang, c, src) {
             // `x.m()`, and `x.get(i).m()` on what a collection or holder gives out.
             if call.form == Form::Member {
-                call.recv_type = recv_types.get(&c.node.id()).cloned();
+                let r = receivers.get(&c.node.id());
+                call.recv_type = r.map(|r| r.ty.clone());
+                call.recv_decl = r.and_then(|r| r.decl.clone());
             }
             let args = c.args.or_else(|| {
                 c.node
@@ -1442,6 +1448,7 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         scope,
         field,
         recv_type: None,
+        recv_decl: None,
         args: Vec::new(),
         handler: None,
         opts: Vec::new(),
@@ -2172,6 +2179,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             scope: Vec::new(),
             field: None,
             recv_type: None,
+            recv_decl: None,
             args: Vec::new(),
             handler: None,
             opts: Vec::new(),
@@ -2216,6 +2224,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 scope: Vec::new(),
                 field: obj.and_then(|o| self_field(lang, o, src)),
                 recv_type: None,
+                recv_decl: None,
                 args: Vec::new(),
                 handler: None,
                 opts: Vec::new(),
@@ -2238,6 +2247,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 scope,
                 field: None,
                 recv_type: None,
+                recv_decl: None,
                 args: Vec::new(),
                 handler: None,
                 opts: Vec::new(),
