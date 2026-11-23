@@ -20,6 +20,7 @@ import type { ViewSpec } from "../model/view";
 import { formatLoc, formatNumber, locUnit, pairs } from "./format";
 import { Minimap } from "./Minimap";
 import { KindGlyph } from "./kindIcons";
+import { memberBadge, memberLine, membersByPath, type MemberCard } from "../model/members";
 import { arrowPath, roundPath, tagSpot, truncate } from "./planGeometry";
 import { fitEnd, K_MIN, keepsExtension, LABEL_FONT, onStage, placeLabels, textMeasure, type LabelCandidate, type PlacedLabel } from "./planLabels";
 import { anchoredView, flyToward, flyView, pickAnchor, type View } from "./camera";
@@ -214,10 +215,12 @@ interface ContentProps {
   /** Bumped when the plan font has loaded: names are cut by measuring them. */
   fonts: number;
   onTip: (e: React.PointerEvent, id: string | null, edge?: PlanEdge) => void;
+  /** Workspace members by folder path (empty for a single repo). */
+  members: Map<string, MemberCard>;
 }
 
 /** Everything inside the camera transform. Memoized, so panning only moves one group. */
-const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered, pulsing, problems, kinds, onTip }: ContentProps) {
+const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered, pulsing, problems, kinds, onTip, members }: ContentProps) {
   // `fonts` is a prop only to redraw once the font has loaded (names are measured in it).
   const { plan, layout } = drawn;
   const axisH = layout.loose ? layout.loose.y - LOOSE_GAP.top : layout.height;
@@ -300,6 +303,9 @@ const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered,
           const folder = n.kind === "dir" && n.expandable;
           const kind = ext ? null : kindOf(kinds, n.id, n.path, n.kind === "dir");
           const dot = (problems.get(n.id) ?? 0) > 0 || plan.onCycle.has(n.id);
+          // A workspace member: its own hue and its branch on the card.
+          const member = n.kind === "dir" ? members.get(n.path) : undefined;
+          const badge = member ? truncate(memberBadge(member), Math.max(0, Math.floor((r.w - NAME_X - 40) / 7.5))) : "";
           const label = ext
             ? truncate(n.name, Math.floor((r.w - 24 - (dot ? 12 : 0) - (n.eco ? n.eco.length * 8 + 8 : 0)) / 8.1))
             : fitEnd(n.name, r.w - NAME_X - 10 - (dot ? 12 : 0), nameMeasure);
@@ -313,6 +319,7 @@ const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered,
             scene.selected !== null && scene.neighbors.has(n.id) && "nb",
             hovered === n.id && "hover",
             pulsing.has(n.id) && "pulse",
+            member && "member",
           ]
             .filter(Boolean)
             .join(" ");
@@ -321,6 +328,7 @@ const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered,
               key={n.id}
               className={cls}
               transform={`translate(${r.x},${r.y})`}
+              style={member ? ({ "--member": `hsl(${member.hue} 60% 50%)` } as React.CSSProperties) : undefined}
               data-id={n.id}
               tabIndex={0}
               role="button"
@@ -354,6 +362,11 @@ const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered,
               )}
               {kind && sizeBar(n, kind, kinds, r.w, r.h - 10, scene.maxLoc)}
               {dot && <circle className="pdot" cx={r.w - 12} cy={ext ? r.h / 2 : 15} r={3.5} />}
+              {member && badge && (
+                <text x={r.w - (dot ? 24 : 12)} y={20} className="mb" textAnchor="end">
+                  {badge}
+                </text>
+              )}
             </g>
           );
         })}
@@ -463,6 +476,10 @@ export function PlanView() {
   const hovered = useAppState((s) => s.hovered);
   const pulse = useAppState((s) => s.pulse);
   const phase = useAppState((s) => s.phase);
+  const workspace = useAppState((s) => s.meta?.workspace);
+  const members = useMemo(() => membersByPath(workspace ? { workspace } : null), [workspace]);
+  const membersRef = useRef(members);
+  membersRef.current = members;
   // The detail drawer covers the right of the stage; the plan works in what is left.
   const covered = useAppState((s) => (s.detail !== null ? DRAWER_W : 0));
   const coveredRef = useRef(covered);
@@ -693,6 +710,8 @@ export function PlanView() {
       if (n.others) lines.push({ text: `${n.others.slice(0, 6).join(", ")}${n.others.length > 6 ? "…" : ""}` });
       lines.push({ text: `Librería ${n.eco}; la usan ${formatNumber(sc.inN.get(n.id) ?? 0)} elementos de esta vista` });
     } else {
+      const member = n.kind === "dir" ? membersRef.current.get(n.path) : undefined;
+      if (member) lines.push({ text: memberLine(member) });
       lines.push(kindLine(kindsRef.current, n.id, n.path, n.kind === "dir"));
       lines.push({ text: n.kind === "dir" ? `${formatNumber(n.files)} archivos · ${formatLoc(n.loc)} ${locUnit(n.loc)}` : `${formatLoc(n.loc)} ${locUnit(n.loc)}` });
       if (n.isolated) lines.push({ text: "Sin conexiones en esta vista" });
@@ -825,7 +844,7 @@ export function PlanView() {
           aria-label="Plano por capas"
         >
           <g transform={`translate(${view.tx},${view.ty}) scale(${view.k})`}>
-            <PlanContent drawn={drawn} scene={scene} selected={selected} hovered={hovered} pulsing={pulsing} problems={problems} kinds={kinds} fonts={fontsTick} onTip={onTip} />
+            <PlanContent drawn={drawn} scene={scene} selected={selected} hovered={hovered} pulsing={pulsing} problems={problems} kinds={kinds} fonts={fontsTick} onTip={onTip} members={members} />
           </g>
         </svg>
       )}

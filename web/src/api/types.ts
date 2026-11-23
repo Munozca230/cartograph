@@ -44,6 +44,21 @@ export interface Meta {
   counts: Counts | null;
   languages: { lang: string; files: number; loc: number }[];
   watching: boolean;
+  /** A workspace index: its members (absent for a single repo). */
+  workspace?: { members: WorkspaceMember[] };
+}
+
+/** One repository of a workspace: a top-level folder of the map named after it. */
+export interface WorkspaceMember {
+  name: string;
+  /** Its folder as the workspace file writes it. */
+  path: string;
+  root: string;
+  /** State of its last git pass (null before the first one). */
+  git: "ok" | "no_git" | "no_commits" | "error" | null;
+  branch: string | null;
+  head: string | null;
+  detached: boolean;
 }
 
 export type TreeKind = "repo" | "dir" | "file";

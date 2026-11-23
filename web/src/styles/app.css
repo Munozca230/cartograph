@@ -803,6 +803,16 @@ svg.dia {
 .card {
   cursor: pointer;
   outline: none;
+  /* A workspace member: its own hue on the outline and the branch badge. */
+  &.member .face,
+  &.member .tab {
+    stroke: var(--member);
+    stroke-width: 2;
+  }
+  & .mb {
+    font: 500 11px var(--sans);
+    fill: var(--member);
+  }
   & .face {
     fill: var(--card);
     stroke: var(--card-line);
