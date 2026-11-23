@@ -286,12 +286,20 @@ pub(super) fn function_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> 
     }
 }
 
-/// Methods of Electron's IPC objects, by receiver.
-fn ipc_op(recv_last: &str, method: &str) -> Option<IpcOp> {
-    Some(match (recv_last, method) {
-        // `webContents.ipc` (Electron 17+) serves the channels of one renderer.
-        ("ipcMain" | "ipc", "handle" | "handleOnce") => IpcOp::Handle,
-        ("ipcMain" | "ipc", "on" | "once" | "addListener") => IpcOp::On,
+/// Methods of Electron's IPC objects, by receiver (its dotted segments, `?.` read as `.`).
+fn ipc_op(recv: &[&str], method: &str) -> Option<IpcOp> {
+    let last = *recv.last()?;
+    // `webContents.ipc` (Electron 17+) serves the channels of one renderer; any other
+    // `ipc` (`this.ipc`, `services.ipc`) is not Electron's.
+    let web_ipc = last == "ipc"
+        && recv.len() >= 2
+        && recv[recv.len() - 2]
+            .to_ascii_lowercase()
+            .ends_with("webcontents");
+    let main = last == "ipcMain" || web_ipc;
+    Some(match (last, method) {
+        (_, "handle" | "handleOnce") if main => IpcOp::Handle,
+        (_, "on" | "once" | "addListener") if main => IpcOp::On,
         ("ipcRenderer", "invoke") => IpcOp::Invoke,
         ("ipcRenderer", "send") => IpcOp::Send,
         ("ipcRenderer", "sendSync") => IpcOp::SendSync,
@@ -312,12 +320,12 @@ pub(super) fn ipc_sites(calls: &[CallCap<'_>], src: &[u8]) -> Vec<IpcSite> {
         }
         let Some(recv) = c.recv else { continue };
         let recv_text = text(unwrap_expr(recv), src);
-        let recv_last = recv_text
-            .rsplit(['.', '?'])
-            .find(|s| !s.is_empty())
-            .unwrap_or(&recv_text)
-            .trim();
-        let Some(op) = ipc_op(recv_last, &text(c.name, src)) else {
+        let segs: Vec<&str> = recv_text
+            .split(['.', '?'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let Some(op) = ipc_op(&segs, &text(c.name, src)) else {
             continue;
         };
         let Some(args) = c.args else { continue };
@@ -557,8 +565,14 @@ fn walk_exposed(
                 let name = value.map(|v| text(v, src)).unwrap_or_default();
                 defs.contains(&name).then_some(name)
             }
-            // A call, a value: nothing the renderer can run through this key.
-            _ => continue,
+            // A literal: nothing the renderer can run through this key.
+            Some(
+                "string" | "template_string" | "number" | "true" | "false" | "null" | "undefined"
+                | "array" | "regex",
+            ) => continue,
+            // A function built elsewhere (`invoke("users:get")`, `ipcRenderer.send.bind(…)`,
+            // `users.get`): exposed, with no definition of this file that runs it.
+            _ => None,
         };
         out.push(Exposure {
             line: line(p),
@@ -1019,5 +1033,73 @@ export function App() {
                 "api.on L8 alias 'progress'",
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use crate::grammars::{Grammar, parse};
+    use crate::symbols::{Code, IpcOp, extract};
+
+    fn code(src: &str) -> Code {
+        let g = Grammar::for_lang("typescript").unwrap();
+        let tree = parse(g, src.as_bytes()).unwrap();
+        extract(g, &tree, src.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn exposed_values_that_are_not_functions_written_here_still_count() {
+        let c = code(
+            r#"
+import { contextBridge, ipcRenderer } from 'electron';
+import { users } from './users';
+const invoke = (ch: string) => () => ipcRenderer.invoke(ch);
+contextBridge.exposeInMainWorld('api', {
+  getUser: invoke('users:get'),
+  save: ipcRenderer.send.bind(ipcRenderer, 'doc:save'),
+  get: users.get,
+  version: '1.0',
+});
+"#,
+        );
+        let ex: Vec<(String, Option<String>)> = c
+            .exposes
+            .iter()
+            .map(|e| (e.path.clone(), e.def.clone()))
+            .collect();
+        assert_eq!(
+            ex,
+            vec![
+                ("getUser".into(), None),
+                ("save".into(), None),
+                ("get".into(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_ipc_receiver_is_only_webcontents_ipc() {
+        let c = code(
+            r#"
+import { BrowserWindow } from 'electron';
+class Bus {
+  ipc = { on: (_c: string, _h: unknown) => {} };
+  wire(win: BrowserWindow, services: any) {
+    this.ipc.on('local', () => 1);
+    services.ipc.handle('svc', () => 2);
+    win.webContents.ipc.handle('real', () => 3);
+    win.webContents?.ipc.on('real2', () => 4);
+  }
+}
+"#,
+        );
+        let ops: Vec<(IpcOp, String)> = c
+            .ipc
+            .iter()
+            .map(|s| (s.op, format!("{:?}", s.channel)))
+            .collect();
+        assert_eq!(ops.len(), 2, "{ops:?}");
+        assert_eq!(ops[0].0, IpcOp::Handle);
+        assert_eq!(ops[1].0, IpcOp::On);
     }
 }

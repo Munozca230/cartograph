@@ -475,8 +475,10 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// entries ([`cartograph_core::EntryKind::Ipc`]); 18: [`Call::recv_type`] (Java receivers
 /// typed by their declaration); 19: a receiver's declaration counts only in its block, and
 /// an inherited field may hide an outer one; 20: bridges: string constants
-/// ([`Code::consts`]), IPC sites, exposures and world uses, [`Call::args`].
-pub const REVISION: u32 = 20;
+/// ([`Code::consts`]), IPC sites, exposures and world uses, [`Call::args`]; 21: an exposed
+/// property built elsewhere (a call, a member, a bind) is an exposure; `ipc` is a receiver
+/// only as `webContents.ipc`.
+pub const REVISION: u32 = 21;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {
