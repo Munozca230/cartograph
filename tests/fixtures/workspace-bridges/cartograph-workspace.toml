@@ -2,7 +2,9 @@
 # package (at an older version) and imports a class of a member it does not declare, an
 # Electron app whose renderer reaches main-process handlers over IPC (through a preload
 # exposure, a handler wrapper and channel constants), and a UI kit the app takes as an
-# npm package.
+# npm package. Over HTTP: the Electron app and a web app call the API's Spring routes (a
+# fetch wrapper with a base known at run time; an axios instance), and the web app calls
+# a gateway whose Express router is mounted twice.
 [workspace]
 name = "bridged"
 
@@ -13,6 +15,8 @@ path = "shared-lib"
 [[member]]
 name = "api"
 path = "api"
+[member.http]
+hosts = ["localhost:8080"]
 
 [[member]]
 name = "legacy"
@@ -25,3 +29,13 @@ path = "ui-kit"
 [[member]]
 name = "desktop"
 path = "desktop"
+
+[[member]]
+name = "web"
+path = "web"
+
+[[member]]
+name = "gateway"
+path = "gateway"
+[member.http]
+hosts = ["localhost:3000"]

@@ -91,10 +91,16 @@ impl StrExpr {
         self.0.iter().all(|p| matches!(p, Part::Hole(_)))
     }
 
-    /// A single name or parameter, or a literal: something worth recording as an argument.
+    /// Some part is a parameter of the function around the expression.
+    pub fn has_param(&self) -> bool {
+        self.0.iter().any(|p| matches!(p, Part::Param(_)))
+    }
+
+    /// Some literal or constant-looking name: something worth recording as an argument.
     pub fn is_stringish(&self) -> bool {
-        self.0.iter().any(|p| matches!(p, Part::Lit(_)))
-            || matches!(self.0.as_slice(), [Part::Ref(r)] if looks_constant(r))
+        self.0
+            .iter()
+            .any(|p| matches!(p, Part::Lit(_)) || matches!(p, Part::Ref(r) if looks_constant(r)))
     }
 }
 

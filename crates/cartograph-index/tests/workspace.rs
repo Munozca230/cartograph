@@ -123,7 +123,12 @@ fn members_are_top_level_folders_and_nothing_else_is_walked() {
     assert_eq!(top, members, "only members at the top");
     for (name, folder) in MEMBERS {
         let dir = g.node(&format!("dir:{name}")).unwrap();
-        assert_eq!(dir.meta["member"], json!({ "name": name, "path": folder }));
+        let mut want = json!({ "name": name, "path": folder });
+        // `[member.http]` of the workspace file rides along.
+        if name == "api" {
+            want["http"] = json!({ "context_path": "/api" });
+        }
+        assert_eq!(dir.meta["member"], want);
     }
     let repo = g.node("repo:").unwrap();
     assert_eq!(repo.name, "system");

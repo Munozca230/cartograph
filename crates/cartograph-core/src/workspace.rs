@@ -9,8 +9,8 @@
 //!
 //! This module reads the members. The architecture rules of the file (`[[layers]]`,
 //! `[rules]`, `ignore`, `[thresholds]`, `[findings]`) are read by `cartograph-query` with
-//! the grammar of `cartograph.toml`; `[bridges]` is read here; `[member.http]` and
-//! `produces` are accepted and left to the features that read them.
+//! the grammar of `cartograph.toml`; `[bridges]` and `[member.http]` are read here;
+//! `produces` is accepted and left to the feature that reads it.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -52,6 +52,73 @@ pub struct Workspace {
     pub members: Vec<Member>,
     /// `[bridges]` as written (see [`crate::bridge::BridgeSettings`]).
     pub bridges: crate::bridge::BridgeSettings,
+    /// `[member.http]` of the members that have one, by member name.
+    pub http: std::collections::BTreeMap<String, MemberHttp>,
+}
+
+/// `[member.http]`: how the member serves HTTP, for the bridges that reach it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberHttp {
+    /// `host` or `host:port` that reach the member (`localhost:8080`): a client calling one
+    /// of them is matched to this member's routes only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
+    /// Prefix of every route (`/api`), else the member's
+    /// `server.servlet.context-path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_path: Option<String>,
+    /// Clients outside the workspace call it: a route no member calls is not reported.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub public: bool,
+}
+
+impl MemberHttp {
+    /// Read a `[member.http]` table: `hosts`, `context_path`, `public` (`clients` is
+    /// accepted and left to wrapper inference).
+    pub fn parse(v: &toml::Value) -> Result<MemberHttp, String> {
+        let t = v
+            .as_table()
+            .ok_or_else(|| "[member.http] must be a table".to_string())?;
+        let mut out = MemberHttp::default();
+        for (k, v) in t {
+            match k.as_str() {
+                "hosts" => {
+                    let a = v
+                        .as_array()
+                        .ok_or_else(|| "http.hosts must be a list of strings".to_string())?;
+                    for h in a {
+                        let h = h
+                            .as_str()
+                            .ok_or_else(|| "http.hosts must be a list of strings".to_string())?;
+                        let h = h.trim().trim_end_matches('/');
+                        let h = h
+                            .strip_prefix("http://")
+                            .or_else(|| h.strip_prefix("https://"))
+                            .unwrap_or(h);
+                        out.hosts.push(h.to_ascii_lowercase());
+                    }
+                }
+                "context_path" => {
+                    let p = v
+                        .as_str()
+                        .ok_or_else(|| "http.context_path must be a string".to_string())?;
+                    out.context_path = Some(p.trim().to_string());
+                }
+                "public" => {
+                    out.public = v
+                        .as_bool()
+                        .ok_or_else(|| "http.public must be true or false".to_string())?;
+                }
+                "clients" => {}
+                other => {
+                    return Err(format!(
+                        "unknown key http.{other} (known: hosts, context_path, public, clients)"
+                    ));
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// A problem in a workspace file: where (file, line, key) and what.
@@ -196,6 +263,7 @@ impl Workspace {
             ));
         }
         let mut members: Vec<Member> = Vec::new();
+        let mut http = std::collections::BTreeMap::new();
         for (i, m) in raw.member.iter().enumerate() {
             let span = m.span();
             let m = m.get_ref();
@@ -231,7 +299,12 @@ impl Workspace {
                     ),
                 ));
             }
-            let _ = (&m.http, &m.produces);
+            if let Some(h) = &m.http {
+                let parsed = MemberHttp::parse(h)
+                    .map_err(|e| err(at(m.name.span()), Some(format!("member[{i}].http")), e))?;
+                http.insert(name.clone(), parsed);
+            }
+            let _ = &m.produces;
             members.push(Member { name, path, root });
         }
         let _ = (
@@ -263,6 +336,7 @@ impl Workspace {
             name,
             members,
             bridges,
+            http,
         })
     }
 
@@ -415,6 +489,20 @@ paths = ["lib"]
         assert_eq!(w.to_disk("api"), Some(clean(Path::new("/ws/backend-api"))));
         assert_eq!(w.to_disk("logs/app.log"), None);
         assert_eq!(w.bridges.http, Some(true));
+        assert_eq!(
+            w.http.get("api").and_then(|h| h.context_path.as_deref()),
+            Some("/api")
+        );
+        let bad = parse(
+            "[[member]]
+name = \"api\"
+path = \"a\"
+[member.http]
+host = []
+",
+        )
+        .unwrap_err();
+        assert!(bad.message.contains("http.host"), "{bad}");
         assert_eq!(w.bridges.ipc, None);
         let bad = parse("[[member]]\nname = \"api\"\npath = \"a\"\n[bridges]\nhttps = true\n")
             .unwrap_err();

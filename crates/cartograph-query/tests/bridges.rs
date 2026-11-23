@@ -178,7 +178,7 @@ fn findings_about_bridges() {
 fn the_bridges_answer_and_its_filters() {
     let r = repo();
     let a = bridges(&r, &BridgeQuery::default()).unwrap();
-    assert!(a.text.starts_with("bridges (whole repo): 8 · ipc expose 3, ipc invoke 2, ipc push 1, package maven 1, package npm 1"), "{}", a.text);
+    assert!(a.text.starts_with("bridges (whole repo): 14 · http axios 1, http fetch 1, http wrapper 4, ipc expose 3, ipc invoke 2, ipc push 1, package maven 1, package npm 1"), "{}", a.text);
     let a = bridges(
         &r,
         &BridgeQuery {

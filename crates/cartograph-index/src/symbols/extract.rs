@@ -6,7 +6,9 @@
 //! function) are left out: they are not reachable by name from elsewhere.
 
 mod bridge;
+mod http;
 
+use super::strexpr::{Part, looks_constant};
 use super::{
     BindKind, Binding, Call, Code, Def, FieldType, Form, RawEntry, ScriptExtends, Super, TraitImpl,
 };
@@ -703,12 +705,31 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
             if call.form == Form::Member && call.qualifier.is_some() {
                 call.recv_type = recv_types.get(&c.node.id()).cloned();
             }
-            if lang == Lang::Js
-                && let Some(args) = c.args
+            let args = c.args.or_else(|| {
+                c.node
+                    .child_by_field_name("arguments")
+                    .filter(|a| matches!(a.kind(), "arguments" | "argument_list"))
+            });
+            if matches!(lang, Lang::Js | Lang::Java | Lang::Python)
+                && let Some(args) = args
             {
-                let (args, handler) = bridge::call_args(lang, args, src);
-                call.args = args;
-                call.handler = handler.map(Box::new);
+                let a = bridge::call_args(lang, args, src);
+                // Java and Python: only what a URL may be made of (a path, a constant, a
+                // parameter passed on), not every logged string.
+                let keep = lang == Lang::Js
+                    || a.args.iter().flatten().any(|e| {
+                        e.has_param()
+                            || e.0
+                                .iter()
+                                .any(|p| matches!(p, Part::Lit(l) if l.contains('/')))
+                            || matches!(e.0.as_slice(), [Part::Ref(r)] if looks_constant(r))
+                    });
+                if keep {
+                    call.args = a.args;
+                    call.handler = a.handler.map(Box::new);
+                    call.opts = a.opts;
+                    call.frame = a.frame;
+                }
             }
             code.calls.push(call);
         }
@@ -747,6 +768,17 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
     for n in &imports {
         bindings(lang, *n, src, &mut code.bindings);
     }
+    // HTTP routes, clients, mounts and instances (the imports tell instances apart).
+    let h = match lang {
+        Lang::Js => http::js(&call_list, tree.root_node(), src, &code.bindings),
+        Lang::Java => http::java(&call_list, tree.root_node(), src, &recv_types),
+        Lang::Python => http::python(&call_list, src),
+        _ => http::Http::default(),
+    };
+    code.routes = h.routes;
+    code.clients = h.clients;
+    code.mounts = h.mounts;
+    code.instances = h.instances;
     code.fields = field_types(lang, tree.root_node(), src);
     match lang {
         Lang::Rust => code.impls = trait_impls(tree.root_node(), src),
@@ -1398,6 +1430,8 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         recv_type: None,
         args: Vec::new(),
         handler: None,
+        opts: Vec::new(),
+        frame: None,
     })
 }
 
@@ -2408,6 +2442,8 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             recv_type: None,
             args: Vec::new(),
             handler: None,
+            opts: Vec::new(),
+            frame: None,
         }),
         "member_expression"
         | "selector_expression"
@@ -2449,6 +2485,8 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 recv_type: None,
                 args: Vec::new(),
                 handler: None,
+                opts: Vec::new(),
+                frame: None,
             })
         }
         "argument" => n.named_child(0).and_then(|c| handler_ref(lang, c, src)),
@@ -2468,6 +2506,8 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 recv_type: None,
                 args: Vec::new(),
                 handler: None,
+                opts: Vec::new(),
+                frame: None,
             })
         }
         _ => None,

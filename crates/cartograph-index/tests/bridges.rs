@@ -9,7 +9,7 @@
 //! member's class without declaring its package; a dependency at another version than its
 //! member builds.
 
-use cartograph_core::{Confidence, EdgeKind, Graph, Symbols};
+use cartograph_core::{BridgeKind, Confidence, EdgeKind, Graph, Symbols};
 use cartograph_index::{IndexOptions, index};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -209,5 +209,122 @@ fn a_member_package_subpath_without_source_stays_external() {
             .iter()
             .any(|e| e.src == "file:desktop/src/renderer/theme.ts"
                 && e.dst == "external:npm:@acme/ui-kit")
+    );
+}
+
+/// `src:line -> dst symbol [confidence]` of the HTTP bridges.
+fn http_bridges(s: &Symbols) -> Vec<String> {
+    s.bridges
+        .iter()
+        .filter(|b| b.kind == BridgeKind::Http)
+        .map(|b| {
+            format!(
+                "{}:{} {} -> {} [{}]",
+                b.src_file,
+                b.src_line,
+                b.key,
+                b.dst.as_deref().unwrap_or("-"),
+                b.confidence
+            )
+        })
+        .collect()
+}
+
+/// `key file:line` of the HTTP endpoints with `detail`.
+fn http_left(s: &Symbols, detail: &str) -> Vec<String> {
+    s.endpoints
+        .iter()
+        .filter(|e| e.kind == BridgeKind::Http && e.detail.as_deref() == Some(detail))
+        .map(|e| format!("{} {}:{}", e.key, e.file, e.line))
+        .collect()
+}
+
+/// The HTTP traps of the workspace: a Spring prefix written as a constant of another
+/// member, a wrapper three deep whose base is only known at run time, an axios instance
+/// imported from another file and a wrapper over it, `/users/me` next to `/users/{id}`, a
+/// router mounted twice, the wrong method, a route no member serves, a foreign host and a
+/// URL built at run time.
+#[test]
+fn http_bridges_cross_members_through_wrappers_instances_and_mounts() {
+    let out = index(&fixture("workspace-bridges"), &IndexOptions::default()).unwrap();
+    let s = &out.symbols;
+    let ctl = "sym:api/src/main/java/com/acme/api/UserController.java#UserController";
+    assert_eq!(
+        http_bridges(s),
+        vec![
+            format!("web/src/users.ts:4 GET /api/users/{{}} -> {ctl}.get [resolved]"),
+            "web/src/users.ts:22 POST /v1/jobs/{} -> sym:gateway/src/jobs.ts#runJob [resolved]"
+                .to_string(),
+            format!(
+                "desktop/src/main/http/UsersApi.ts:11 GET /api/users/{{}} -> {ctl}.get [resolved]"
+            ),
+            format!(
+                "desktop/src/main/http/UsersApi.ts:15 GET /api/users/me -> {ctl}.me [resolved]"
+            ),
+            format!(
+                "desktop/src/main/http/UsersApi.ts:19 POST /api/users -> {ctl}.create [resolved]"
+            ),
+            format!("web/src/users.ts:13 GET /api/users/search -> {ctl}.search [resolved]"),
+        ]
+    );
+    assert_eq!(
+        http_left(s, "unmatched"),
+        vec!["POST /api/reports/generate desktop/src/main/http/UsersApi.ts:24"]
+    );
+    assert_eq!(
+        http_left(s, "method_mismatch"),
+        vec!["PUT /api/users/me web/src/users.ts:18"]
+    );
+    assert_eq!(
+        http_left(s, "external"),
+        vec!["POST audit.example.com/events api/src/main/java/com/acme/api/AuditClient.java:10"]
+    );
+    assert_eq!(
+        http_left(s, "dynamic"),
+        vec![" desktop/src/main/http/UsersApi.ts:30"]
+    );
+    let unused = http_left(s, "unused");
+    assert!(unused.contains(&format!(
+        "DELETE /api/users/{{}} api/src/main/java/com/acme/api/UserController.java:31"
+    )));
+    // The router is mounted under /v1 and /v2; only /v1 is called.
+    assert!(unused.contains(&"POST /v2/jobs/{} gateway/src/jobs.ts:5".to_string()));
+    assert!(!unused.iter().any(|u| u.starts_with("POST /v1/jobs")));
+    // HTTP bridges are derived edges too.
+    assert!(out.graph.edges.iter().any(|e| e.kind == EdgeKind::Bridge
+        && e.src == "file:web/src/users.ts"
+        && e.dst == "file:gateway/src/jobs.ts"));
+}
+
+/// In a single repo HTTP is opt-in (`[bridges] http = true`); a client and its server in
+/// the same repo match then.
+#[test]
+fn a_single_repo_matches_http_when_asked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("app");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        r#"{ "name": "app", "dependencies": { "express": "4" } }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/server.ts"),
+        "import express from 'express';\nconst app = express();\napp.get('/api/items/:id', (_q, r) => r.end());\napp.listen(3000);\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/client.ts"),
+        "export function item(id: string) {\n  return fetch(`/api/items/${id}`);\n}\n",
+    )
+    .unwrap();
+    let out = index(&root, &IndexOptions::default()).unwrap();
+    assert!(http_bridges(&out.symbols).is_empty(), "off by default");
+    std::fs::write(root.join("cartograph.toml"), "[bridges]\nhttp = true\n").unwrap();
+    let out = index(&root, &IndexOptions::default()).unwrap();
+    // The handler is written inline at module level: no symbol runs it.
+    assert_eq!(
+        http_bridges(&out.symbols),
+        vec!["src/client.ts:2 GET /api/items/{} -> - [exact]"]
     );
 }

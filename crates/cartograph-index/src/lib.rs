@@ -352,9 +352,15 @@ impl Layout {
                 mounts: ws
                     .members
                     .iter()
-                    .map(|m| Mount {
-                        meta: json!({ MEMBER_META: { "name": m.name, "path": m.path } }),
-                        ..Mount::new(m.name.clone(), m.root.clone())
+                    .map(|m| {
+                        let mut member = json!({ "name": m.name, "path": m.path });
+                        if let Some(h) = ws.http.get(&m.name) {
+                            member["http"] = json!(h);
+                        }
+                        Mount {
+                            meta: json!({ MEMBER_META: member }),
+                            ..Mount::new(m.name.clone(), m.root.clone())
+                        }
                     })
                     .collect(),
                 workspace: Some(ws),
@@ -507,6 +513,77 @@ fn index_layout(layout: &Layout, opts: &IndexOptions) -> Result<IndexOutput, Ind
     let (mut out, _) = index_inner(&src, opts, None)?;
     out.timings.scip_ms += load_ms;
     Ok(out)
+}
+
+/// How each mount serves HTTP (see [`symbols::resolve::HttpServers`]): `[member.http]` of
+/// the workspace file, the context path defaulting to the mount's Spring
+/// `server.servlet.context-path` (`src/main/resources/application.{properties,yml,yaml}`).
+fn http_servers(src: &Source<'_>, configs: &[(String, String)]) -> symbols::resolve::HttpServers {
+    let mut out = symbols::resolve::HttpServers::new();
+    for m in &src.mounts {
+        let declared: cartograph_core::MemberHttp = m
+            .meta
+            .get(MEMBER_META)
+            .and_then(|x| x.get("http"))
+            .and_then(|h| serde_json::from_value(h.clone()).ok())
+            .unwrap_or_default();
+        let inside = |p: &str| {
+            m.prefix.is_empty()
+                || p.strip_prefix(m.prefix)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        let context = declared.context_path.clone().or_else(|| {
+            configs
+                .iter()
+                .filter(|(p, _)| inside(p) && p.contains("src/main/resources/application."))
+                .find_map(|(p, text)| spring_context_path(p, text))
+        });
+        if declared.hosts.is_empty() && context.is_none() && !declared.public {
+            continue;
+        }
+        out.insert(
+            m.prefix.to_string(),
+            cartograph_core::MemberHttp {
+                context_path: context,
+                ..declared
+            },
+        );
+    }
+    out
+}
+
+/// `server.servlet.context-path` of a Spring `application.properties` or `.yml`.
+fn spring_context_path(path: &str, text: &str) -> Option<String> {
+    const KEY: &str = "server.servlet.context-path";
+    if path.ends_with(".properties") {
+        return text.lines().find_map(|l| {
+            let (k, v) = l.trim().split_once(['=', ':'])?;
+            (k.trim() == KEY).then(|| v.trim().to_string())
+        });
+    }
+    // YAML: the nesting of `server:` / `servlet:` / `context-path:`, or a dotted key.
+    let mut stack: Vec<(usize, String)> = Vec::new();
+    for l in text.lines() {
+        let body = l.trim_start();
+        if body.is_empty() || body.starts_with('#') || body.starts_with('-') {
+            continue;
+        }
+        let indent = l.len() - body.len();
+        let Some((k, v)) = body.split_once(':') else {
+            continue;
+        };
+        while stack.last().is_some_and(|(i, _)| *i >= indent) {
+            stack.pop();
+        }
+        let mut full: Vec<&str> = stack.iter().map(|(_, k)| k.as_str()).collect();
+        full.push(k.trim());
+        let v = v.trim().trim_matches(['"', '\'']);
+        if full.join(".") == KEY && !v.is_empty() {
+            return Some(v.to_string());
+        }
+        stack.push((indent, k.trim().to_string()));
+    }
+    None
 }
 
 /// What a run did with the extraction cache, and what it read besides the walked files.
@@ -737,13 +814,16 @@ fn index_inner(
             .iter()
             .map(|(path, lang, code)| symbols::resolve::FileCode { path, lang, code })
             .collect();
-        symbols::resolve::bridges_only(&graph, &files, &rust_call_paths, src.bridges)
+        let servers = http_servers(src, &configs);
+        symbols::resolve::bridges_only(&graph, &files, &rust_call_paths, src.bridges, &servers)
     } else {
         let files: Vec<symbols::resolve::FileCode<'_>> = file_code
             .iter()
             .map(|(path, lang, code)| symbols::resolve::FileCode { path, lang, code })
             .collect();
-        let mut s = symbols::resolve::resolve(&graph, &files, &rust_call_paths, src.bridges);
+        let servers = http_servers(src, &configs);
+        let mut s =
+            symbols::resolve::resolve(&graph, &files, &rust_call_paths, src.bridges, &servers);
         let pages: Vec<(&str, &str)> = configs
             .iter()
             .filter(|(p, _)| p.rsplit('/').next() == Some("index.html"))

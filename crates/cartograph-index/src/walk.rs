@@ -79,11 +79,18 @@ pub struct WalkHooks<'a> {
 }
 
 /// Files whose text the import resolvers read: `package.json`, `pnpm-workspace.yaml`, and
-/// `tsconfig*.json` / `jsconfig*.json`; and `index.html`, whose module scripts are where a
-/// browser app starts (see `symbols::resolve::page_entries`).
+/// `tsconfig*.json` / `jsconfig*.json`; `index.html`, whose module scripts are where a
+/// browser app starts (see `symbols::resolve::page_entries`); and a Spring
+/// `application.{properties,yml,yaml}`, whose context path prefixes the routes.
 pub fn is_resolver_config(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    name == "package.json"
+    let spring = path.contains("src/main/resources/")
+        && matches!(
+            name,
+            "application.properties" | "application.yml" | "application.yaml"
+        );
+    spring
+        || name == "package.json"
         || name == "index.html"
         || name == "pnpm-workspace.yaml"
         || ((name.starts_with("tsconfig") || name.starts_with("jsconfig"))

@@ -3,9 +3,9 @@
 //! sites ([`IpcSite`]), preload exposures ([`Exposure`]) and renderer uses of an exposed
 //! world ([`WorldUse`]). Matched after resolution (`symbols::resolve::bridge`).
 
-use super::{CallCap, Lang, handler_ref, line, named_args, string_value, text};
+use super::{CallCap, Lang, end_line, handler_ref, line, named_args, string_value, text};
 use crate::symbols::strexpr::{ConstDef, Part, StrExpr};
-use crate::symbols::{Call, Exposure, IpcOp, IpcSite, WorldUse};
+use crate::symbols::{Call, Exposure, IpcOp, IpcSite, OptArg, WorldUse};
 use std::collections::HashMap;
 use tree_sitter::Node;
 
@@ -15,7 +15,7 @@ const MAX_ARGS: usize = 4;
 const MAX_DEPTH: u8 = 3;
 
 /// The node an expression wraps without changing its value (`(x)`, `x as T`, `x!`).
-fn unwrap_expr(mut n: Node<'_>) -> Node<'_> {
+pub(super) fn unwrap_expr(mut n: Node<'_>) -> Node<'_> {
     loop {
         match n.kind() {
             "parenthesized_expression"
@@ -66,37 +66,81 @@ pub(super) fn dotted(n: Node<'_>, src: &[u8]) -> Option<Vec<String>> {
     }
 }
 
-/// Parameter names of the function around `n` (innermost first), each with its function's
-/// parameters in order.
-fn enclosing_params(lang: Lang, n: Node<'_>, src: &[u8]) -> Vec<Vec<String>> {
-    let mut out = Vec::new();
-    let mut cur = n.parent();
-    while let Some(p) = cur {
-        let params = match (lang, p.kind()) {
-            (
-                Lang::Js,
-                "function_declaration"
+/// A function node of `lang`.
+pub(super) fn is_function(lang: Lang, n: Node<'_>) -> bool {
+    match lang {
+        Lang::Js => matches!(
+            n.kind(),
+            "function_declaration"
                 | "function_expression"
                 | "function"
                 | "generator_function_declaration"
                 | "generator_function"
                 | "method_definition"
-                | "arrow_function",
-            ) => p
-                .child_by_field_name("parameters")
-                .or_else(|| p.child_by_field_name("parameter")),
-            (Lang::Java, "method_declaration" | "constructor_declaration") => {
-                p.child_by_field_name("parameters")
-            }
-            (Lang::Python, "function_definition") => p.child_by_field_name("parameters"),
-            _ => None,
-        };
-        if let Some(ps) = params {
-            out.push(param_names(ps, src));
-        }
-        cur = p.parent();
+                | "arrow_function"
+        ),
+        Lang::Java => matches!(
+            n.kind(),
+            "method_declaration" | "constructor_declaration" | "lambda_expression"
+        ),
+        Lang::Python => matches!(n.kind(), "function_definition" | "lambda"),
+        _ => false,
     }
-    out
+}
+
+/// Whether the function `n` is one a definition stands for, so a call of that definition
+/// passes its parameters: a method, a top-level function, a function given to a
+/// module-level name, property or class field. A callback written inline is not one: its
+/// parameters are run-time values.
+pub(super) fn is_frame(lang: Lang, n: Node<'_>) -> bool {
+    let outer_fn =
+        || std::iter::successors(n.parent(), |p| p.parent()).any(|p| is_function(lang, p));
+    match (lang, n.kind()) {
+        (Lang::Js, "method_definition") => true,
+        (Lang::Js, "function_declaration" | "generator_function_declaration") => !outer_fn(),
+        (
+            Lang::Js,
+            "arrow_function" | "function_expression" | "function" | "generator_function",
+        ) => {
+            matches!(
+                n.parent().map(|p| p.kind()),
+                Some(
+                    "variable_declarator" | "pair" | "public_field_definition" | "field_definition"
+                )
+            ) && !outer_fn()
+        }
+        (Lang::Java, "method_declaration" | "constructor_declaration") => true,
+        (Lang::Python, "function_definition") => !outer_fn(),
+        _ => false,
+    }
+}
+
+/// The function a definition stands for around `n` (see [`is_frame`]).
+pub(super) fn frame_of(lang: Lang, n: Node<'_>) -> Option<Node<'_>> {
+    std::iter::successors(n.parent(), |p| p.parent()).find(|p| is_frame(lang, *p))
+}
+
+/// Parameter names of a function, in order (`self` / `cls` of a Python method left out:
+/// a call does not pass it).
+fn params_of(lang: Lang, f: Node<'_>, src: &[u8]) -> Vec<String> {
+    let ps = match lang {
+        Lang::Js => f
+            .child_by_field_name("parameters")
+            .or_else(|| f.child_by_field_name("parameter")),
+        _ => f.child_by_field_name("parameters"),
+    };
+    let Some(ps) = ps else { return Vec::new() };
+    let mut names = param_names(ps, src);
+    if lang == Lang::Python
+        && f.kind() == "function_definition"
+        && names.first().is_some_and(|n| n == "self" || n == "cls")
+        && std::iter::successors(f.parent(), |p| p.parent())
+            .take(3)
+            .any(|p| p.kind() == "class_definition")
+    {
+        names.remove(0);
+    }
+    names
 }
 
 fn param_names(ps: Node<'_>, src: &[u8]) -> Vec<String> {
@@ -111,29 +155,103 @@ fn param_names(ps: Node<'_>, src: &[u8]) -> Vec<String> {
                 .child_by_field_name("pattern")
                 .or_else(|| p.child_by_field_name("name"))
                 .or_else(|| p.child_by_field_name("left"))
+                .or_else(|| {
+                    // Python `x: int`: the name is the first child.
+                    (p.kind() == "typed_parameter")
+                        .then(|| p.named_child(0))
+                        .flatten()
+                })
                 .unwrap_or(p);
             match name.kind() {
                 "identifier" => text(name, src),
-                // `...args`, `self`, a destructuring pattern: holds a place, never a name.
+                // `...args`, a destructuring pattern: holds a place, never a name.
                 _ => String::new(),
             }
         })
         .collect()
 }
 
-/// The [`Part`] for a name: a parameter of the innermost function that declares it, else
-/// a reference.
-fn name_part(lang: Lang, n: Node<'_>, src: &[u8], names: Vec<String>) -> Part {
-    if names.len() == 1 {
-        for params in enclosing_params(lang, n, src).iter().take(1) {
-            if let Some(i) = params.iter().position(|p| *p == names[0])
-                && i < u8::MAX as usize
-            {
-                return Part::Param(i as u8);
+/// The value of the local `name` declared in the block `scope` before `child` (the
+/// statement that holds the use): `const url = …`, `String url = …;`, `url = …`.
+fn local_value<'t>(
+    lang: Lang,
+    scope: Node<'t>,
+    child: Node<'t>,
+    name: &str,
+    src: &[u8],
+) -> Option<Node<'t>> {
+    let block = match lang {
+        Lang::Js => scope.kind() == "statement_block",
+        Lang::Java | Lang::Python => scope.kind() == "block",
+        _ => false,
+    };
+    if !block {
+        return None;
+    }
+    let mut found = None;
+    let mut c = scope.walk();
+    for st in scope.named_children(&mut c) {
+        if st.end_byte() > child.start_byte() {
+            break;
+        }
+        match (lang, st.kind()) {
+            (Lang::Js, "lexical_declaration" | "variable_declaration")
+            | (Lang::Java, "local_variable_declaration") => {
+                let mut dc = st.walk();
+                for d in st.named_children(&mut dc) {
+                    if d.kind() == "variable_declarator"
+                        && d.child_by_field_name("name")
+                            .is_some_and(|n| n.kind() == "identifier" && text(n, src) == name)
+                        && let Some(v) = d.child_by_field_name("value")
+                    {
+                        found = Some(v);
+                    }
+                }
             }
+            (Lang::Python, "expression_statement") => {
+                if let Some(a) = st.named_child(0).filter(|a| a.kind() == "assignment")
+                    && a.child_by_field_name("left")
+                        .is_some_and(|l| l.kind() == "identifier" && text(l, src) == name)
+                    && let Some(v) = a.child_by_field_name("right")
+                {
+                    found = Some(v);
+                }
+            }
+            _ => {}
         }
     }
-    Part::Ref(names.join("."))
+    found
+}
+
+/// What the plain name `name` at `n` stands for: a parameter of the function a definition
+/// stands for ([`Part::Param`]), a local's value (read through), a parameter of a
+/// callback (a hole: a run-time value), else a name to read later ([`Part::Ref`]: a module
+/// constant, an import).
+fn name_parts(lang: Lang, n: Node<'_>, name: &str, src: &[u8], out: &mut StrExpr, depth: u8) {
+    let mut child = n;
+    let mut cur = n.parent();
+    while let Some(p) = cur {
+        if is_function(lang, p) {
+            if let Some(i) = params_of(lang, p, src).iter().position(|x| x == name) {
+                if is_frame(lang, p) && i < u8::MAX as usize {
+                    out.push(Part::Param(i as u8));
+                } else {
+                    out.push(Part::Hole(name.to_string()));
+                }
+                return;
+            }
+            if is_frame(lang, p) {
+                break;
+            }
+        }
+        if let Some(v) = local_value(lang, p, child, name, src) {
+            build(lang, v, src, out, depth + 1);
+            return;
+        }
+        child = p;
+        cur = p.parent();
+    }
+    out.push(Part::Ref(name.to_string()));
 }
 
 /// How the expression `n` builds a string.
@@ -141,6 +259,193 @@ pub(super) fn str_expr(lang: Lang, n: Node<'_>, src: &[u8]) -> StrExpr {
     let mut out = StrExpr::default();
     build(lang, n, src, &mut out, 0);
     out
+}
+
+/// The last name of a callee (`buildUrl` of `this.buildUrl`, `join` of `path.join`) and
+/// the text before it.
+fn callee_name(lang: Lang, f: Node<'_>, src: &[u8]) -> Option<(String, String)> {
+    let f = if lang == Lang::Js { unwrap_expr(f) } else { f };
+    match f.kind() {
+        "identifier" => Some((text(f, src), String::new())),
+        "member_expression" => Some((
+            text(f.child_by_field_name("property")?, src),
+            text(f.child_by_field_name("object")?, src),
+        )),
+        "attribute" => Some((
+            text(f.child_by_field_name("attribute")?, src),
+            text(f.child_by_field_name("object")?, src),
+        )),
+        _ => None,
+    }
+}
+
+/// The positional arguments of an argument list.
+pub(super) fn arg_nodes(args: Option<Node<'_>>) -> Vec<Node<'_>> {
+    args.map(named_args)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| {
+            if a.kind() == "argument" {
+                a.named_child(0).unwrap_or(a)
+            } else {
+                a
+            }
+        })
+        .filter(|a| a.kind() != "keyword_argument")
+        .collect()
+}
+
+/// A call that builds a URL out of its arguments: `path.join(a, b)`, `url.resolve(a, b)`,
+/// `urljoin(a, b)` join them with `/`; a helper named for a URL or a path
+/// (`this.buildUrl(path)`) is an unknown base followed by its first argument with a
+/// literal or a parameter; `x.toString()`, `URI.create(x)`, `new URL(x, base)` are `x`
+/// (after `base`); `String.format("%s/a", b)` fills its placeholders.
+fn build_call(lang: Lang, n: Node<'_>, src: &[u8], out: &mut StrExpr, depth: u8) -> bool {
+    let (callee, args) = match (lang, n.kind()) {
+        (Lang::Js, "call_expression") | (Lang::Python, "call") => (
+            n.child_by_field_name("function"),
+            n.child_by_field_name("arguments"),
+        ),
+        (Lang::Java, "method_invocation") => return java_build_call(n, src, out, depth),
+        (Lang::Js, "new_expression") | (Lang::Java, "object_creation_expression") => {
+            let ty = n
+                .child_by_field_name("constructor")
+                .or_else(|| n.child_by_field_name("type"))
+                .map(|t| text(t, src));
+            if !matches!(ty.as_deref(), Some("URL" | "URI")) {
+                return false;
+            }
+            match arg_nodes(n.child_by_field_name("arguments")).as_slice() {
+                [x] => build(lang, *x, src, out, depth + 1),
+                [x, base, ..] => {
+                    build(lang, *base, src, out, depth + 1);
+                    build(lang, *x, src, out, depth + 1);
+                }
+                _ => return false,
+            }
+            return true;
+        }
+        _ => return false,
+    };
+    let (Some(callee), list) = (callee, arg_nodes(args)) else {
+        return false;
+    };
+    let Some((name, object)) = callee_name(lang, callee, src) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    let obj_lower = object.to_ascii_lowercase();
+    let joins = (lower == "join" && (obj_lower.ends_with("path") || obj_lower.ends_with("posix")))
+        || (lower == "resolve" && (obj_lower == "url" || obj_lower.ends_with("path")))
+        || matches!(
+            lower.as_str(),
+            "urljoin" | "joinurl" | "join_url" | "url_join" | "joinpath" | "joinpaths"
+        );
+    if joins && !list.is_empty() {
+        for (i, a) in list.iter().enumerate() {
+            if i > 0 {
+                out.push(Part::Lit("/".into()));
+            }
+            build(lang, *a, src, out, depth + 1);
+        }
+        return true;
+    }
+    if list.is_empty() && matches!(name.as_str(), "toString" | "valueOf") {
+        if let Some(o) = unwrap_expr(callee).child_by_field_name("object") {
+            build(lang, o, src, out, depth + 1);
+            return true;
+        }
+        return false;
+    }
+    url_helper(lang, &lower, callee, &list, src, out, depth)
+}
+
+/// A helper named for a URL or a path, called with a literal or a parameter: an unknown
+/// base, then that argument.
+fn url_helper(
+    lang: Lang,
+    lower: &str,
+    callee: Node<'_>,
+    list: &[Node<'_>],
+    src: &[u8],
+    out: &mut StrExpr,
+    depth: u8,
+) -> bool {
+    let urlish = ["url", "uri", "path", "endpoint", "route"]
+        .iter()
+        .any(|w| lower.contains(w));
+    if !urlish {
+        return false;
+    }
+    for a in list {
+        let mut inner = StrExpr::default();
+        build(lang, *a, src, &mut inner, depth + 1);
+        let usable = inner
+            .0
+            .iter()
+            .any(|p| matches!(p, Part::Param(_) | Part::Lit(_)))
+            || matches!(inner.0.as_slice(), [Part::Ref(r)] if crate::symbols::strexpr::looks_constant(r));
+        if usable {
+            out.push(Part::Hole(text(callee, src)));
+            out.extend(inner);
+            return true;
+        }
+    }
+    false
+}
+
+/// Java: `URI.create(x)`, `String.format(f, …)`, `x.toString()`, a URL helper.
+fn java_build_call(n: Node<'_>, src: &[u8], out: &mut StrExpr, depth: u8) -> bool {
+    let lang = Lang::Java;
+    let name = n.child_by_field_name("name").map(|x| text(x, src));
+    let obj = n.child_by_field_name("object");
+    let obj_text = obj.map(|x| text(x, src));
+    let list = arg_nodes(n.child_by_field_name("arguments"));
+    match (obj_text.as_deref(), name.as_deref(), list.as_slice()) {
+        (Some("URI"), Some("create"), [x]) => {
+            build(lang, *x, src, out, depth + 1);
+            true
+        }
+        (Some("String"), Some("format"), [f, rest @ ..]) => {
+            let Some(fmt) = string_value(*f, src) else {
+                return false;
+            };
+            let mut rest = rest.iter();
+            let mut pieces = fmt.split("%s").peekable();
+            while let Some(piece) = pieces.next() {
+                if !piece.is_empty() {
+                    out.push(Part::Lit(piece.to_string()));
+                }
+                if pieces.peek().is_some() {
+                    match rest.next() {
+                        Some(a) => build(lang, *a, src, out, depth + 1),
+                        None => out.push(Part::Hole("%s".into())),
+                    }
+                }
+            }
+            true
+        }
+        (Some(_), Some("toString" | "toUriString"), []) => match obj {
+            Some(o) => {
+                build(lang, o, src, out, depth + 1);
+                true
+            }
+            None => false,
+        },
+        (_, Some(nm), _) => {
+            let callee = n.child_by_field_name("name").unwrap_or(n);
+            url_helper(
+                lang,
+                &nm.to_ascii_lowercase(),
+                callee,
+                &list,
+                src,
+                out,
+                depth,
+            )
+        }
+        _ => false,
+    }
 }
 
 fn build(lang: Lang, n: Node<'_>, src: &[u8], out: &mut StrExpr, depth: u8) {
@@ -217,10 +522,34 @@ fn build(lang: Lang, n: Node<'_>, src: &[u8], out: &mut StrExpr, depth: u8) {
             Some(e) => build(lang, e, src, out, depth + 1),
             None => out.push(Part::Hole(text(n, src))),
         },
+        // `process.env.API ?? "http://localhost:8080"`: the written fallback.
+        "binary_expression" | "boolean_operator"
+            if n.child_by_field_name("operator")
+                .is_some_and(|o| matches!(text(o, src).as_str(), "??" | "||" | "or"))
+                && n.child_by_field_name("right").is_some_and(|r| {
+                    let r = if lang == Lang::Js { unwrap_expr(r) } else { r };
+                    r.kind().contains("string")
+                }) =>
+        {
+            match n.child_by_field_name("right") {
+                Some(r) => build(lang, r, src, out, depth + 1),
+                None => out.push(Part::Hole(text(n, src))),
+            }
+        }
         "identifier" | "member_expression" | "field_access" | "attribute" => match dotted(n, src) {
-            Some(names) => out.push(name_part(lang, n, src, names)),
+            Some(names) if names.len() == 1 => name_parts(lang, n, &names[0], src, out, depth),
+            Some(names) => out.push(Part::Ref(names.join("."))),
             None => out.push(Part::Hole(text(n, src))),
         },
+        "call_expression"
+        | "method_invocation"
+        | "call"
+        | "new_expression"
+        | "object_creation_expression" => {
+            if !build_call(lang, n, src, out, depth) {
+                out.push(Part::Hole(text(n, src)));
+            }
+        }
         _ => out.push(Part::Hole(text(n, src))),
     }
 }
@@ -233,40 +562,98 @@ fn unescape(s: &str) -> String {
     }
 }
 
+/// What [`call_args`] reads of a call's arguments.
+pub(super) struct CallArgs {
+    pub args: Vec<Option<StrExpr>>,
+    pub handler: Option<Call>,
+    pub opts: Vec<OptArg>,
+    pub frame: Option<u32>,
+}
+
 /// The arguments of a call worth keeping for bridges (see [`Call::args`]): the string-like
-/// ones among the first [`MAX_ARGS`], `None` for the others; empty when none is. With a
+/// ones among the first [`MAX_ARGS`] (a literal, a constant-looking name, or built with a
+/// parameter of the definition around), `None` for the others; empty when none is. With a
 /// string-like first argument, the last argument as a function reference
-/// ([`Call::handler`]; `this.m.bind(this)` reads as `this.m`).
-pub(super) fn call_args(
-    lang: Lang,
-    args: Node<'_>,
-    src: &[u8],
-) -> (Vec<Option<StrExpr>>, Option<Call>) {
-    let list = named_args(args);
+/// ([`Call::handler`]; `this.m.bind(this)` reads as `this.m`). The `method` and `url` of
+/// object-literal arguments, and what they spread ([`Call::opts`]).
+pub(super) fn call_args(lang: Lang, args: Node<'_>, src: &[u8]) -> CallArgs {
+    let list = arg_nodes(Some(args));
+    let mut opts = Vec::new();
     let mut out: Vec<Option<StrExpr>> = list
         .iter()
         .take(MAX_ARGS)
-        .map(|a| {
-            let a = if a.kind() == "argument" {
-                a.named_child(0).unwrap_or(*a)
-            } else {
-                *a
-            };
-            if matches!(unwrap_expr(a).kind(), "number" | "true" | "false" | "null") {
+        .enumerate()
+        .map(|(i, a)| {
+            let inner = unwrap_expr(*a);
+            if matches!(
+                inner.kind(),
+                "number" | "true" | "false" | "null" | "decimal_integer_literal"
+            ) {
                 return None;
             }
-            let e = str_expr(lang, a, src);
-            e.is_stringish().then_some(e)
+            if lang == Lang::Js && inner.kind() == "object" {
+                object_opts(inner, i as u8, src, &mut opts);
+                return None;
+            }
+            let e = str_expr(lang, *a, src);
+            (e.is_stringish() || e.has_param()).then_some(e)
         })
         .collect();
     while out.last().is_some_and(Option::is_none) {
         out.pop();
     }
-    let handler = match (out.first(), list.as_slice()) {
-        (Some(Some(_)), [_, .., last]) => function_ref(lang, *last, src),
+    let handler = match (lang, out.first(), list.as_slice()) {
+        (Lang::Js, Some(Some(_)), [_, .., last]) => function_ref(lang, *last, src),
         _ => None,
     };
-    (out, handler)
+    let with_param = out.iter().flatten().any(StrExpr::has_param)
+        || opts.iter().any(|o: &OptArg| o.value.has_param());
+    let frame = if with_param {
+        frame_of(lang, args).map(end_line)
+    } else {
+        None
+    };
+    CallArgs {
+        args: out,
+        handler,
+        opts,
+        frame,
+    }
+}
+
+/// `method` and `url` of an object literal, and what it spreads (`{ ...init }`).
+pub(super) fn object_opts(obj: Node<'_>, arg: u8, src: &[u8], out: &mut Vec<OptArg>) {
+    let mut c = obj.walk();
+    for p in obj.named_children(&mut c) {
+        let (key, value) = match p.kind() {
+            "pair" => {
+                let Some(k) = p.child_by_field_name("key") else {
+                    continue;
+                };
+                let key = match k.kind() {
+                    "property_identifier" => text(k, src),
+                    "string" => string_value(k, src).unwrap_or_default(),
+                    _ => continue,
+                };
+                (key, p.child_by_field_name("value"))
+            }
+            "shorthand_property_identifier" => (text(p, src), Some(p)),
+            "spread_element" => ("...".to_string(), p.named_child(0)),
+            _ => continue,
+        };
+        if !matches!(key.as_str(), "method" | "url" | "baseURL" | "...") {
+            continue;
+        }
+        let Some(v) = value else { continue };
+        let value = if v.kind() == "shorthand_property_identifier" {
+            let mut e = StrExpr::default();
+            name_parts(Lang::Js, v, &text(v, src), src, &mut e, 0);
+            e
+        } else {
+            str_expr(Lang::Js, v, src)
+        };
+        out.push(OptArg { arg, key, value });
+    }
 }
 
 /// A function passed by reference: `f`, `this.m`, `obj.m`, `this.m.bind(this)`.
@@ -403,7 +790,7 @@ pub(super) fn world_uses(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8]) -> V
             continue;
         }
         let args = match c.args {
-            Some(a) => call_args(Lang::Js, a, src).0,
+            Some(a) => call_args(Lang::Js, a, src).args,
             None => Vec::new(),
         };
         out.push(WorldUse {

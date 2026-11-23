@@ -83,6 +83,138 @@ pub struct Code {
     /// Calls on a world a preload may expose (`window.api.getUser()`).
     #[serde(rename = "wu", default, skip_serializing_if = "Vec::is_empty")]
     pub worlds: Vec<WorldUse>,
+    /// HTTP routes a server declares (Spring mappings, Express-style registrations).
+    #[serde(rename = "hr", default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<HttpRoute>,
+    /// HTTP client calls (`fetch`, axios, RestTemplate, WebClient, Feign, requests…).
+    #[serde(rename = "hc", default, skip_serializing_if = "Vec::is_empty")]
+    pub clients: Vec<HttpClient>,
+    /// Express-style routers mounted under a prefix (`app.use("/v1", router)`).
+    #[serde(rename = "hm", default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<HttpMount>,
+    /// HTTP client instances with their base URL (`const api = axios.create({baseURL})`).
+    #[serde(rename = "hi", default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<HttpInstance>,
+}
+
+/// How an HTTP call gives its method.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MethodExpr {
+    /// `GET`, `POST`… (upper case).
+    #[serde(rename = "l")]
+    Lit(String),
+    /// The n-th parameter of the function around the call is the method.
+    #[serde(rename = "p")]
+    Param(u8),
+    /// The `method` of the n-th parameter (an options object: `fetch(url, init)`).
+    #[serde(rename = "o")]
+    Opts(u8),
+    /// Not known.
+    #[serde(rename = "u")]
+    Unknown,
+}
+
+/// An HTTP route a server declares: every method × path × prefix of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpRoute {
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// `spring`, `express`.
+    #[serde(rename = "f")]
+    pub lib: String,
+    /// The declaration as people read it: `@GetMapping`, `router.get`.
+    #[serde(rename = "w")]
+    pub what: String,
+    /// Upper case; empty for any method.
+    #[serde(rename = "m", default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<String>,
+    /// The paths of the handler (empty: the prefix alone).
+    #[serde(rename = "p", default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<StrExpr>,
+    /// Class-level prefixes (Spring `@RequestMapping` on the controller).
+    #[serde(rename = "x", default, skip_serializing_if = "Vec::is_empty")]
+    pub prefixes: Vec<StrExpr>,
+    /// The receiver of an Express-style registration (`app`, `router`, `this.router`).
+    #[serde(rename = "r", default, skip_serializing_if = "Option::is_none")]
+    pub recv: Option<String>,
+    /// The handler is a definition of this file (qualified name).
+    #[serde(rename = "d", default, skip_serializing_if = "Option::is_none")]
+    pub def: Option<String>,
+    /// A handler passed by reference.
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub handler: Option<Call>,
+}
+
+/// An HTTP client call (or a Feign method): its URL and method as written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpClient {
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// `fetch`, `axios`, `got`, `ky`, `resttemplate`, `webclient`, `httpclient`, `feign`,
+    /// `requests`, `httpx`.
+    #[serde(rename = "f")]
+    pub lib: String,
+    /// The call as people read it: `fetch`, `axios.get`, `restTemplate.exchange`.
+    #[serde(rename = "w")]
+    pub what: String,
+    #[serde(rename = "m")]
+    pub method: MethodExpr,
+    #[serde(rename = "u")]
+    pub url: StrExpr,
+    /// The base URL of the instance or client the call goes through.
+    #[serde(rename = "b", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<StrExpr>,
+    /// A receiver imported from another file: a client only if that file creates an
+    /// instance of this name ([`HttpInstance`]).
+    #[serde(rename = "r", default, skip_serializing_if = "Option::is_none")]
+    pub recv: Option<String>,
+    /// The definition the endpoint stands for (a Feign method), qualified.
+    #[serde(rename = "d", default, skip_serializing_if = "Option::is_none")]
+    pub def: Option<String>,
+    /// With a parameter in the URL or the method: the last line of the function the
+    /// parameters belong to (that function is a wrapper only when a definition ends there).
+    #[serde(rename = "e", default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<u32>,
+}
+
+/// `recv.use(prefix, target)`: the routes of `target` (a router) under `prefix`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpMount {
+    #[serde(rename = "l")]
+    pub line: u32,
+    #[serde(rename = "r")]
+    pub recv: String,
+    #[serde(rename = "p")]
+    pub prefix: StrExpr,
+    #[serde(rename = "t")]
+    pub target: String,
+}
+
+/// An HTTP client instance: `const api = axios.create({ baseURL })`, a WebClient built with
+/// `.baseUrl(…)`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpInstance {
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// As calls name it: `api`, `this.http` (Java: the field or variable).
+    #[serde(rename = "n")]
+    pub name: String,
+    #[serde(rename = "f")]
+    pub lib: String,
+    #[serde(rename = "b", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<StrExpr>,
+}
+
+/// A property of an object literal passed as an argument (`{ method: "POST" }`): `key` is
+/// `method` or `url`, or `...` for a spread (`{ ...init }`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptArg {
+    #[serde(rename = "i")]
+    pub arg: u8,
+    #[serde(rename = "k")]
+    pub key: String,
+    #[serde(rename = "v")]
+    pub value: StrExpr,
 }
 
 /// What an Electron IPC call does with its channel.
@@ -352,6 +484,13 @@ pub struct Call {
     /// handed to a wrapper).
     #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
     pub handler: Option<Box<Call>>,
+    /// Properties of object-literal arguments a bridge reads (`{ method: "POST" }`).
+    #[serde(rename = "o", default, skip_serializing_if = "Vec::is_empty")]
+    pub opts: Vec<OptArg>,
+    /// With a parameter among [`Call::args`] or [`Call::opts`]: the last line of the
+    /// function the parameters belong to (see [`HttpClient::frame`]).
+    #[serde(rename = "e", default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<u32>,
 }
 
 /// What an import binds.
@@ -478,8 +617,10 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// ([`Code::consts`]), IPC sites, exposures and world uses, [`Call::args`]; 21: an exposed
 /// property built elsewhere (a call, a member, a bind) is an exposure; `ipc` is a receiver
 /// only as `webContents.ipc`; 22: `await x.f<T>()` is a call of `x.f` (the grammar reads
-/// `await x.f` as the function of a call with type arguments).
-pub const REVISION: u32 = 22;
+/// `await x.f` as the function of a call with type arguments); 23: HTTP routes, clients,
+/// mounts and instances, [`Call::opts`], call arguments of Java and Python, parameters of
+/// the definition around (locals read through).
+pub const REVISION: u32 = 23;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

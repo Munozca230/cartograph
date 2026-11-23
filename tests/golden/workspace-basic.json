@@ -142,6 +142,13 @@
     ],
     [
       "file:desktop/src/main/users.ts",
+      "file:api/src/main/java/com/acme/api/UserController.java",
+      "bridge",
+      "heuristic",
+      3
+    ],
+    [
+      "file:desktop/src/main/users.ts",
       "file:desktop/src/main/apiClient.ts",
       "import",
       "exact",
@@ -207,6 +214,13 @@
       "file:mcp/src/tools.ts",
       "external:npm:axios",
       "import_external",
+      "resolved",
+      1
+    ],
+    [
+      "file:mcp/src/tools.ts",
+      "file:api/src/main/java/com/acme/api/UserController.java",
+      "bridge",
       "resolved",
       1
     ],
@@ -294,6 +308,9 @@
       "api",
       90,
       {
+        "http": {
+          "context_path": "/api"
+        },
         "name": "api",
         "path": "backend-api"
       }

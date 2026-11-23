@@ -30,7 +30,7 @@ pub(super) struct Found {
 }
 
 /// Rounds of constant references followed (a constant built from another…).
-const MAX_REF_DEPTH: u8 = 4;
+pub(super) const MAX_REF_DEPTH: u8 = 4;
 
 /// Endpoint details read by findings (see `cartograph_core::bridge`).
 pub const UNMATCHED: &str = "unmatched";
@@ -60,14 +60,14 @@ impl Val {
 }
 
 /// Reads constants through imports.
-struct Consts<'c, 'a> {
+pub(super) struct Consts<'c, 'a> {
     ctx: &'c Ctx<'a>,
     binds: &'c [Bindings<'a>],
     by_file: Vec<HashMap<&'a str, &'a StrExpr>>,
 }
 
 impl<'c, 'a> Consts<'c, 'a> {
-    fn new(ctx: &'c Ctx<'a>, binds: &'c [Bindings<'a>]) -> Self {
+    pub(super) fn new(ctx: &'c Ctx<'a>, binds: &'c [Bindings<'a>]) -> Self {
         let by_file = ctx
             .files
             .iter()
@@ -87,7 +87,7 @@ impl<'c, 'a> Consts<'c, 'a> {
     }
 
     /// The constant `path` as file `fi` sees it: its own, or one an import brings.
-    fn lookup(&self, fi: usize, path: &str, depth: u8) -> Option<(usize, &'a StrExpr)> {
+    pub(super) fn lookup(&self, fi: usize, path: &str, depth: u8) -> Option<(usize, &'a StrExpr)> {
         if depth > MAX_REF_DEPTH {
             return None;
         }
@@ -179,7 +179,7 @@ impl<'c, 'a> Consts<'c, 'a> {
 }
 
 /// `*` in `pattern` stands for any text.
-fn glob_match(pattern: &str, text: &str) -> bool {
+pub(super) fn glob_match(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
     if parts.len() == 1 {
         return pattern == text;
@@ -246,7 +246,7 @@ impl Site {
 }
 
 /// The member of a path: its first folder when that is a member, else `""`.
-fn member_of<'p>(members: &HashSet<&str>, path: &'p str) -> &'p str {
+pub(super) fn member_of<'p>(members: &HashSet<&str>, path: &'p str) -> &'p str {
     match path.split_once('/') {
         Some((m, _)) if members.contains(m) => m,
         _ => "",
@@ -254,7 +254,7 @@ fn member_of<'p>(members: &HashSet<&str>, path: &'p str) -> &'p str {
 }
 
 /// Callable definitions of a file as `(start, end, def, sid)`, for [`caller_of`].
-fn callables<'d>(ctx: &Ctx<'d>, fi: usize) -> Vec<(u32, u32, &'d Def, u32)> {
+pub(super) fn callables<'d>(ctx: &Ctx<'d>, fi: usize) -> Vec<(u32, u32, &'d Def, u32)> {
     let f = &ctx.files[fi];
     let mut v: Vec<(u32, u32, &Def, u32)> = f
         .code

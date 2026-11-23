@@ -53,6 +53,9 @@
 
 mod bridge;
 mod hier;
+mod http;
+
+pub use http::HttpServers;
 
 use super::RustCallPaths;
 use super::{BindKind, Call, Code, Def, Form};
@@ -851,13 +854,19 @@ pub fn bridges_only(
     files: &[FileCode<'_>],
     rust_paths: &RustCallPaths,
     bridges: cartograph_core::Bridges,
+    servers: &HttpServers,
 ) -> Symbols {
-    // Nothing to match without an IPC site or an exposure: skip building the resolver.
-    if !bridges.ipc
-        || !files
+    // Nothing to match without an IPC site, an exposure or an HTTP record: skip building
+    // the resolver.
+    let ipc = bridges.ipc
+        && files
             .iter()
-            .any(|f| !f.code.ipc.is_empty() || !f.code.exposes.is_empty())
-    {
+            .any(|f| !f.code.ipc.is_empty() || !f.code.exposes.is_empty());
+    let http = bridges.http
+        && files
+            .iter()
+            .any(|f| !f.code.clients.is_empty() || !f.code.routes.is_empty());
+    if !ipc && !http {
         return Symbols::default();
     }
     let manifests: HashSet<&str> = graph
@@ -872,7 +881,12 @@ pub fn bridges_only(
         .map(|fi| ctx.bind_file(fi, &g))
         .collect();
     let hier = Hier::build(&ctx, &binds, &g);
-    let found = bridge::run(&ctx, &binds, &hier, &g, rust_paths, graph, bridges);
+    let mut found = bridge::run(&ctx, &binds, &hier, &g, rust_paths, graph, bridges);
+    if bridges.http {
+        http::run(
+            &ctx, &binds, &hier, &g, rust_paths, graph, servers, &mut found,
+        );
+    }
     let mut out = Symbols {
         endpoints: found.endpoints,
         bridges: found.bridges,
@@ -889,6 +903,7 @@ pub fn resolve(
     files: &[FileCode<'_>],
     rust_paths: &RustCallPaths,
     bridges: cartograph_core::Bridges,
+    servers: &HttpServers,
 ) -> Symbols {
     let manifests: HashSet<&str> = graph
         .nodes_of(NodeKind::File)
@@ -921,7 +936,12 @@ pub fn resolve(
     }
     out.entries.extend(godot_entries(graph));
     out.entries.extend(npm_main_entries(graph));
-    let found = bridge::run(&ctx, &binds, &hier, &g, rust_paths, graph, bridges);
+    let mut found = bridge::run(&ctx, &binds, &hier, &g, rust_paths, graph, bridges);
+    if bridges.http {
+        http::run(
+            &ctx, &binds, &hier, &g, rust_paths, graph, servers, &mut found,
+        );
+    }
     out.endpoints = found.endpoints;
     out.bridges = found.bridges;
     out.normalize();
