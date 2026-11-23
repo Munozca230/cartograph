@@ -323,6 +323,7 @@ pub fn budget_of(tool: &str) -> Option<usize> {
         "symbols" => SYMBOLS,
         "callers" => CALLERS,
         "hierarchy" => HIERARCHY,
+        "bridges" => BRIDGES,
         "entries" => ENTRIES,
         "hotspots" => HOTSPOTS,
         "diff" => DIFF,

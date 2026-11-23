@@ -484,15 +484,29 @@ pub struct EntryRow {
     pub at: String,
     /// The symbol (`sym:…`) or file (`file:…`) that runs, when known.
     pub target: Option<String>,
+    /// An IPC handler: the sites that reach it over IPC (`invoke`, `send`), when the index
+    /// has IPC bridges.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub over_ipc: Option<usize>,
 }
 
 impl EntryRow {
-    fn of(e: &EntryPoint) -> EntryRow {
+    fn of(e: &EntryPoint, t: &SymbolTable) -> EntryRow {
+        let ipc = cartograph_core::BridgeKind::Ipc;
+        let over_ipc = (e.kind == EntryKind::Ipc
+            && t.bridges.bridges.iter().any(|b| b.kind == ipc))
+        .then(|| {
+            t.bridges
+                .into_file(&e.file)
+                .filter(|b| b.kind == ipc && b.dst_line == e.line)
+                .count()
+        });
         EntryRow {
             kind: e.kind,
             name: clip(&e.name, 120),
             at: format!("{}:{}", e.file, e.line),
             target: e.target.as_ref().map(|t| clip(t, 200)),
+            over_ipc,
         }
     }
 
@@ -501,8 +515,13 @@ impl EntryRow {
             .target
             .as_deref()
             .map_or(String::new(), |t| format!(" → {}", short_target(t)));
+        let over = match self.over_ipc {
+            Some(0) => " · no caller over IPC".to_string(),
+            Some(n) => format!(" · {n} over IPC"),
+            None => String::new(),
+        };
         format!(
-            "{} {}{target} ({})",
+            "{} {}{target} ({}){over}",
             self.kind.as_str(),
             self.name,
             clip(&self.at, 120)
@@ -894,7 +913,7 @@ pub fn symbols(repo: &Repo, node: &str) -> Result<Answer<SymbolsResult>, QueryEr
                 entries: entries
                     .iter()
                     .take(max_entries)
-                    .map(|e| EntryRow::of(e))
+                    .map(|e| EntryRow::of(e, t))
                     .collect(),
                 entries_more: entries.len().saturating_sub(max_entries),
                 scip_files,
@@ -1613,7 +1632,7 @@ pub fn entries(
             total: list.len(),
             in_tests,
             by_kind: by_kind.clone(),
-            items: list.iter().take(n).map(|e| EntryRow::of(e)).collect(),
+            items: list.iter().take(n).map(|e| EntryRow::of(e, t)).collect(),
             more: list.len().saturating_sub(n),
         },
         |r| {
@@ -1918,7 +1937,7 @@ pub fn flows_under(repo: &Repo, root: NodeRef, n: usize) -> Option<Flows> {
     Some(Flows {
         total: list.len(),
         by_kind,
-        first: list.iter().take(n).map(|e| EntryRow::of(e)).collect(),
+        first: list.iter().take(n).map(|e| EntryRow::of(e, t)).collect(),
     })
 }
 

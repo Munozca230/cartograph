@@ -79,7 +79,32 @@ pub struct Impact {
     /// Files outside the impact that usually change with a target (git co-change).
     pub also_changes: Vec<crate::explain::CoPartner>,
     pub also_changes_more: usize,
+    /// Files that reach the impact over a bridge (an IPC channel to a handler, an exposed
+    /// preload function, an HTTP route) rather than an import, with what depends on them:
+    /// the other side of the change. At most [`BRIDGE_HOPS`] bridges away.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub over_bridges: Vec<OverBridge>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub over_bridges_more: usize,
 }
+
+/// A file reached over a bridge (see [`Impact::over_bridges`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct OverBridge {
+    pub id: String,
+    /// Bridges crossed to reach it.
+    pub bridges: u32,
+    /// The bridge crossed last on the way, `ipc invoke users:get`; `None` for a file that
+    /// imports one reached over a bridge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub test: bool,
+}
+
+/// Bridges `impact` crosses: a renderer reaches a main-process handler over two (the
+/// preload's exposure, then the channel).
+pub const BRIDGE_HOPS: u32 = 2;
 
 /// Co-change partners worth naming: at least this many shared commits…
 const CO_MIN_TOGETHER: u32 = 3;
@@ -209,6 +234,7 @@ pub fn impact(repo: &Repo, nodes: &[String]) -> Result<Answer<Impact>, QueryErro
     }
     let mut co: Vec<(u32, u32, FileIx)> = co.into_iter().map(|(f, (n, c))| (n, c, f)).collect();
     co.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+    let over = over_bridges(repo, &reached);
 
     Ok(fit(
         limits::IMPACT,
@@ -277,9 +303,68 @@ pub fn impact(repo: &Repo, nodes: &[String]) -> Result<Answer<Impact>, QueryErro
                 })
                 .collect(),
             also_changes_more: co.len().saturating_sub(limit.min(6)),
+            over_bridges: over.iter().take(limit.min(10)).cloned().collect(),
+            over_bridges_more: over.len().saturating_sub(limit.min(10)),
         },
         render,
     ))
+}
+
+/// Files that reach `reached` (the import impact) over bridges, then what imports them,
+/// up to [`BRIDGE_HOPS`] bridges; nearest first, tests last.
+fn over_bridges(repo: &Repo, reached: &[FileIx]) -> Vec<OverBridge> {
+    let g = &repo.graph;
+    let mut seen: BTreeSet<FileIx> = reached.iter().copied().collect();
+    let mut frontier: Vec<FileIx> = reached.to_vec();
+    let mut out: Vec<(u32, u32, FileIx, Option<String>)> = Vec::new();
+    for hop in 1..=BRIDGE_HOPS {
+        // Over one bridge.
+        let mut level: Vec<(FileIx, Option<String>)> = Vec::new();
+        for &f in &frontier {
+            for b in &g.bridge_in[f as usize] {
+                if seen.insert(b.file) {
+                    let via = repo
+                        .symbols
+                        .bridges
+                        .between(g.path(b.file), g.path(f))
+                        .next()
+                        .map(crate::bridges::step_label);
+                    level.push((b.file, via));
+                }
+            }
+        }
+        if level.is_empty() {
+            break;
+        }
+        // Then what imports those, transitively.
+        let mut q: VecDeque<(FileIx, u32)> = level.iter().map(|&(f, _)| (f, 0)).collect();
+        let mut next: Vec<FileIx> = level.iter().map(|&(f, _)| f).collect();
+        for (f, via) in level {
+            out.push((hop, 0, f, via));
+        }
+        while let Some((u, d)) = q.pop_front() {
+            for dep in &g.inn[u as usize] {
+                if seen.insert(dep.file) {
+                    out.push((hop, d + 1, dep.file, None));
+                    next.push(dep.file);
+                    q.push_back((dep.file, d + 1));
+                }
+            }
+        }
+        frontier = next;
+    }
+    let is_test = |f: FileIx| g.files[f as usize].kind == FileKind::Test;
+    out.sort_by(|a, b| {
+        (is_test(a.2), a.0, a.1, g.path(a.2)).cmp(&(is_test(b.2), b.0, b.1, g.path(b.2)))
+    });
+    out.into_iter()
+        .map(|(hop, _, f, via)| OverBridge {
+            id: g.id(NodeRef::File(f)),
+            bridges: hop,
+            via,
+            test: is_test(f),
+        })
+        .collect()
 }
 
 fn render(r: &Impact) -> String {
@@ -395,6 +480,20 @@ fn render(r: &Impact) -> String {
             list.join(", "),
             crate::budget::more(r.also_changes_more)
         ));
+    }
+    if !r.over_bridges.is_empty() {
+        s.push_str("reached over bridges (not imports; the other side of the change):\n");
+        for o in &r.over_bridges {
+            let via = o
+                .via
+                .as_deref()
+                .map_or(String::new(), |v| format!(" via {}", clip(v, 120)));
+            let test = if o.test { " (test)" } else { "" };
+            s.push_str(&format!("  {}{via}{test}\n", clip(&short(&o.id), 140)));
+        }
+        if r.over_bridges_more > 0 {
+            s.push_str(&format!("  +{} more\n", r.over_bridges_more));
+        }
     }
     s
 }

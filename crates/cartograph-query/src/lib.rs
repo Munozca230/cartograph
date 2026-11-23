@@ -126,6 +126,23 @@ impl Repo {
         }
     }
 
+    /// Add the bridges of an index built without its symbol layer (a git base for `diff`
+    /// and `check`), so its findings about bridges and its bridges compare with a full index.
+    pub fn with_bridges(
+        mut self,
+        endpoints: &[cartograph_core::BridgeEndpoint],
+        bridges: &[cartograph_core::Bridge],
+    ) -> Repo {
+        let s = cartograph_core::Symbols {
+            endpoints: endpoints.to_vec(),
+            bridges: bridges.to_vec(),
+            ..cartograph_core::Symbols::default()
+        };
+        self.symbols.bridges = bridges::BridgeTable::build(&s);
+        self.findings = OnceLock::new();
+        self
+    }
+
     /// In a workspace, the member plain paths are looked for in first (`--member`).
     pub fn set_default_member(&mut self, member: Option<String>) {
         self.graph.members.default = member.clone();

@@ -1,6 +1,6 @@
 //! Bridges (see [`cartograph_core::bridge`]): links between files that no import states.
 //! IPC endpoints are extracted with the symbols and matched in [`crate::symbols::resolve`];
-//! package links come from the manifests ([`crate::packages`]). This module turns the
+//! package links come from the manifests ([`crate::resolve::packages`]). This module turns the
 //! matched bridges into derived graph edges.
 
 use cartograph_core::{Bridge, BridgeKind, Confidence, Edge, EdgeKind, NodeKind, node_id};

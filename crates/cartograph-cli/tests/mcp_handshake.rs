@@ -50,6 +50,7 @@ fn handshake_lists_and_calls_every_tool() {
         names,
         [
             "annotate",
+            "bridges",
             "callers",
             "check",
             "deps",
@@ -104,6 +105,8 @@ fn handshake_lists_and_calls_every_tool() {
         ),
         ("symbols", json!({"node": "src/core/service.ts"})),
         ("hierarchy", json!({"symbol": "Model"})),
+        ("bridges", json!({})),
+        ("bridges", json!({"kind": "ipc", "unmatched": true})),
         ("entries", json!({})),
         ("findings", json!({"severity": "info"})),
         ("check", json!({})),

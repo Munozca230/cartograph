@@ -51,6 +51,8 @@ struct Callee {
     /// Most confident of the sites.
     confidence: Confidence,
     calls: u32,
+    /// Over a bridge rather than a call: `ipc invoke users:get`.
+    via: Option<String>,
 }
 
 /// Call data indexed for flows. Build it once per snapshot.
@@ -120,9 +122,31 @@ impl CallIndex {
                         line: c.line,
                         confidence: c.confidence,
                         calls: 1,
+                        via: None,
                     });
                 }
             }
+        }
+        // Bridges between two functions (a renderer view → the exposed preload function →
+        // the main-process handler) continue a flow, marked as such.
+        for b in &t.bridges.bridges {
+            let (Some(src), Some(dst)) = (&b.src, &b.dst) else {
+                continue;
+            };
+            if src == dst {
+                continue;
+            }
+            let list = ix.out.entry(src.clone()).or_default();
+            if list.iter().any(|c| c.target == *dst) {
+                continue;
+            }
+            list.push(Callee {
+                target: dst.clone(),
+                line: b.src_line,
+                confidence: b.confidence,
+                calls: 1,
+                via: Some(crate::bridges::step_label(b)),
+            });
         }
         for f in repo.findings() {
             if f.severity == Severity::Info {
@@ -506,6 +530,9 @@ pub struct FlowEdge {
     pub line: u32,
     /// Call sites merged into it.
     pub calls: u32,
+    /// A bridge, not a call (`ipc invoke users:get`): drawn dashed, with this label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -666,6 +693,7 @@ pub fn flow(
                     confidence: c.confidence,
                     line: c.line,
                     calls: c.calls,
+                    via: c.via.clone(),
                 });
             } else {
                 more += 1;

@@ -65,7 +65,7 @@ pub struct Resolver {
     skipped: Vec<(String, String)>,
     /// In a workspace, the members each member's imports may reach (its declared package
     /// dependencies); empty: every member.
-    pub eligibility: crate::packages::Eligibility,
+    pub eligibility: super::packages::Eligibility,
 }
 
 const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];

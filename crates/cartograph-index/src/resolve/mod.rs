@@ -22,6 +22,7 @@ pub mod godot;
 pub mod java;
 pub mod jsonc;
 pub mod npm;
+pub mod packages;
 pub mod python;
 pub mod rust;
 pub mod ts;
@@ -273,7 +274,7 @@ pub fn resolve_all(
     files: &[FileImports<'_>],
     rust_calls: &[RustCallPath],
 ) -> Resolution {
-    resolve_all_with(ix, files, rust_calls, &crate::packages::Packages::default())
+    resolve_all_with(ix, files, rust_calls, &packages::Packages::default())
 }
 
 /// [`resolve_all`] in a workspace whose members' packages are known: Java imports across
@@ -283,7 +284,7 @@ pub fn resolve_all_with(
     ix: &Index<'_>,
     files: &[FileImports<'_>],
     rust_calls: &[RustCallPath],
-    packages: &crate::packages::Packages,
+    packages: &packages::Packages,
 ) -> Resolution {
     let (mut ts, mut diagnostics) = ts::Resolver::new(ix);
     ts.member_packages = packages.active();

@@ -26,7 +26,6 @@ pub mod imports;
 pub mod lang;
 pub mod manifest;
 pub mod noise;
-pub mod packages;
 mod paths;
 pub mod report;
 pub mod resolve;
@@ -671,9 +670,9 @@ fn index_inner(
             .into_iter()
             .collect();
         let pk = if src.bridges.packages {
-            packages::Packages::build(&ix)
+            resolve::packages::Packages::build(&ix)
         } else {
-            packages::Packages::default()
+            resolve::packages::Packages::default()
         };
         let res = resolve::resolve_all_with(&ix, &files, &rust_calls, &pk);
         delta.disk_reads = ix.take_disk_reads();
@@ -733,7 +732,12 @@ fn index_inner(
     // Calls resolve against the import sites just computed; never cached.
     let symbols_started = Instant::now();
     let symbols = if !src.symbols {
-        cartograph_core::Symbols::default()
+        // A base for `diff` and `check`: its bridges, so both sides compare.
+        let files: Vec<symbols::resolve::FileCode<'_>> = file_code
+            .iter()
+            .map(|(path, lang, code)| symbols::resolve::FileCode { path, lang, code })
+            .collect();
+        symbols::resolve::bridges_only(&graph, &files, &rust_call_paths, src.bridges)
     } else {
         let files: Vec<symbols::resolve::FileCode<'_>> = file_code
             .iter()
@@ -767,7 +771,7 @@ fn index_inner(
         scip_ms += started.elapsed().as_millis();
     }
     // Package bridges: rows of the symbol layer (the imports they explain are edges).
-    if src.symbols {
+    {
         let (endpoints, bridges) = packages.rows();
         if !endpoints.is_empty() || !bridges.is_empty() {
             symbols.endpoints.extend(endpoints);

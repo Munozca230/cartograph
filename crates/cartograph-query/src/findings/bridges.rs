@@ -129,7 +129,7 @@ pub(super) fn ipc_unused_handler(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> 
 }
 
 /// Endpoint detail of a dependency on another version than its member builds (written by
-/// `cartograph_index::packages`): `version_skew <the producer's version>`.
+/// `cartograph_index::resolve::packages`): `version_skew <the producer's version>`.
 const VERSION_SKEW: &str = "version_skew";
 
 /// Dependencies on another member's package at another version than it builds.

@@ -98,6 +98,11 @@ pub struct Deps {
     /// Libraries (direction out only).
     pub libraries: Vec<String>,
     pub libraries_more: usize,
+    /// Bridges (IPC, HTTP, packages) that leave or reach the node, apart from the imports.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bridges: Vec<crate::bridges::Link>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bridges_more: usize,
 }
 
 /// Neighbours of a tree node: (node, weight, line, type-only).
@@ -316,6 +321,17 @@ pub fn deps(
     let mut libs: Vec<(usize, u32)> = libs.into_iter().map(|(x, c)| (c, x)).collect();
     libs.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     let is_ext = matches!(n, NodeRef::Ext(_));
+    let paths: BTreeSet<String> = if is_ext {
+        BTreeSet::new()
+    } else {
+        inside.iter().map(|&f| g.path(f).to_string()).collect()
+    };
+    let links = crate::bridges::links(
+        &repo.symbols.bridges,
+        &paths,
+        dir != Direction::In,
+        dir != Direction::Out,
+    );
 
     Ok(fit(
         limits::DEPS,
@@ -382,6 +398,8 @@ pub fn deps(
                     .map(|&(_, x)| g.externals[x as usize].id.clone())
                     .collect(),
                 libraries_more: libs.len().saturating_sub(limit),
+                bridges: links.iter().take(limit.min(8)).cloned().collect(),
+                bridges_more: links.len().saturating_sub(limit.min(8)),
             }
         },
         render,
@@ -452,5 +470,6 @@ fn render(d: &Deps) -> String {
             crate::budget::more(d.libraries_more)
         ));
     }
+    crate::bridges::render_links(&mut s, &d.bridges, d.bridges_more);
     s
 }

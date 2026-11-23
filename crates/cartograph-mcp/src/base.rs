@@ -89,7 +89,9 @@ pub fn open(
         cache_misses = info.cache_misses,
         "base snapshot ready"
     );
-    let repo = Repo::new(&snap.graph, config.clone()).with_history(history);
+    let repo = Repo::new(&snap.graph, config.clone())
+        .with_bridges(&snap.bridges.endpoints, &snap.bridges.bridges)
+        .with_history(history);
     Ok(Base {
         repo,
         revision: snap.revision,

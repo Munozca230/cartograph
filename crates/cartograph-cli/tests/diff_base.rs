@@ -620,3 +620,49 @@ fn mcp_diff_and_check_base() {
     }
     assert!(c.shutdown(Duration::from_secs(10)).success());
 }
+
+/// An Electron app whose working tree adds an IPC channel (preload and handler) and drops
+/// another: `diff` lists the bridges both ways, and an IPC finding that was already in the
+/// base is not new (both sides are indexed with their bridges).
+#[test]
+fn diff_lists_the_bridges_a_change_adds_and_removes() {
+    let r = GitRepo::new();
+    r.write(
+        "package.json",
+        "{\"name\":\"app\",\"main\":\"main.js\",\"dependencies\":{\"electron\":\"30.0.0\"}}\n",
+    );
+    r.write(
+        "src/main.ts",
+        "import { ipcMain } from 'electron';\nipcMain.handle('a:get', () => 1);\nipcMain.handle('b:get', () => 2);\n",
+    );
+    r.write(
+        "src/preload.ts",
+        "import { contextBridge, ipcRenderer } from 'electron';\ncontextBridge.exposeInMainWorld('api', {\n  a: () => ipcRenderer.invoke('a:get'),\n  b: () => ipcRenderer.invoke('b:get'),\n  gone: () => ipcRenderer.invoke('nobody'),\n});\n",
+    );
+    r.commit(ADA, 0, "base");
+    r.write(
+        "src/main.ts",
+        "import { ipcMain } from 'electron';\nipcMain.handle('a:get', () => 1);\nipcMain.handle('c:get', () => 3);\n",
+    );
+    r.write(
+        "src/preload.ts",
+        "import { contextBridge, ipcRenderer } from 'electron';\ncontextBridge.exposeInMainWorld('api', {\n  a: () => ipcRenderer.invoke('a:get'),\n  c: () => ipcRenderer.invoke('c:get'),\n  gone: () => ipcRenderer.invoke('nobody'),\n});\n",
+    );
+    let data = tempfile::tempdir().unwrap();
+    let o = run(&r.root, data.path(), &["diff", "HEAD"]);
+    let out = stdout(&o);
+    assert!(o.status.success(), "{out}\n{}", stderr(&o));
+    assert!(out.contains("bridges: 1 new, 1 removed"), "{out}");
+    assert!(
+        out.contains("+ ipc invoke \"c:get\" src/preload.ts → src/main.ts"),
+        "{out}"
+    );
+    assert!(
+        out.contains("− ipc invoke \"b:get\" src/preload.ts → src/main.ts"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("ipc_no_handler"),
+        "already in the base: {out}"
+    );
+}

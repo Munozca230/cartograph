@@ -12,7 +12,7 @@
 //! (else they are guesses), TypeScript bare imports of a member's package resolve to its
 //! source. A different version than the producer's is a `version_skew`.
 
-use crate::resolve::Index;
+use super::Index;
 use cartograph_core::{Bridge, BridgeEndpoint, BridgeKind, BridgeRole, Confidence};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

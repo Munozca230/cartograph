@@ -846,6 +846,44 @@ struct FileResult {
 
 /// Resolve every file's calls and entry points. `files` are the extractions of the files
 /// of `graph` (import sites and edges must already be resolved).
+/// Only the bridges (see [`bridge`]) of `files`, without the rest of the symbol layer: for
+/// an index that skips it (a git base for `diff` and `check`), so both sides compare.
+pub fn bridges_only(
+    graph: &Graph,
+    files: &[FileCode<'_>],
+    rust_paths: &RustCallPaths,
+    bridges: cartograph_core::Bridges,
+) -> Symbols {
+    // Nothing to match without an IPC site or an exposure: skip building the resolver.
+    if !bridges.ipc
+        || !files
+            .iter()
+            .any(|f| !f.code.ipc.is_empty() || !f.code.exposes.is_empty())
+    {
+        return Symbols::default();
+    }
+    let manifests: HashSet<&str> = graph
+        .nodes_of(NodeKind::File)
+        .filter(|n| n.path.rsplit('/').next() == Some("Cargo.toml"))
+        .map(|n| dir_of(&n.path))
+        .collect();
+    let ctx = Ctx::build(files, &manifests);
+    let g = GraphIx::build(graph);
+    let binds: Vec<Bindings<'_>> = (0..ctx.files.len())
+        .into_par_iter()
+        .map(|fi| ctx.bind_file(fi, &g))
+        .collect();
+    let hier = Hier::build(&ctx, &binds, &g);
+    let found = bridge::run(&ctx, &binds, &hier, &g, rust_paths, graph, bridges);
+    let mut out = Symbols {
+        endpoints: found.endpoints,
+        bridges: found.bridges,
+        ..Symbols::default()
+    };
+    out.normalize();
+    out
+}
+
 pub fn resolve(
     graph: &Graph,
     files: &[FileCode<'_>],

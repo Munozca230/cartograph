@@ -23,6 +23,7 @@ pub mod limits {
     pub const HOTSPOTS: usize = 1000;
     pub const DIFF: usize = 1500;
     pub const HIERARCHY: usize = 800;
+    pub const BRIDGES: usize = 1000;
 }
 
 /// Estimated tokens of a text.

@@ -81,6 +81,21 @@ pub enum Tool {
     /// Supertypes and direct subtypes of a class, struct, interface or trait (or of a
     /// method's type): `sym:<path>#<name>`, `<path>#<name>`, `Class.method` or a name.
     Hierarchy { symbol: String },
+    /// Links no import states: IPC channels, a member's package, HTTP routes; with
+    /// `--unmatched`, what has no other side.
+    Bridges {
+        /// Only bridges with an end in this file or folder.
+        node: Option<String>,
+        /// ipc, http or package.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only bridges with an end in this member.
+        #[arg(long)]
+        member: Option<String>,
+        /// What is left unmatched instead of the bridges.
+        #[arg(long)]
+        unmatched: bool,
+    },
     /// Where flows start: main, HTTP routes, CLI commands, IPC handlers, Godot main scenes
     /// and autoloads.
     Entries {
@@ -283,6 +298,30 @@ pub fn cmd_query(tool: Tool, opts: &QueryOpts) -> Result<ExitCode> {
         Tool::Hierarchy { symbol } => {
             run!(cartograph_query::hierarchy::hierarchy(&repo, &symbol))
         }
+        Tool::Bridges {
+            node,
+            kind,
+            member,
+            unmatched,
+        } => {
+            let kind = match kind.map(|k| k.parse::<cartograph_core::BridgeKind>()) {
+                None => None,
+                Some(Ok(k)) => Some(k),
+                Some(Err(_)) => {
+                    return query_error(
+                        &QueryError::BadArgument("kind must be ipc, http or package".into()),
+                        json,
+                    );
+                }
+            };
+            let q = cartograph_query::bridges::BridgeQuery {
+                node,
+                kind,
+                member,
+                unmatched,
+            };
+            run!(cartograph_query::bridges::bridges(&repo, &q))
+        }
         Tool::Entries {
             kind,
             within,
@@ -421,7 +460,9 @@ fn open_sides(
         eprintln!("{w}");
     }
     Ok(Sides {
-        head: Repo::new(&head.graph, cfg).with_history(&history),
+        head: Repo::new(&head.graph, cfg)
+            .with_bridges(&head.symbols.endpoints, &head.symbols.bridges)
+            .with_history(&history),
         base,
     })
 }

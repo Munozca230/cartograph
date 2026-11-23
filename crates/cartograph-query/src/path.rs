@@ -5,7 +5,7 @@
 
 use crate::algo::{Adj, bfs_path};
 use crate::budget::{Answer, clip, fit, limits};
-use crate::graph::{FileIx, NodeRef, RepoGraph};
+use crate::graph::{FileIx, NodeRef};
 use crate::text::short;
 use crate::{QueryError, Repo};
 use serde::Serialize;
@@ -20,6 +20,9 @@ pub struct Step {
     /// The step to the next file is a type-only import (TypeScript `import type`…).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub type_only: bool,
+    /// The step to the next file is a bridge, not an import: `ipc invoke users:get`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<String>,
 }
 
 /// Direct imports from A into one file of B.
@@ -50,13 +53,35 @@ pub struct PathResult {
 /// An importing file and the line of its import.
 type Source = (FileIx, Option<u32>, bool);
 
-fn steps(g: &RepoGraph, p: &[FileIx]) -> Vec<Step> {
+fn steps(repo: &Repo, p: &[FileIx]) -> Vec<Step> {
+    let g = &repo.graph;
     p.iter()
         .enumerate()
-        .map(|(i, &f)| Step {
-            id: g.id(NodeRef::File(f)),
-            line: p.get(i + 1).and_then(|&n| g.site(f, n)).map(|s| s.line),
-            type_only: p.get(i + 1).is_some_and(|&n| g.type_only(f, n)),
+        .map(|(i, &f)| {
+            let next = p.get(i + 1).copied();
+            // A bridge only where no dependency explains the step.
+            let bridge = next.filter(|&n| g.dep(f, n).is_none()).and_then(|n| {
+                repo.symbols
+                    .bridges
+                    .between(g.path(f), g.path(n))
+                    .next()
+                    .map(crate::bridges::step_label)
+                    .or_else(|| g.bridge(f, n).map(|_| "bridge".to_string()))
+            });
+            Step {
+                id: g.id(NodeRef::File(f)),
+                line: match &bridge {
+                    Some(_) => repo
+                        .symbols
+                        .bridges
+                        .between(g.path(f), next.map_or("", |n| g.path(n)))
+                        .next()
+                        .map(|b| b.src_line),
+                    None => next.and_then(|n| g.site(f, n)).map(|s| s.line),
+                },
+                type_only: next.is_some_and(|n| g.type_only(f, n)),
+                bridge,
+            }
         })
         .collect()
 }
@@ -106,6 +131,17 @@ fn k_paths(
 }
 
 pub fn path(repo: &Repo, a: &str, b: &str) -> Result<Answer<PathResult>, QueryError> {
+    path_with(repo, a, b, true)
+}
+
+/// [`path`]; with `bridges` the paths may cross bridges (an IPC channel, an exposed preload
+/// function, an HTTP route) as well as dependencies.
+pub fn path_with(
+    repo: &Repo,
+    a: &str,
+    b: &str,
+    bridges: bool,
+) -> Result<Answer<PathResult>, QueryError> {
     let g = &repo.graph;
     let na = repo.resolve(a)?;
     let nb = repo.resolve(b)?;
@@ -138,7 +174,18 @@ pub fn path(repo: &Repo, a: &str, b: &str) -> Result<Answer<PathResult>, QueryEr
     let adj: Adj = g
         .out
         .iter()
-        .map(|d| d.iter().map(|x| x.file).collect())
+        .zip(&g.bridge_out)
+        .map(|(d, b)| {
+            let mut v: Vec<FileIx> = d.iter().map(|x| x.file).collect();
+            if bridges {
+                v.extend(
+                    b.iter()
+                        .map(|x| x.file)
+                        .filter(|f| !d.iter().any(|x| x.file == *f)),
+                );
+            }
+            v
+        })
         .collect();
     let paths = k_paths(&adj, &fa, &sb, &sa, 3);
     let reverse = if paths.is_empty() {
@@ -197,9 +244,9 @@ pub fn path(repo: &Repo, a: &str, b: &str) -> Result<Answer<PathResult>, QueryEr
             paths: paths
                 .iter()
                 .take(if limit >= 3 { 3 } else { 1 })
-                .map(|p| steps(g, p))
+                .map(|p| steps(repo, p))
                 .collect(),
-            reverse: reverse.as_ref().map(|p| steps(g, p)),
+            reverse: reverse.as_ref().map(|p| steps(repo, p)),
         },
         render,
     ))
@@ -213,10 +260,10 @@ fn render_path(s: &mut String, p: &[Step]) {
                 Some(l) => format!("{}:{l}", clip(&short(&x.id), 120)),
                 None => clip(&short(&x.id), 120),
             };
-            if x.type_only {
-                format!("{at} (type)")
-            } else {
-                at
+            match (&x.bridge, x.type_only) {
+                (Some(b), _) => format!("{at} ({})", clip(b, 100)),
+                (None, true) => format!("{at} (type)"),
+                (None, false) => at,
             }
         })
         .collect();

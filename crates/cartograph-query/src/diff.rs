@@ -271,6 +271,36 @@ pub struct DiffResult {
     pub unresolved_new_more: usize,
     pub unresolved_removed: Vec<Unresolved>,
     pub unresolved_removed_more: usize,
+    /// Bridges (IPC channels, exposed preload functions, a member's package) the change
+    /// adds and removes: `ipc invoke "users:get" src/preload.ts → src/main.ts`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bridges_new: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bridges_new_more: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bridges_removed: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bridges_removed_more: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// A bridge as `diff` compares it: kind, how, key and the two files (not the lines, which
+/// move with any edit).
+fn bridge_set(r: &Repo) -> BTreeSet<String> {
+    r.symbols
+        .bridges
+        .bridges
+        .iter()
+        .map(|b| {
+            format!(
+                "{} {} \"{}\" {} → {}",
+                b.kind, b.subtype, b.key, b.src_file, b.dst_file
+            )
+        })
+        .collect()
 }
 
 impl DiffResult {
@@ -285,6 +315,8 @@ impl DiffResult {
             && self.edges_changed.is_empty()
             && self.unresolved_new.is_empty()
             && self.unresolved_removed.is_empty()
+            && self.bridges_new.is_empty()
+            && self.bridges_removed.is_empty()
     }
 }
 
@@ -423,6 +455,11 @@ pub fn diff(base: &Repo, head: &Repo, base_label: &str, head_label: &str) -> Ans
             .or_default() += 1;
     }
 
+    // Bridges.
+    let (bb, hb) = (bridge_set(base), bridge_set(head));
+    let bridges_new: Vec<String> = hb.difference(&bb).cloned().collect();
+    let bridges_removed: Vec<String> = bb.difference(&hb).cloned().collect();
+
     // Files.
     let paths =
         |r: &Repo| -> BTreeSet<String> { r.graph.files.iter().map(|f| f.path.clone()).collect() };
@@ -537,6 +574,18 @@ pub fn diff(base: &Repo, head: &Repo, base_label: &str, head_label: &str) -> Ans
                 unresolved_new_more: unresolved_new.len().saturating_sub(limit),
                 unresolved_removed: unresolved_removed.iter().take(limit).cloned().collect(),
                 unresolved_removed_more: unresolved_removed.len().saturating_sub(limit),
+                bridges_new: bridges_new
+                    .iter()
+                    .take(limit)
+                    .map(|b| clip(b, 300))
+                    .collect(),
+                bridges_new_more: bridges_new.len().saturating_sub(limit),
+                bridges_removed: bridges_removed
+                    .iter()
+                    .take(limit)
+                    .map(|b| clip(b, 300))
+                    .collect(),
+                bridges_removed_more: bridges_removed.len().saturating_sub(limit),
             }
         },
         render,
@@ -676,6 +725,19 @@ fn render(r: &DiffResult) -> String {
             ));
         }
         s.push_str(&more(r.unresolved_removed_more));
+    }
+    let nb = r.bridges_new.len() + r.bridges_new_more;
+    let nbr = r.bridges_removed.len() + r.bridges_removed_more;
+    if nb + nbr > 0 {
+        s.push_str(&format!("bridges: {nb} new, {nbr} removed\n"));
+        for b in &r.bridges_new {
+            s.push_str(&format!("  + {b}\n"));
+        }
+        s.push_str(&more(r.bridges_new_more));
+        for b in &r.bridges_removed {
+            s.push_str(&format!("  − {b}\n"));
+        }
+        s.push_str(&more(r.bridges_removed_more));
     }
     s
 }

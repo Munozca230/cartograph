@@ -123,6 +123,8 @@ impl Revision {
 pub struct Snapshot {
     pub revision: Revision,
     pub graph: Graph,
+    /// Its bridges (see [`cartograph_core::bridge`]), so `diff` and `check` compare them.
+    pub bridges: BridgeRows,
     /// Loaded from the cache instead of built.
     pub cached: bool,
     /// Time to build or load it.
@@ -136,6 +138,24 @@ pub struct Snapshot {
     pub cache_misses: u64,
 }
 
+/// The bridge rows of a snapshot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeRows {
+    #[serde(default)]
+    pub endpoints: Vec<cartograph_core::BridgeEndpoint>,
+    #[serde(default)]
+    pub bridges: Vec<cartograph_core::Bridge>,
+}
+
+impl BridgeRows {
+    fn of(s: &cartograph_core::Symbols) -> BridgeRows {
+        BridgeRows {
+            endpoints: s.endpoints.clone(),
+            bridges: s.bridges.clone(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Cached {
     key: String,
@@ -144,6 +164,8 @@ struct Cached {
     #[serde(default)]
     inputs: Vec<Input>,
     graph: Graph,
+    #[serde(default)]
+    bridges: BridgeRows,
 }
 
 /// A working-tree file a snapshot's build read (or looked for) and what it was then.
@@ -278,7 +300,7 @@ pub fn default_base(root: &Path) -> Result<Revision, IndexError> {
 
 /// The cache key: what the snapshot depends on besides the commit and the files of
 /// [`Cached::inputs`].
-fn cache_key(o: &super::scan::Opened, opts: &IndexOptions) -> String {
+fn cache_key(o: &super::scan::Opened, root: &Path, opts: &IndexOptions) -> String {
     let repo = o.repo.to_thread_local();
     let config = repo.config_snapshot();
     let eol: Vec<String> = ["core.autocrlf", "core.eol", "core.attributesFile"]
@@ -291,12 +313,13 @@ fn cache_key(o: &super::scan::Opened, opts: &IndexOptions) -> String {
         })
         .collect();
     format!(
-        "{SNAPSHOT_VERSION}|{}|{}|{}|{}|{}",
+        "{SNAPSHOT_VERSION}|{}|{}|{}|{}|{}|{:?}",
         env!("CARGO_PKG_VERSION"),
         crate::imports::extractor_version(),
         opts.max_file_bytes,
         o.prefix,
-        eol.join(",")
+        eol.join(","),
+        bridges_of_repo(root)
     )
 }
 
@@ -336,14 +359,15 @@ fn snapshot_of(
         path: dir.clone(),
         source,
     })?;
-    let key = cache_key(o, opts);
+    let key = cache_key(o, root, opts);
     let file = dir.join(format!("{}.json", revision.commit));
-    if let Some(graph) = load_cached(&file, &key) {
+    if let Some((graph, bridges)) = load_cached(&file, &key) {
         touch(&file);
         tracing::info!(commit = %revision.commit, "base snapshot from cache");
         return Ok(Snapshot {
             revision,
             graph,
+            bridges,
             cached: true,
             ms: started.elapsed().as_millis(),
             files: 0,
@@ -376,7 +400,7 @@ fn snapshot_of(
             name: crate::repo_name(root),
             symbols: false,
             scip: &[],
-            bridges: cartograph_core::Bridges::OFF,
+            bridges: bridges_of_repo(root),
         };
         let walk_opts = IndexOptions {
             data_dir: None,
@@ -396,7 +420,15 @@ fn snapshot_of(
         tracing::warn!(path = %tmp.display(), error = %e, "temporary base tree not removed");
     }
     let (out, files, write_errors, inputs) = result?;
-    store_cached(&dir, &file, &key, &revision, &inputs, &out.graph);
+    store_cached(
+        &dir,
+        &file,
+        &key,
+        &revision,
+        &inputs,
+        &out.graph,
+        &out.symbols,
+    );
     prune(&dir, KEEP);
     tracing::info!(
         commit = %revision.commit,
@@ -408,6 +440,7 @@ fn snapshot_of(
     );
     Ok(Snapshot {
         revision,
+        bridges: BridgeRows::of(&out.symbols),
         graph: out.graph,
         cached: false,
         ms: started.elapsed().as_millis(),
@@ -569,11 +602,12 @@ pub fn workspace_snapshot(
         })
         .collect();
     let key = format!(
-        "{SNAPSHOT_VERSION}|workspace|{}|{}|{}|{}",
+        "{SNAPSHOT_VERSION}|workspace|{}|{}|{}|{}|{:?}",
         env!("CARGO_PKG_VERSION"),
         crate::imports::extractor_version(),
         opts.max_file_bytes,
-        parts.join(",")
+        parts.join(","),
+        ws.bridges.resolve(true)
     );
     let id = blake3::hash(key.as_bytes()).to_hex().to_string();
     let revision = Revision {
@@ -586,11 +620,12 @@ pub fn workspace_snapshot(
     // A working tree changes under the snapshot: only all-revision bases are cached.
     let cacheable = bases.iter().all(|b| b.revision.is_some());
     let file = dir.join(format!("{id}.json"));
-    if cacheable && let Some(graph) = load_cached(&file, &key) {
+    if cacheable && let Some((graph, bridges)) = load_cached(&file, &key) {
         touch(&file);
         return Ok(Snapshot {
             revision,
             graph,
+            bridges,
             cached: true,
             ms: started.elapsed().as_millis(),
             files: 0,
@@ -643,7 +678,7 @@ pub fn workspace_snapshot(
             name: ws.name.clone(),
             symbols: false,
             scip: &[],
-            bridges: cartograph_core::Bridges::OFF,
+            bridges: ws.bridges.resolve(true),
         };
         let stored;
         let cache = match cache {
@@ -667,11 +702,20 @@ pub fn workspace_snapshot(
     }
     let (out, files, write_errors, inputs) = result?;
     if cacheable {
-        store_cached(&dir, &file, &key, &revision, &inputs, &out.graph);
+        store_cached(
+            &dir,
+            &file,
+            &key,
+            &revision,
+            &inputs,
+            &out.graph,
+            &out.symbols,
+        );
         prune(&dir, KEEP);
     }
     Ok(Snapshot {
         revision,
+        bridges: BridgeRows::of(&out.symbols),
         graph: out.graph,
         cached: false,
         ms: started.elapsed().as_millis(),
@@ -779,11 +823,11 @@ fn unique() -> String {
     format!("{}-{n}", std::process::id())
 }
 
-fn load_cached(file: &Path, key: &str) -> Option<Graph> {
+fn load_cached(file: &Path, key: &str) -> Option<(Graph, BridgeRows)> {
     let bytes = std::fs::read(file).ok()?;
     match serde_json::from_slice::<Cached>(&bytes) {
         Ok(c) if c.key == key => match changed(&c.inputs) {
-            None => Some(c.graph),
+            None => Some((c.graph, c.bridges)),
             Some(p) => {
                 tracing::info!(path = %p.display(), "base snapshot input changed, rebuilding");
                 None
@@ -817,6 +861,7 @@ fn store_cached(
     revision: &Revision,
     inputs: &[Input],
     graph: &Graph,
+    symbols: &cartograph_core::Symbols,
 ) {
     let tmp = dir.join(format!("{}.{}.tmp", revision.commit, unique()));
     let outcome = (|| -> Result<(), String> {
@@ -829,6 +874,7 @@ fn store_cached(
                 revision_subject: revision.subject.clone(),
                 inputs: inputs.to_vec(),
                 graph: graph.clone(),
+                bridges: BridgeRows::of(symbols),
             },
         )
         .map_err(|e| e.to_string())?;
@@ -1145,6 +1191,12 @@ fn lfs_size(data: &[u8]) -> Option<u64> {
     text.lines()
         .find_map(|l| l.strip_prefix("size "))
         .and_then(|s| s.trim().parse().ok())
+}
+
+/// The bridges a single repo's base builds: `[bridges]` of the working tree's
+/// `cartograph.toml`, as for its index.
+fn bridges_of_repo(root: &Path) -> cartograph_core::Bridges {
+    cartograph_core::BridgeSettings::of_repo(root).resolve(false)
 }
 
 #[cfg(test)]

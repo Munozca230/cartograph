@@ -96,12 +96,34 @@ pub struct PathArgs {
     pub from: String,
     /// The file or folder it depends on.
     pub to: String,
+    /// Follow bridges too (an IPC channel to its handler, an exposed preload function, an
+    /// HTTP route); default true.
+    #[serde(default)]
+    pub bridges: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CallersArgs {
     /// `sym:src/a.rs#name`, `src/a.rs#Type.method`, `Class.method` or a bare name.
     pub symbol: String,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct BridgesArgs {
+    /// Only bridges with an end in this file or folder.
+    #[serde(default)]
+    pub node: Option<String>,
+    /// `ipc`, `http` or `package`; omitted = all.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Only bridges with an end in this member (a workspace).
+    #[serde(default)]
+    pub member: Option<String>,
+    /// List what is left unmatched (IPC channels no handler serves, renderer calls the
+    /// preload does not expose, unused handlers, dynamic channels, version skews) instead
+    /// of the bridges.
+    #[serde(default)]
+    pub unmatched: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -454,14 +476,16 @@ impl Cartograph {
 
     #[tool(
         description = "Why does A depend on B: the shortest import chain from `from` to `to` \
-            (files or folders), each step with its import line, plus alternatives. Use it to \
-            explain an unexpected dependency or a layer violation.",
+            (files or folders), each step with its import line, plus alternatives; a step over \
+            a bridge (IPC channel, exposed preload function) says so (`bridges: false` keeps \
+            imports only). Use it to explain an unexpected dependency or a layer violation.",
         annotations(read_only_hint = true)
     )]
     async fn path(&self, Parameters(a): Parameters<PathArgs>) -> CallToolResult {
         let (from, to) = (self.norm(&a.from), self.norm(&a.to));
+        let bridges = a.bridges.unwrap_or(true);
         self.run("path", vec![from.clone(), to.clone()], move |l| {
-            cartograph_query::path::path(&l.repo, &from, &to)
+            cartograph_query::path::path_with(&l.repo, &from, &to, bridges)
         })
         .await
     }
@@ -495,6 +519,44 @@ impl Cartograph {
         let sym = self.norm(&a.symbol);
         self.run("callers", vec![sym.clone()], move |l| {
             symbols::callers(&l.repo, &sym)
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Links between files that no import states: Electron IPC (renderer → \
+            preload exposure → main-process handler, pushes back), packages a workspace member \
+            builds for another, HTTP when indexed. Each bridge with its key (channel, \
+            coordinate), both ends as path:line and the symbols there. `node`, `kind` (ipc, \
+            http, package) and `member` narrow it; `unmatched: true` lists what has no other \
+            side (a channel no handler serves, a call the preload does not expose).",
+        annotations(read_only_hint = true)
+    )]
+    async fn bridges(&self, Parameters(a): Parameters<BridgesArgs>) -> CallToolResult {
+        let structured = self.engine.opts.structured;
+        let kind = match a
+            .kind
+            .as_deref()
+            .map(str::parse::<cartograph_core::BridgeKind>)
+        {
+            None => None,
+            Some(Ok(k)) => Some(k),
+            Some(Err(_)) => {
+                return query_error(
+                    &QueryError::BadArgument("kind must be ipc, http or package".into()),
+                    structured,
+                );
+            }
+        };
+        let node = a.node.map(|n| self.norm(&n));
+        let q = cartograph_query::bridges::BridgeQuery {
+            node: node.clone(),
+            kind,
+            member: a.member,
+            unmatched: a.unmatched,
+        };
+        self.run("bridges", node.into_iter().collect(), move |l| {
+            cartograph_query::bridges::bridges(&l.repo, &q)
         })
         .await
     }

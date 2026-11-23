@@ -123,6 +123,16 @@ pub struct Explain {
     pub git_note: Option<String>,
     /// The note `annotate` left on the node (filled by [`explain_with`]).
     pub annotation: Option<Annotation>,
+    /// Bridges (IPC channels, exposed preload functions, a member's package, HTTP) that
+    /// leave or reach it: links no import states.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bridges: Vec<crate::bridges::Link>,
+    #[serde(skip_serializing_if = "crate::explain::is_zero")]
+    pub bridges_more: usize,
+}
+
+pub(crate) fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 fn group(g: &RepoGraph, files: &[FileIx], max_folders: usize, max_names: usize) -> Grouped {
@@ -167,6 +177,17 @@ pub fn explain_with(
     let g = &repo.graph;
     let n = repo.resolve(node)?;
     let annotation = annotation(&g.id(n));
+    let links = match n {
+        NodeRef::Ext(_) => Vec::new(),
+        _ => {
+            let paths: std::collections::BTreeSet<String> = g
+                .files_of(n)
+                .into_iter()
+                .map(|f| g.path(f).to_string())
+                .collect();
+            crate::bridges::links(&repo.symbols.bridges, &paths, true, true)
+        }
+    };
     let findings: Vec<FindingRef> = repo
         .findings()
         .iter()
@@ -295,6 +316,8 @@ pub fn explain_with(
             git: git_of(repo, n, limit),
             git_note: git_note(repo, n),
             annotation: annotation.clone(),
+            bridges: links.iter().take(limit.min(6)).cloned().collect(),
+            bridges_more: links.len().saturating_sub(limit.min(6)),
         },
         render,
     ))
@@ -545,6 +568,7 @@ fn render(e: &Explain) -> String {
             s.push_str(&format!("  +{} more\n", e.findings_more));
         }
     }
+    crate::bridges::render_links(&mut s, &e.bridges, e.bridges_more);
     if e.node != "external" {
         s.push_str(&crate::symbols::explain_line(&e.id, e.symbols.as_ref()));
         s.push('\n');
