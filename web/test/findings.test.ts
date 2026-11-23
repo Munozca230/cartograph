@@ -173,6 +173,12 @@ describe("findings on the plan", () => {
     expect(findingLabel(finding({ kind: "hidden_coupling", severity: "info", metrics: { together: 11 } }))).toBe(
       "Acoplamiento oculto: cambian juntos en 11 commits sin importarse",
     );
+    expect(findingLabel(finding({ kind: "http_unmatched_call", id: "http_unmatched_call:desktop:POST /api/reports/generate" }))).toBe(
+      "Llamada HTTP sin ruta en su servidor: POST /api/reports/generate",
+    );
+    expect(findingLabel(finding({ kind: "http_unused_route", severity: "info", id: "http_unused_route:DELETE /users/{}" }))).toBe(
+      "Ruta HTTP que ningún repositorio llama: DELETE /users/{}",
+    );
     const lines = findingLines(
       [finding({ kind: "hub", severity: "info", metrics: { share: 0.1 } }), finding({ metrics: { files: 3 } }), finding({ kind: "deep_chain", severity: "info", metrics: { depth: 12 } }), finding({ kind: "sdp", severity: "info" })],
       2,

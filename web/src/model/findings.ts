@@ -82,6 +82,12 @@ export function findingsOnPlan(plan: Plan, findings: readonly Finding[]): Findin
 const fmt = (n: number | undefined) => (n ?? 0).toLocaleString("es");
 
 /** What the plan says about a finding, in Spanish (the server's title is English). */
+/** The route of an HTTP finding's id (`http_unmatched_call:web:POST /api/x` → `POST /api/x`). */
+function httpRoute(id: string): string {
+  const m = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|ANY) \S.*$/.exec(id);
+  return m ? m[0] : id.slice(id.indexOf(":") + 1);
+}
+
 export function findingLabel(f: Finding): string {
   const m = f.metrics;
   const rule = f.violation ? "Regla rota: " : "";
@@ -119,6 +125,12 @@ export function findingLabel(f: Finding): string {
       return `Usa código de otro repositorio sin declarar su paquete (${fmt(m.imports)} ${m.imports === 1 ? "import" : "imports"})`;
     case "version_skew":
       return "Depende de otra versión del paquete que construye otro repositorio";
+    case "http_unmatched_call":
+      return `Llamada HTTP sin ruta en su servidor: ${httpRoute(f.id)}`;
+    case "http_method_mismatch":
+      return `Llamada HTTP con otro método que el de su ruta: ${httpRoute(f.id)}`;
+    case "http_unused_route":
+      return `Ruta HTTP que ningún repositorio llama: ${httpRoute(f.id)}`;
     default:
       return f.title;
   }

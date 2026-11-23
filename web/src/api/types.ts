@@ -250,7 +250,10 @@ export interface Finding {
     | "ipc_unexposed"
     | "ipc_unused_handler"
     | "undeclared_member_dependency"
-    | "version_skew";
+    | "version_skew"
+    | "http_unmatched_call"
+    | "http_method_mismatch"
+    | "http_unused_route";
   severity: Severity;
   /** Breaks a rule of cartograph.toml. */
   violation: boolean;
