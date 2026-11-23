@@ -55,6 +55,7 @@ mod bridge;
 mod hier;
 mod http;
 mod keys;
+mod spring;
 
 pub use http::HttpServers;
 
@@ -944,6 +945,7 @@ pub fn resolve(
     out.bridges = found.bridges;
     out.keys = keys::run(&ctx, &binds, &hier, rust_paths, graph, &out.calls);
     out.keys_indexed = true;
+    (out.beans, out.injections, out.sinks) = spring::run(&ctx, &binds);
     out.normalize();
     out
 }

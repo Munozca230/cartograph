@@ -1,0 +1,9 @@
+{
+  "name": "@shop/desktop",
+  "version": "1.0.0",
+  "main": "dist/main/main.js",
+  "dependencies": {
+    "axios": "1.7.0",
+    "electron": "30.0.0"
+  }
+}

@@ -100,6 +100,127 @@ pub struct Code {
     /// String constants are in [`Code::consts`].
     #[serde(rename = "ky", default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<RawKey>,
+    /// Spring beans a Java file declares: stereotype classes and `@Bean` methods.
+    #[serde(rename = "sb", default, skip_serializing_if = "Vec::is_empty")]
+    pub beans: Vec<RawBean>,
+    /// Where Spring injects beans in a Java file: fields, constructor and setter
+    /// parameters, `@Bean` method parameters.
+    #[serde(rename = "si", default, skip_serializing_if = "Vec::is_empty")]
+    pub injections: Vec<RawInjection>,
+    /// Persistent classes a Java file declares (`@Document`, `@Entity`, `@Table`).
+    #[serde(rename = "de", default, skip_serializing_if = "Vec::is_empty")]
+    pub entities: Vec<RawEntity>,
+    /// Spring Data repository interfaces of a Java file (`extends MongoRepository<E, Id>`).
+    #[serde(rename = "dr", default, skip_serializing_if = "Vec::is_empty")]
+    pub repos: Vec<RawRepo>,
+    /// Calls that read or write a store by name or entity class (`getCollection("x")`,
+    /// `mongoTemplate.find(q, E.class)`, `em.find(E.class, id)`).
+    #[serde(rename = "ds", default, skip_serializing_if = "Vec::is_empty")]
+    pub sinks: Vec<RawSink>,
+}
+
+/// A Spring bean: a class with a stereotype annotation (`@Component`, `@Service`,
+/// `@Repository`, `@Controller`, `@RestController`, `@Configuration`) or a `@Bean` method.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawBean {
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// The bean's type as written: the annotated class, or the `@Bean` method's return
+    /// type (generic arguments removed).
+    #[serde(rename = "t")]
+    pub ty: String,
+    /// `Component`, `Service`, … or `Bean`.
+    #[serde(rename = "s")]
+    pub stereotype: String,
+    /// The name given (`@Service("orders")`, `@Bean(name = "orders")`); else Spring's
+    /// default (the class name decapitalized, the `@Bean` method's name).
+    #[serde(rename = "n")]
+    pub name: String,
+    /// A `@Bean` method (qualified name) that makes it.
+    #[serde(rename = "f", default, skip_serializing_if = "Option::is_none")]
+    pub factory: Option<String>,
+    #[serde(rename = "p", default, skip_serializing_if = "std::ops::Not::not")]
+    pub primary: bool,
+    /// `@Qualifier("x")` values on the class or `@Bean` method.
+    #[serde(rename = "q", default, skip_serializing_if = "Vec::is_empty")]
+    pub qualifiers: Vec<String>,
+}
+
+/// A place where Spring injects beans of a type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawInjection {
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// The class that receives it (its name, nested classes by their own name).
+    #[serde(rename = "c")]
+    pub class: String,
+    /// `field`, `constructor`, `setter`, `method` (another `@Autowired` method) or `bean`
+    /// (a parameter of a `@Bean` method).
+    #[serde(rename = "h")]
+    pub how: String,
+    /// The field or parameter name.
+    #[serde(rename = "m")]
+    pub member: String,
+    /// What holds the beans: `List`, `Set`, `Map`, `Collection`, `ObjectProvider`,
+    /// `Optional`, `[]`…; empty for one bean.
+    #[serde(rename = "w", default, skip_serializing_if = "String::is_empty")]
+    pub wrapper: String,
+    /// The bean type as written.
+    #[serde(rename = "t")]
+    pub ty: String,
+    /// `@Qualifier("x")`, `@Named("x")`, `@Resource(name = "x")`.
+    #[serde(rename = "q", default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
+}
+
+/// A persistent class: `@Document(collection = "x")` (Mongo), `@Entity` / `@Table(name =
+/// "x")` (JPA).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawEntity {
+    #[serde(rename = "l")]
+    pub line: u32,
+    #[serde(rename = "c")]
+    pub class: String,
+    /// `mongo` or `jpa`.
+    #[serde(rename = "k")]
+    pub store: String,
+    /// The collection or table as written; `None`: the store's default for the class.
+    #[serde(rename = "n", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<StrExpr>,
+}
+
+/// A Spring Data repository interface: `interface R extends MongoRepository<E, Id>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawRepo {
+    #[serde(rename = "l")]
+    pub line: u32,
+    #[serde(rename = "c")]
+    pub class: String,
+    /// The Spring Data interface (`MongoRepository`, `JpaRepository`, `CrudRepository`…).
+    #[serde(rename = "b")]
+    pub base: String,
+    /// The entity type as written.
+    #[serde(rename = "e")]
+    pub entity: String,
+}
+
+/// A call that reads or writes a store directly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawSink {
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// `mongo` or `jpa`.
+    #[serde(rename = "k")]
+    pub store: String,
+    /// The call as people read it: `getCollection`, `mongoTemplate.save`, `em.find`.
+    #[serde(rename = "w")]
+    pub what: String,
+    /// The collection or table named in the call.
+    #[serde(rename = "n", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<StrExpr>,
+    /// The entity class named in the call (`Order.class`).
+    #[serde(rename = "e", default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
 }
 
 /// What a string-key site is (see [`RawKey`]).
@@ -545,9 +666,12 @@ pub struct Call {
     pub field: Option<String>,
     /// Java `x.f()` ([`Form::Member`], `qualifier` `x`): the one named type `x` is declared
     /// with where the call is: a parameter, a local variable (`var x = new T()` included)
-    /// or a field of an enclosing class (`private final T x;`, the Spring injection idiom).
-    /// `None` when `x` is declared otherwise (a generic or array type, `var`, an untyped
-    /// lambda parameter) or not at all: the other rules decide.
+    /// or a field of an enclosing class (`private final T x;`, the Spring injection idiom);
+    /// for a lambda or `for (var x : …)` variable, the element type of the collection, the
+    /// value type of the map or the held type it reads (`list.stream().map(x -> x.f())`,
+    /// `opt.ifPresent(x -> x.f())`); for `x.get(i).f()` and the like (no `qualifier`), what
+    /// `x` gives out. `None` when `x` is declared otherwise (a collection itself, an array,
+    /// `var`, a lambda parameter of anything else) or not at all: the other rules decide.
     #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
     pub recv_type: Option<String>,
     /// TS/JS: the string-like arguments among the first ones (literals, templates,
@@ -705,8 +829,22 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// the definition around (locals read through); 24: [`Call::argc`], options of a local
 /// object, `${base}/${path}` wrappers, Flask variables, `String.format` placeholders, the
 /// parameters of an object's functions inside a callback; 25: string-key sites
-/// ([`Code::keys`]).
-pub const REVISION: u32 = 25;
+/// ([`Code::keys`]); 26: Java receivers typed through a collection's elements (stream
+/// lambdas, `for (var …)`, `list.get(i)`), Spring beans and injection points
+/// ([`Code::beans`], [`Code::injections`]), entities, repositories and store calls
+/// ([`Code::entities`], [`Code::repos`], [`Code::sinks`]).
+pub const REVISION: u32 = 26;
+
+/// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
+/// `orderService`; `URLMaker`, two capitals first, stays as it is).
+pub fn decapitalize(name: &str) -> String {
+    let mut cs = name.chars();
+    match (cs.next(), cs.next()) {
+        (Some(a), Some(b)) if a.is_uppercase() && b.is_uppercase() => name.to_string(),
+        (Some(a), _) => a.to_lowercase().chain(name.chars().skip(1)).collect(),
+        _ => String::new(),
+    }
+}
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

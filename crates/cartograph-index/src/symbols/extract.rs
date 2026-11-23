@@ -7,7 +7,9 @@
 
 mod bridge;
 mod http;
+mod java_types;
 mod keys;
+mod spring;
 
 use super::strexpr::{Part, looks_constant};
 use super::{
@@ -697,13 +699,14 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
     let mut call_list: Vec<CallCap<'_>> = calls.into_values().collect();
     call_list.sort_by_key(|c| (c.name.start_byte(), c.name.id()));
     let recv_types = if lang == Lang::Java {
-        java_receiver_types(tree.root_node(), src)
+        java_types::receiver_types(tree.root_node(), src)
     } else {
         HashMap::new()
     };
     for c in &call_list {
         if let Some(mut call) = call_of(lang, c, src) {
-            if call.form == Form::Member && call.qualifier.is_some() {
+            // `x.m()`, and `x.get(i).m()` on what a collection or holder gives out.
+            if call.form == Form::Member {
                 call.recv_type = recv_types.get(&c.node.id()).cloned();
             }
             let args = c.args.or_else(|| {
@@ -782,6 +785,14 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
     code.clients = h.clients;
     code.mounts = h.mounts;
     code.instances = h.instances;
+    if lang == Lang::Java {
+        let sp = spring::java(tree.root_node(), src, &call_list, &recv_types);
+        code.beans = sp.beans;
+        code.injections = sp.injections;
+        code.entities = sp.entities;
+        code.repos = sp.repos;
+        code.sinks = sp.sinks;
+    }
     code.fields = field_types(lang, tree.root_node(), src);
     match lang {
         Lang::Rust => code.impls = trait_impls(tree.root_node(), src),
@@ -1470,289 +1481,6 @@ fn self_field(lang: Lang, r: Node<'_>, src: &[u8]) -> Option<String> {
         "field_identifier" | "property_identifier" | "private_property_identifier" | "identifier"
     );
     (this && plain).then(|| text(field, src))
-}
-
-/// Java `x.m()` calls whose receiver `x` has one declared type where the call is (see
-/// [`Call::recv_type`]), by `method_invocation` node id. One walk of the file, keeping the
-/// path from the root; inside out from each call:
-/// - the member around it (a method, constructor, initializer or field): a declaration of
-///   `x` (a parameter, a local, a lambda, catch, loop, resource or pattern variable) whose
-///   scope (block, lambda, loop, `catch`, method…) holds the call;
-/// - else the fields of the class body around it;
-/// - else, when that class has a superclass (or is anonymous, or an enum constant's body),
-///   nothing: an inherited field comes first and is not known here;
-/// - else the same one level out (a local class sees the enclosing method's locals, an
-///   inner class the outer class's fields).
-///
-/// What each scope declares is read once.
-fn java_receiver_types(root: Node<'_>, src: &[u8]) -> HashMap<usize, String> {
-    let mut members: HashMap<usize, JavaDecls> = HashMap::new();
-    let mut bodies: HashMap<usize, HashMap<String, Option<String>>> = HashMap::new();
-    let mut out = HashMap::new();
-    let mut path: Vec<Node<'_>> = Vec::new();
-    let mut cursor = root.walk();
-    loop {
-        let n = cursor.node();
-        if n.kind() == "method_invocation"
-            && let Some(obj) = n.child_by_field_name("object")
-            && obj.kind() == "identifier"
-        {
-            let name = text(obj, src);
-            let on_path = |id: usize| path.iter().any(|a| a.id() == id);
-            let mut cur = n;
-            'walk: for i in (0..path.len()).rev() {
-                let p = path[i];
-                if matches!(
-                    p.kind(),
-                    "class_body" | "interface_body" | "enum_body_declarations"
-                ) {
-                    if !JAVA_TYPE_DECLS.contains(&cur.kind()) {
-                        let member = members
-                            .entry(cur.id())
-                            .or_insert_with(|| java_decls(cur, src));
-                        let seen: Vec<&Option<String>> = member
-                            .get(&name)
-                            .into_iter()
-                            .flatten()
-                            .filter(|(scope, _)| on_path(*scope))
-                            .map(|(_, t)| t)
-                            .collect();
-                        if let Some(first) = seen.first() {
-                            if seen.iter().all(|t| t == first) {
-                                out.extend((*first).clone().map(|t| (n.id(), t)));
-                            }
-                            break 'walk;
-                        }
-                    }
-                    let fields = bodies.entry(p.id()).or_insert_with(|| java_fields(p, src));
-                    if let Some(t) = fields.get(&name) {
-                        out.extend(t.clone().map(|t| (n.id(), t)));
-                        break 'walk;
-                    }
-                    let owner = i.checked_sub(1).map(|o| path[o]);
-                    let inherits = owner.is_some_and(|o| {
-                        matches!(o.kind(), "object_creation_expression" | "enum_constant")
-                            || o.child_by_field_name("superclass").is_some()
-                    });
-                    if inherits {
-                        break 'walk;
-                    }
-                }
-                cur = p;
-            }
-        }
-        if cursor.goto_first_child() {
-            path.push(n);
-            continue;
-        }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() {
-                return out;
-            }
-            path.pop();
-        }
-    }
-}
-
-/// What a Java member declares: name → `(scope node id, its one plain type)` for each
-/// declaration (see [`java_decls`]).
-type JavaDecls = HashMap<String, Vec<(usize, Option<String>)>>;
-
-/// Nodes whose declarations are visible only inside them.
-const JAVA_SCOPES: &[&str] = &[
-    "block",
-    "constructor_body",
-    "method_declaration",
-    "constructor_declaration",
-    "compact_constructor_declaration",
-    "lambda_expression",
-    "for_statement",
-    "enhanced_for_statement",
-    "catch_clause",
-    "try_with_resources_statement",
-    "switch_block_statement_group",
-    "switch_rule",
-    "class_body",
-];
-
-const JAVA_TYPE_DECLS: &[&str] = &[
-    "class_declaration",
-    "interface_declaration",
-    "enum_declaration",
-    "record_declaration",
-    "annotation_type_declaration",
-];
-
-/// Record a declaration of `name` with type `ty` (two different types: unknown).
-fn declare(
-    out: &mut HashMap<String, Option<String>>,
-    name: Option<Node<'_>>,
-    ty: Option<String>,
-    src: &[u8],
-) {
-    let Some(n) = name.filter(|n| n.kind() == "identifier") else {
-        return;
-    };
-    match out.entry(text(n, src)) {
-        std::collections::hash_map::Entry::Vacant(e) => {
-            e.insert(ty);
-        }
-        std::collections::hash_map::Entry::Occupied(mut e) => {
-            if e.get() != &ty {
-                e.insert(None);
-            }
-        }
-    }
-}
-
-/// The one type name a Java declaration stands for: `T` as written, or `var x = new T(…)`.
-fn java_plain(ty: Option<Node<'_>>, value: Option<Node<'_>>, src: &[u8]) -> Option<String> {
-    let ty = ty.filter(|t| t.kind() == "type_identifier")?;
-    let t = text(ty, src);
-    if t != "var" {
-        return Some(t);
-    }
-    let v = value.filter(|v| {
-        v.kind() == "object_creation_expression" && !has_child_kind(*v, &["class_body"])
-    })?;
-    v.child_by_field_name("type")
-        .filter(|t| t.kind() == "type_identifier")
-        .map(|t| text(t, src))
-}
-
-/// Variables of a `field_declaration` or `local_variable_declaration`.
-fn java_declarators(n: Node<'_>, src: &[u8], out: &mut HashMap<String, Option<String>>) {
-    let ty = n.child_by_field_name("type");
-    let mut c = n.walk();
-    for d in n.children_by_field_name("declarator", &mut c) {
-        let t = if d.child_by_field_name("dimensions").is_some() {
-            None
-        } else {
-            java_plain(ty, d.child_by_field_name("value"), src)
-        };
-        declare(out, d.child_by_field_name("name"), t, src);
-    }
-}
-
-/// Every declaration in a Java member, with the scope it is visible in: parameters,
-/// locals, resources, loop, catch, lambda and pattern variables (nested classes included).
-/// A pattern variable is given the block around it (its flow scope can reach past the
-/// `if`).
-fn java_decls(member: Node<'_>, src: &[u8]) -> JavaDecls {
-    let mut out: JavaDecls = HashMap::new();
-    let mut stack = vec![(member, member.id())];
-    while let Some((n, outer)) = stack.pop() {
-        let scope = if JAVA_SCOPES.contains(&n.kind()) {
-            n.id()
-        } else {
-            outer
-        };
-        // Declarations of this node, in the scope of `at`.
-        let mut found: HashMap<String, Option<String>> = HashMap::new();
-        let mut at = outer;
-        match n.kind() {
-            "local_variable_declaration" | "field_declaration" => {
-                java_declarators(n, src, &mut found)
-            }
-            "formal_parameter" | "resource" => java_param(n, src, &mut found),
-            "enhanced_for_statement" => {
-                at = scope;
-                java_param(n, src, &mut found);
-            }
-            "catch_formal_parameter" => {
-                let mut c = n.walk();
-                let t = n
-                    .named_children(&mut c)
-                    .find(|x| x.kind() == "catch_type")
-                    .filter(|ct| ct.named_child_count() == 1)
-                    .and_then(|ct| java_plain(ct.named_child(0), None, src));
-                declare(&mut found, n.child_by_field_name("name"), t, src);
-            }
-            "spread_parameter" => {
-                let mut c = n.walk();
-                let d = n
-                    .named_children(&mut c)
-                    .find(|x| x.kind() == "variable_declarator");
-                declare(
-                    &mut found,
-                    d.and_then(|d| d.child_by_field_name("name")),
-                    None,
-                    src,
-                );
-            }
-            "lambda_expression" => {
-                at = scope;
-                match n.child_by_field_name("parameters") {
-                    Some(p) if p.kind() == "identifier" => declare(&mut found, Some(p), None, src),
-                    Some(p) if p.kind() == "inferred_parameters" => {
-                        let mut c = p.walk();
-                        for id in p.named_children(&mut c) {
-                            declare(&mut found, Some(id), None, src);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            "instanceof_expression" => {
-                let t = java_plain(n.child_by_field_name("right"), None, src);
-                declare(&mut found, n.child_by_field_name("name"), t, src);
-            }
-            "type_pattern" | "record_pattern_component" => {
-                let mut c = n.walk();
-                let kids: Vec<Node<'_>> = n.named_children(&mut c).collect();
-                if let [ty, name] = kids.as_slice() {
-                    declare(
-                        &mut found,
-                        Some(*name),
-                        java_plain(Some(*ty), None, src),
-                        src,
-                    );
-                } else if let Some(name) = kids.last() {
-                    declare(&mut found, Some(*name), None, src);
-                }
-            }
-            _ => {}
-        }
-        for (name, t) in found {
-            out.entry(name).or_default().push((at, t));
-        }
-        let mut c = n.walk();
-        stack.extend(n.named_children(&mut c).map(|k| (k, scope)));
-    }
-    out
-}
-
-/// The fields a Java class, interface, enum or record body declares itself (and a record's
-/// components).
-fn java_fields(body: Node<'_>, src: &[u8]) -> HashMap<String, Option<String>> {
-    let mut out = HashMap::new();
-    let mut c = body.walk();
-    for m in body.named_children(&mut c) {
-        if m.kind() == "field_declaration" || m.kind() == "constant_declaration" {
-            java_declarators(m, src, &mut out);
-        }
-    }
-    if let Some(rec) = body.parent().filter(|r| r.kind() == "record_declaration")
-        && let Some(params) = rec.child_by_field_name("parameters")
-    {
-        let mut c = params.walk();
-        for p in params.named_children(&mut c) {
-            if p.kind() == "formal_parameter" {
-                java_param(p, src, &mut out);
-            }
-        }
-    }
-    out
-}
-
-/// A parameter-like declaration with `name`, `type` and maybe `dimensions` fields.
-fn java_param(n: Node<'_>, src: &[u8], out: &mut HashMap<String, Option<String>>) {
-    let t = if n.child_by_field_name("dimensions").is_some() {
-        None
-    } else {
-        java_plain(n.child_by_field_name("type"), None, src)
-    };
-    declare(out, n.child_by_field_name("name"), t, src);
 }
 
 /// Declared field types of the structs and classes of a file (see [`FieldType`]): Rust

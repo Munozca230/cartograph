@@ -278,6 +278,40 @@ const MIGRATIONS: &[&str] = &[
         confidence     TEXT NOT NULL
     );
     "#,
+    // v14: Spring beans, injection points and data sinks (see `crate::spring`). They
+    // belong to the symbol layer and are cleared with it. Self-contained.
+    r#"
+    CREATE TABLE spring_beans (
+        ty         TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        stereotype TEXT NOT NULL,
+        file       TEXT NOT NULL,
+        line       INTEGER NOT NULL,
+        factory    TEXT,
+        is_primary INTEGER NOT NULL,
+        qualifiers TEXT NOT NULL
+    );
+    CREATE TABLE spring_injections (
+        owner     TEXT NOT NULL,
+        how       TEXT NOT NULL,
+        member    TEXT NOT NULL,
+        wrapper   TEXT NOT NULL,
+        ty        TEXT NOT NULL,
+        qualifier TEXT,
+        file      TEXT NOT NULL,
+        line      INTEGER NOT NULL
+    );
+    CREATE TABLE data_sinks (
+        store      TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        entity     TEXT,
+        symbol     TEXT,
+        via        TEXT NOT NULL,
+        file       TEXT NOT NULL,
+        line       INTEGER NOT NULL,
+        confidence TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// One row of the SCIP cache: the decoded form (`data`, opaque to the store) of the SCIP
@@ -1128,6 +1162,11 @@ fn clear_symbols(conn: &Connection) -> Result<()> {
     if has_table(conn, "key_sites")? {
         conn.execute("DELETE FROM key_sites", [])?;
     }
+    if has_table(conn, "spring_beans")? {
+        conn.execute_batch(
+            "DELETE FROM spring_beans; DELETE FROM spring_injections; DELETE FROM data_sinks;",
+        )?;
+    }
     Ok(())
 }
 
@@ -1277,6 +1316,9 @@ fn insert_symbols(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
                 k.confidence.as_str()
             ])?;
         }
+    }
+    if has_table(tx, "spring_beans")? {
+        insert_spring(tx, s)?;
     }
     if bridges && !s.bridges.is_empty() {
         let mut stmt = tx.prepare(
@@ -1453,8 +1495,151 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
             .optional()?
             .is_some();
     }
+    if has_table(conn, "spring_beans")? {
+        read_spring(conn, &mut out)?;
+    }
     out.normalize();
     Ok(out)
+}
+
+/// Spring beans, injection points and data sinks (schema v14).
+fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
+    let mut stmt = tx.prepare(
+        "INSERT INTO spring_beans
+         (ty, name, stereotype, file, line, factory, is_primary, qualifiers)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?;
+    for b in &s.beans {
+        stmt.execute(params![
+            b.ty,
+            b.name,
+            b.stereotype,
+            b.file,
+            b.line,
+            b.factory,
+            b.primary,
+            serde_json::to_string(&b.qualifiers)?
+        ])?;
+    }
+    let mut stmt = tx.prepare(
+        "INSERT INTO spring_injections
+         (owner, how, member, wrapper, ty, qualifier, file, line)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?;
+    for i in &s.injections {
+        stmt.execute(params![
+            i.owner,
+            i.how,
+            i.member,
+            i.wrapper,
+            i.ty,
+            i.qualifier,
+            i.file,
+            i.line
+        ])?;
+    }
+    let mut stmt = tx.prepare(
+        "INSERT INTO data_sinks (store, name, entity, symbol, via, file, line, confidence)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?;
+    for d in &s.sinks {
+        stmt.execute(params![
+            d.store,
+            d.name,
+            d.entity,
+            d.symbol,
+            d.via,
+            d.file,
+            d.line,
+            d.confidence.as_str()
+        ])?;
+    }
+    Ok(())
+}
+
+fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT ty, name, stereotype, file, line, factory, is_primary, qualifiers
+         FROM spring_beans",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            (
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ),
+            (
+                r.get::<_, u32>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, bool>(6)?,
+                r.get::<_, String>(7)?,
+            ),
+        ))
+    })?;
+    for row in rows {
+        let ((ty, name, stereotype, file), (line, factory, primary, qualifiers)) = row?;
+        out.beans.push(crate::spring::SpringBean {
+            ty,
+            name,
+            stereotype,
+            file,
+            line,
+            factory,
+            primary,
+            qualifiers: serde_json::from_str(&qualifiers)?,
+        });
+    }
+    let mut stmt = conn.prepare(
+        "SELECT owner, how, member, wrapper, ty, qualifier, file, line FROM spring_injections",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::spring::SpringInjection {
+            owner: r.get(0)?,
+            how: r.get(1)?,
+            member: r.get(2)?,
+            wrapper: r.get(3)?,
+            ty: r.get(4)?,
+            qualifier: r.get(5)?,
+            file: r.get(6)?,
+            line: r.get(7)?,
+        })
+    })?;
+    out.injections = rows.collect::<rusqlite::Result<_>>()?;
+    let mut stmt = conn.prepare(
+        "SELECT store, name, entity, symbol, via, file, line, confidence FROM data_sinks",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            (
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ),
+            (
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, u32>(6)?,
+                r.get::<_, String>(7)?,
+            ),
+        ))
+    })?;
+    for row in rows {
+        let ((store, name, entity, symbol), (via, file, line, confidence)) = row?;
+        out.sinks.push(crate::spring::DataSink {
+            store,
+            name,
+            entity,
+            symbol,
+            via,
+            file,
+            line,
+            confidence: confidence.parse()?,
+        });
+    }
+    Ok(())
 }
 
 fn read_keys(conn: &Connection, out: &mut Symbols) -> Result<()> {
@@ -2152,6 +2337,9 @@ mod tests {
             bridges: Vec::new(),
             keys: Vec::new(),
             keys_indexed: false,
+            beans: Vec::new(),
+            injections: Vec::new(),
+            sinks: Vec::new(),
         };
         s.normalize();
         s
@@ -2219,6 +2407,70 @@ mod tests {
         tx.write_symbols(&sample_keyed()).unwrap();
         tx.commit().unwrap();
         assert_eq!(store.load_symbols().unwrap(), sample_keyed());
+        store.replace_graph(&other()).unwrap();
+        assert_eq!(store.load_symbols().unwrap(), Symbols::default());
+    }
+
+    /// [`sample_symbols`] with Spring beans, injection points and data sinks (schema v14).
+    fn sample_spring() -> Symbols {
+        let mut s = Symbols {
+            beans: vec![crate::SpringBean {
+                ty: "sym:src/CardPayments.java#CardPayments".into(),
+                name: "cardPayments".into(),
+                stereotype: "Service".into(),
+                file: "src/CardPayments.java".into(),
+                line: 3,
+                factory: None,
+                primary: true,
+                qualifiers: vec!["card".into()],
+            }],
+            injections: vec![crate::SpringInjection {
+                owner: "sym:src/Checkout.java#Checkout".into(),
+                how: "constructor".into(),
+                member: "payments".into(),
+                wrapper: "List".into(),
+                ty: "sym:src/Payments.java#Payments".into(),
+                qualifier: None,
+                file: "src/Checkout.java".into(),
+                line: 9,
+            }],
+            sinks: vec![crate::DataSink {
+                store: "mongo".into(),
+                name: "orders".into(),
+                entity: Some("sym:src/Order.java#Order".into()),
+                symbol: Some("sym:src/Orders.java#Orders.save".into()),
+                via: "getCollection".into(),
+                file: "src/Orders.java".into(),
+                line: 12,
+                confidence: Confidence::Resolved,
+            }],
+            ..sample_symbols()
+        };
+        s.normalize();
+        s
+    }
+
+    #[test]
+    fn migrates_a_v13_db_to_v14_with_no_beans() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let mut store = Store { conn };
+            store.migrate_to(13).unwrap();
+            let tx = store.begin_replace().unwrap();
+            tx.write_graph(&sample()).unwrap();
+            tx.write_symbols(&sample_spring()).unwrap();
+            tx.commit().unwrap();
+            // Written before the tables existed: nothing of them kept.
+            assert_eq!(store.load_symbols().unwrap(), sample_symbols());
+        }
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        let tx = store.begin_replace().unwrap();
+        tx.write_symbols(&sample_spring()).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(store.load_symbols().unwrap(), sample_spring());
         store.replace_graph(&other()).unwrap();
         assert_eq!(store.load_symbols().unwrap(), Symbols::default());
     }

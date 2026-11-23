@@ -1,0 +1,23 @@
+# A slice from a screen to a collection, across three members: an Electron app whose view
+# saves an order through its preload and a main-process module that calls the API with
+# axios; a Spring API whose controller calls a service interface (one bean implements
+# it), which stores the order through a static store of another member (a Maven
+# dependency) that names its Mongo collection with a constant. Spring DI around it:
+# rules injected as a list into a constructor and a field (one implementation is not a
+# bean), a qualified and a primary gateway, a Spring Data repository of a @Document.
+[workspace]
+name = "shop"
+
+[[member]]
+name = "store"
+path = "store"
+
+[[member]]
+name = "api"
+path = "api"
+[member.http]
+hosts = ["localhost:8080"]
+
+[[member]]
+name = "desktop"
+path = "desktop"

@@ -571,6 +571,15 @@ pub struct Symbols {
     /// not the same as a repo without any).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keys_indexed: bool,
+    /// Spring beans (see [`crate::spring`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub beans: Vec<crate::spring::SpringBean>,
+    /// Where Spring injects beans.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injections: Vec<crate::spring::SpringInjection>,
+    /// Where code reads or writes a collection or table.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sinks: Vec<crate::spring::DataSink>,
 }
 
 impl Symbols {
@@ -600,6 +609,12 @@ impl Symbols {
         self.bridges.dedup();
         self.keys.sort();
         self.keys.dedup();
+        self.beans.sort();
+        self.beans.dedup();
+        self.injections.sort();
+        self.injections.dedup();
+        self.sinks.sort();
+        self.sinks.dedup();
     }
 }
 
