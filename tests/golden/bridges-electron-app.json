@@ -2,12 +2,11 @@
   "bridges": [
     "ipc invoke \"app:ping\" src/electron/preload.ts:7 sym:src/electron/preload.ts#deskApi.ping -> src/electron/main.ts:9 - [resolved]",
     "ipc invoke \"doc:save\" src/electron/preload.ts:10 sym:src/electron/preload.ts#deskApi.save -> src/electron/main.ts:10 sym:src/electron/handlers.ts#saveDoc [exact]",
-    "ipc invoke \"update:check\" src/electron/preload.ts:15 sym:src/electron/preload.ts#deskApi.updater.check -> src/electron/main.ts:12 - [resolved]",
-    "ipc invoke \"app:reload\" src/electron/preload.ts:28 sym:src/electron/preload.ts#tools.reload -> src/electron/main.ts:11 - [exact]"
+    "ipc invoke \"update:check\" src/electron/preload.ts:15 sym:src/electron/preload.ts#deskApi.updater.check -> src/electron/main.ts:12 - [resolved]"
   ],
   "endpoints": [
     "ipc provide \"app:ping\" src/electron/main.ts:9 [resolved] ipcMain.handle",
-    "ipc provide \"app:reload\" src/electron/main.ts:11 [exact] ipcMain.on",
+    "ipc provide \"app:reload\" src/electron/main.ts:11 [exact] ipcMain.on (unused)",
     "ipc provide \"doc:save\" src/electron/main.ts:10 [exact] ipcMain.handle sym sym:src/electron/handlers.ts#saveDoc",
     "ipc provide \"legacy:ping\" src/electron/legacy.js:14 [exact] ipcMain.on sym sym:src/electron/legacy.js#onPing (unused)",
     "ipc provide \"status\" src/electron/preload.ts:19 [exact] ipcRenderer.on sym sym:src/electron/preload.ts#deskApi.on-status",
@@ -20,7 +19,7 @@
     "ipc provide \"window.tools.format\" src/electron/preload.ts:26 [exact] exposeInMainWorld sym sym:src/electron/preload.ts#tools.format",
     "ipc provide \"window.tools.reload\" src/electron/preload.ts:27 [exact] exposeInMainWorld sym sym:src/electron/preload.ts#tools.reload",
     "ipc consume \"app:ping\" src/electron/preload.ts:7 [resolved] ipcRenderer.invoke sym sym:src/electron/preload.ts#deskApi.ping",
-    "ipc consume \"app:reload\" src/electron/preload.ts:28 [exact] ipcRenderer.invoke sym sym:src/electron/preload.ts#tools.reload",
+    "ipc consume \"app:reload\" src/electron/preload.ts:28 [exact] ipcRenderer.invoke sym sym:src/electron/preload.ts#tools.reload (unmatched)",
     "ipc consume \"doc:save\" src/electron/preload.ts:10 [exact] ipcRenderer.invoke sym sym:src/electron/preload.ts#deskApi.save",
     "ipc consume \"update:check\" src/electron/preload.ts:15 [resolved] ipcRenderer.invoke sym sym:src/electron/preload.ts#deskApi.updater.check"
   ]

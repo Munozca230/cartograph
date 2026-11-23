@@ -45,7 +45,7 @@ async fn bridges_have_their_own_array_and_endpoint() {
     assert_eq!(bridges.len(), 1, "{g}");
     assert_eq!(bridges[0]["src"], "file:src/electron/preload.ts");
     assert_eq!(bridges[0]["dst"], "file:src/electron/main.ts");
-    assert_eq!(bridges[0]["weight"], 4);
+    assert_eq!(bridges[0]["weight"], 3);
     // The import edges are as without bridges: their weights sum to the imports between
     // distinct cards (every card is a file here).
     let out = cartograph_index::index(&fixture("electron-app"), &IndexOptions::default()).unwrap();
@@ -67,7 +67,7 @@ async fn bridges_have_their_own_array_and_endpoint() {
 
     let (status, b) = call(&app, "GET", "/api/bridges").await;
     assert_eq!(status, 200, "{b}");
-    assert_eq!(b["total"], 4, "{b}");
+    assert_eq!(b["total"], 3, "{b}");
     let keys: Vec<&str> = b["bridges"]
         .as_array()
         .unwrap()
@@ -90,5 +90,5 @@ async fn bridges_have_their_own_array_and_endpoint() {
 
     let (status, d) = call(&app, "GET", "/api/node?id=file:src/electron/main.ts").await;
     assert_eq!(status, 200, "{d}");
-    assert_eq!(d["bridges"].as_array().unwrap().len(), 4, "{d}");
+    assert_eq!(d["bridges"].as_array().unwrap().len(), 3, "{d}");
 }

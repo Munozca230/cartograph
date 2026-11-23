@@ -580,20 +580,13 @@ fn match_channels(sites: &[Site], found: &mut Found) {
             .filter(|(_, p)| p.member == s.member && keys_match(&s.key, &p.key))
             .map(|(i, p)| (i, *p))
             .collect();
-        // The method that serves this use; else a handler of the channel registered with
-        // the other method (still the code that runs). A push only reaches a listener.
-        let exact: Vec<(usize, &Site)> = same
-            .iter()
-            .copied()
+        // Only the method that serves this use: Electron rejects an `invoke` with no
+        // `handle` ("No handler registered") and never delivers a `send` to `handle`, so a
+        // handler of the other method is no other side. A push only reaches a listener.
+        let hits: Vec<(usize, &Site)> = same
+            .into_iter()
             .filter(|(_, p)| serves(s.op, p.op))
             .collect();
-        let hits = if exact.is_empty() && s.op != IpcOp::Push {
-            same.into_iter()
-                .filter(|(_, p)| p.op != IpcOp::Listen)
-                .collect()
-        } else {
-            exact
-        };
         if hits.is_empty() {
             let detail = (s.op != IpcOp::Push).then_some(UNMATCHED);
             found.endpoints.push(s.endpoint(detail));
@@ -653,5 +646,45 @@ mod tests {
         assert!(keys_match("job:*", "job:done"));
         assert!(keys_match("job:done", "job:*"));
         assert!(!keys_match("job:done", "jobs:*"));
+    }
+
+    fn site(op: IpcOp, key: &str, line: u32) -> Site {
+        Site {
+            member: String::new(),
+            op,
+            key: key.into(),
+            confidence: Confidence::Exact,
+            label: op.label().into(),
+            file: "a.ts".into(),
+            line,
+            symbol: None,
+        }
+    }
+
+    /// `invoke` needs `handle`, `send` needs `on`: Electron rejects an invoke with no
+    /// handler ("No handler registered") and never delivers a send to `handle`.
+    #[test]
+    fn a_use_only_matches_the_method_that_serves_it() {
+        let mut found = Found::default();
+        match_channels(
+            &[
+                site(IpcOp::On, "a", 1),
+                site(IpcOp::Invoke, "a", 2),
+                site(IpcOp::Handle, "b", 3),
+                site(IpcOp::Send, "b", 4),
+                site(IpcOp::Handle, "c", 5),
+                site(IpcOp::Invoke, "c", 6),
+            ],
+            &mut found,
+        );
+        let keys: Vec<&str> = found.bridges.iter().map(|b| b.key.as_str()).collect();
+        assert_eq!(keys, vec!["c"]);
+        let unmatched: Vec<(&str, u32)> = found
+            .endpoints
+            .iter()
+            .filter(|e| e.detail.as_deref() == Some(UNMATCHED))
+            .map(|e| (e.key.as_str(), e.line))
+            .collect();
+        assert_eq!(unmatched, vec![("a", 2), ("b", 4)]);
     }
 }
