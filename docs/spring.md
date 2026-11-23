@@ -33,7 +33,9 @@ none of these, the point is reported as ambiguous. A `@Resource` goes by name fi
 without a name it takes the bean named like the field or the setter's property
 (`setWire` → `wire`), and only when none of the type is called so does it go by type
 (`@Primary` included). When its name (an expression, a `lookup`), or the name of a bean
-that fits, is not known, it narrows nothing. A qualifier written as an expression
+that fits, is not known, it narrows nothing. Where the field holds beans, a name that is
+given stays (`Optional<T>`, `ObjectProvider<T>`) or names a collection whose elements are
+not known (`List<T>`); a default name is the holder's and says nothing. `type` is no name. A qualifier written as an expression
 whose value is not known narrows nothing (`qualified by a name not known`). An
 `ObjectProvider` gives one bean, or all of them where it is streamed or looped over.
 
@@ -42,6 +44,24 @@ typed with an interface resolves to the interface method, and so does a call in 
 lambda or loop over an injected list (`rules.stream().flatMap(r -> r.discounts().stream())`,
 `rules.forEach(r -> …)`, `for (var r : rules)`, `rules.get(0).m()`, `map.values()…`,
 `provider.getObject().m()`).
+
+## What a call runs
+
+Flows, slices and `callers` share one rule. A call names the method its receiver's type has
+or inherits; what runs is that method on the object the receiver holds:
+
+- `super.m()` (and `Type.super.m()`), a private and a static method run as they are;
+- on what Spring injects, the beans that injection point receives;
+- else every bean below the receiver's type: the type a variable or field is declared with,
+  the calling class for a call on itself, else the class that declares the method. An
+  inherited method called on a `CardService` never runs a `WireService`.
+
+Each bean runs the method its class has or inherits: overloads are told apart by their
+number of parameters, a class's method wins over an interface's default, and a method
+without a body runs nothing. The method named may run too when a bean inherits it, or when
+it has a body and the receiver is not known to be injected. A call no bean serves stays as
+it is written. Flows and slices go from the caller straight to what the beans run; a flow
+that starts at an interface's or an abstract method shows its beans.
 
 ## Where it shows up
 
@@ -65,8 +85,7 @@ lambda or loop over an injected list (`rules.stream().flatMap(r -> r.discounts()
   the controller, a call to an interface method goes on to the bean Spring injects there,
   down to the method that reads or writes, shown as `→ collection orders (Mongo, via
   Order)`.
-- Flows (web map): a call to an interface method continues to the beans that implement it,
-  and one to a class's method to the beans below it that override it (not `super.m()`).
+- Flows (web map): a call goes on to the methods its beans run, dashed ("bean de Spring").
 
 ## What it does not read
 
@@ -82,6 +101,11 @@ lambda or loop over an injected list (`rules.stream().flatMap(r -> r.discounts()
   class of the repository is a bean.
 - Calls on a variable of any other generic type (`Handler<Order> h; h.handle(o)`) are not
   typed, as before; its injection point is still listed.
+- The table of an entity without an annotation in a repository whose interface does not say
+  its store (`CrudRepository` in Spring Data JDBC): `R2dbcRepository`, `CassandraRepository`
+  and `MongoRepository` give the store's default name.
+- Overloads with the same number of parameters are not told apart, and neither are two
+  calls to one method on one line when one is made on what Spring injects.
 - Generic type arguments of beans (`Handler<Order>` against `Handler<Invoice>`): beans are
   matched by their raw type.
 - Collections named at run time, JDBC SQL strings and `@Query` texts.
