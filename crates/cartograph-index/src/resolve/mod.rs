@@ -30,7 +30,7 @@ pub mod tsconfig;
 use crate::imports::rust::RustSpec;
 use crate::imports::{Family, RawImport, Spec};
 pub use crate::paths::is_ancestor;
-pub use crate::symbols::{RustCallPath, RustCallPaths};
+pub use crate::symbols::{RustCallPath, RustCallPaths, SAME_PACKAGE_META};
 use cartograph_core::{
     Confidence, Diagnostic, Edge, EdgeKind, ImportSite, Node, NodeKind, SkipReason,
     UnresolvedImport, UnresolvedReason, node_id,
@@ -477,11 +477,6 @@ fn go_test_edges(ix: &Index<'_>) -> Vec<Edge> {
 /// imports only for types (TypeScript `import type`, `import("…")` in a type…). The `Import`
 /// edge is there as for any import; this marks it type-only without a schema change.
 pub const TYPE_ONLY_META: &str = "type_only_imports";
-
-/// Key of a File node's `meta` for the `uses` edges to types of its own Java package that
-/// it names without an import: `{"package": "a.b", "files": ["file:…"]}`. Findings treat a
-/// cycle made only of them as one inside a package (the package is the unit).
-pub const SAME_PACKAGE_META: &str = "same_package_uses";
 
 /// External node for `ecosystem:name` (`npm:react`, `node:fs`, `pypi:numpy`, `python:os`).
 fn external_node(ext: &str) -> Node {

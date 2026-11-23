@@ -338,6 +338,12 @@ pub const QUERIES: [&str; 11] = [
     CPP_QUERY, GD_QUERY,
 ];
 
+/// Key of a File node's `meta` for the `uses` edges to types of its own Java package that
+/// it names without an import: `{"package": "a.b", "files": ["file:…"]}` (written by import
+/// resolution). Call resolution takes those files into the file's scope; findings treat a
+/// cycle made only of them as one inside a package (the package is the unit).
+pub const SAME_PACKAGE_META: &str = "same_package_uses";
+
 /// Bump when extraction returns something else for the same input (part of the
 /// extraction-cache key with the queries themselves). 8: field types and `self.field.f()`;
 /// 9: a function's or class's own `__all__` leaves the module's known; 10: `__all__[i] = …`
@@ -351,8 +357,9 @@ pub const QUERIES: [&str; 11] = [
 /// (module-level `const x = {…}`, `export default {…}`, `module.exports = {…}`,
 /// `exposeInMainWorld("api", {…})`) as `x.prop`; 17: Electron `ipcMain.handle` / `on`
 /// entries ([`cartograph_core::EntryKind::Ipc`]); 18: [`Call::recv_type`] (Java receivers
-/// typed by their declaration).
-pub const REVISION: u32 = 18;
+/// typed by their declaration); 19: a receiver's declaration counts only in its block, and
+/// an inherited field may hide an outer one.
+pub const REVISION: u32 = 19;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

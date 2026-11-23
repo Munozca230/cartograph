@@ -741,8 +741,9 @@ struct GraphIx<'a> {
     /// Every import site of a file.
     sites_of: HashMap<&'a str, Vec<(&'a str, &'a str)>>,
     dir_files: HashMap<&'a str, Vec<&'a str>>,
-    /// `Uses` edges between files: a Java type of the file's own package it names without
-    /// an import (or a SCIP reference).
+    /// Java: the files of a file's own package it names a type of without an import (the
+    /// indexer's [`super::SAME_PACKAGE_META`]; not SCIP references, which may
+    /// cross packages).
     uses: HashMap<&'a str, Vec<&'a str>>,
 }
 
@@ -754,9 +755,12 @@ impl<'a> GraphIx<'a> {
             dir_files: HashMap::new(),
             uses: HashMap::new(),
         };
-        for e in graph.edges.iter().filter(|e| e.kind == EdgeKind::Uses) {
-            if let (Some(a), Some(b)) = (e.src.strip_prefix("file:"), e.dst.strip_prefix("file:")) {
-                g.uses.entry(a).or_default().push(b);
+        for n in graph.nodes_of(NodeKind::File) {
+            let files = n.meta[super::SAME_PACKAGE_META]["files"].as_array();
+            for f in files.into_iter().flatten() {
+                if let Some(b) = f.as_str().and_then(|t| t.strip_prefix("file:")) {
+                    g.uses.entry(n.path.as_str()).or_default().push(b);
+                }
             }
         }
         for s in &graph.imports {
@@ -1296,6 +1300,10 @@ fn via_field(
         }
     };
     let (t, conf) = match resolve_type(ctx, binds, fi, ty)? {
+        // A declared Java receiver type that only its unique name in the repo finds may be
+        // a library type (`java.util.Scanner` through `import java.util.*;`), a type
+        // parameter or a type nested elsewhere: never a guess, the other rules decide.
+        Out::Hit(_, Confidence::Heuristic) if c.recv_type.is_some() => return None,
         Out::Hit(t, conf) => (t, conf),
         Out::Ambiguous => return Some(Out::Ambiguous),
         Out::Unresolved => return None,

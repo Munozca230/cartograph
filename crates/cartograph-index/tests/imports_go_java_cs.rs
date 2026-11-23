@@ -677,3 +677,37 @@ fn report_counts_go_java_and_csharp() {
     let md = cartograph_index::report::render(&store).unwrap();
     assert!(md.contains("| Java |"), "{md}");
 }
+
+#[test]
+fn java_main_code_skips_a_test_double_of_its_own_module() {
+    // `Helper` of package com.acme.x: the main class in module core, and a test double in
+    // module app. App's main code never sees its tests: it uses core's class.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let write = |rel: &str, text: &str| {
+        let p = root.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    };
+    let pom = "<project><groupId>com.acme</groupId></project>\n";
+    write("core/pom.xml", pom);
+    write("app/pom.xml", pom);
+    let helper = "package com.acme.x;\n\npublic class Helper {}\n";
+    write("core/src/main/java/com/acme/x/Helper.java", helper);
+    write("app/src/test/java/com/acme/x/Helper.java", helper);
+    write(
+        "app/src/main/java/com/acme/x/User.java",
+        "package com.acme.x;\n\npublic class User {\n    Helper helper;\n}\n",
+    );
+    let g = index(root, &IndexOptions::default()).unwrap().graph;
+    assert_eq!(
+        uses(
+            &g,
+            "app/src/main/java/com/acme/x/User.java",
+            "core/src/main/java/com/acme/x/Helper.java"
+        ),
+        Some(Confidence::Resolved),
+        "{:?}",
+        g.edges
+    );
+}

@@ -56,7 +56,11 @@ pub enum Spec {
     /// parameter or local type, `new X()`, `X.m()`, `extends`/`implements`, an
     /// annotation…), once per name, at its first line. A top-level type of the file's own
     /// package needs no import: the resolver links the file to the file that declares it
-    /// (a `uses` edge, not an import site). Any other name yields nothing.
+    /// (a `uses` edge, not an import site). Any other name yields nothing. Names are
+    /// collected per file, not per scope: a method's type parameter hides a same-named type
+    /// of the package in the whole file (a missing edge), and a member type inherited from
+    /// a supertype and used by its simple name may be taken for a same-named type of the
+    /// package (an extra edge).
     TypeRef(String),
     /// A GDScript, scene, resource or `project.godot` reference or declaration (see
     /// [`crate::godot`]).

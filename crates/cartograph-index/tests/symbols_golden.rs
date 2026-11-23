@@ -1521,3 +1521,34 @@ fn java_calls_through_injected_fields_parameters_and_locals() {
         Some(Resolved)
     );
 }
+
+#[test]
+fn java_receiver_types_follow_scopes_and_never_guess() {
+    let s = symbols_of("java-receivers");
+    use Confidence::*;
+    let scope = "src/main/java/com/acme/scope";
+    let c = format!("{scope}/Caller.java");
+    let at = |l: u32| format!("{c}:{l}");
+    let svc = |m: &str| format!("sym:{scope}/Service.java#Service.{m}");
+    let rep = |m: &str| format!("sym:{scope}/Report.java#Report.{m}");
+    // A local of an `if` block does not reach past the block: the field.
+    assert_eq!(call(&s, &at(12), &rep("print")), Some(Resolved));
+    assert_eq!(call(&s, &at(15), &svc("create")), Some(Resolved));
+    assert_eq!(call(&s, &at(15), &rep("create")), None);
+    // An anonymous subclass sees its base's field before the enclosing class's.
+    assert_eq!(call(&s, &at(22), &svc("print")), None);
+    // A JDK type of a wildcard import and a nested type are never a same-named repo type.
+    assert!(none_at(&s, &at(29)), "{:?}", s.calls);
+    assert_eq!(
+        call(
+            &s,
+            &at(38),
+            "sym:src/main/java/com/acme/other/Builder.java#Builder.build"
+        ),
+        None
+    );
+    assert_eq!(
+        call(&s, &at(38), &format!("sym:{c}#Builder.build")),
+        Some(Resolved)
+    );
+}

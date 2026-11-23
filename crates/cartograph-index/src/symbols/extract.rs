@@ -1415,15 +1415,20 @@ fn self_field(lang: Lang, r: Node<'_>, src: &[u8]) -> Option<String> {
 
 /// Java `x.m()` calls whose receiver `x` has one declared type where the call is (see
 /// [`Call::recv_type`]), by `method_invocation` node id. One walk of the file, keeping the
-/// path from the root; inside out from each call: the member around it (a method,
-/// constructor, initializer or field), when it declares `x` anywhere (a parameter, a
-/// local, a lambda, catch or pattern variable: shadowing is decided for the whole member,
-/// which can only lose a type, never pick a wrong one); else the fields of the class body
-/// around it; else the same one level out (a local or anonymous class sees the enclosing
-/// method's locals, an inner class the outer class's fields). What each scope declares is
-/// read once.
+/// path from the root; inside out from each call:
+/// - the member around it (a method, constructor, initializer or field): a declaration of
+///   `x` (a parameter, a local, a lambda, catch, loop, resource or pattern variable) whose
+///   scope (block, lambda, loop, `catch`, method…) holds the call;
+/// - else the fields of the class body around it;
+/// - else, when that class has a superclass (or is anonymous, or an enum constant's body),
+///   nothing: an inherited field comes first and is not known here;
+/// - else the same one level out (a local class sees the enclosing method's locals, an
+///   inner class the outer class's fields).
+///
+/// What each scope declares is read once.
 fn java_receiver_types(root: Node<'_>, src: &[u8]) -> HashMap<usize, String> {
-    let mut decls: HashMap<usize, HashMap<String, Option<String>>> = HashMap::new();
+    let mut members: HashMap<usize, JavaDecls> = HashMap::new();
+    let mut bodies: HashMap<usize, HashMap<String, Option<String>>> = HashMap::new();
     let mut out = HashMap::new();
     let mut path: Vec<Node<'_>> = Vec::new();
     let mut cursor = root.walk();
@@ -1434,25 +1439,44 @@ fn java_receiver_types(root: Node<'_>, src: &[u8]) -> HashMap<usize, String> {
             && obj.kind() == "identifier"
         {
             let name = text(obj, src);
+            let on_path = |id: usize| path.iter().any(|a| a.id() == id);
             let mut cur = n;
-            for &p in path.iter().rev() {
+            'walk: for i in (0..path.len()).rev() {
+                let p = path[i];
                 if matches!(
                     p.kind(),
                     "class_body" | "interface_body" | "enum_body_declarations"
                 ) {
                     if !JAVA_TYPE_DECLS.contains(&cur.kind()) {
-                        let member = decls
+                        let member = members
                             .entry(cur.id())
                             .or_insert_with(|| java_decls(cur, src));
-                        if let Some(t) = member.get(&name) {
-                            out.extend(t.clone().map(|t| (n.id(), t)));
-                            break;
+                        let seen: Vec<&Option<String>> = member
+                            .get(&name)
+                            .into_iter()
+                            .flatten()
+                            .filter(|(scope, _)| on_path(*scope))
+                            .map(|(_, t)| t)
+                            .collect();
+                        if let Some(first) = seen.first() {
+                            if seen.iter().all(|t| t == first) {
+                                out.extend((*first).clone().map(|t| (n.id(), t)));
+                            }
+                            break 'walk;
                         }
                     }
-                    let fields = decls.entry(p.id()).or_insert_with(|| java_fields(p, src));
+                    let fields = bodies.entry(p.id()).or_insert_with(|| java_fields(p, src));
                     if let Some(t) = fields.get(&name) {
                         out.extend(t.clone().map(|t| (n.id(), t)));
-                        break;
+                        break 'walk;
+                    }
+                    let owner = i.checked_sub(1).map(|o| path[o]);
+                    let inherits = owner.is_some_and(|o| {
+                        matches!(o.kind(), "object_creation_expression" | "enum_constant")
+                            || o.child_by_field_name("superclass").is_some()
+                    });
+                    if inherits {
+                        break 'walk;
                     }
                 }
                 cur = p;
@@ -1470,6 +1494,27 @@ fn java_receiver_types(root: Node<'_>, src: &[u8]) -> HashMap<usize, String> {
         }
     }
 }
+
+/// What a Java member declares: name → `(scope node id, its one plain type)` for each
+/// declaration (see [`java_decls`]).
+type JavaDecls = HashMap<String, Vec<(usize, Option<String>)>>;
+
+/// Nodes whose declarations are visible only inside them.
+const JAVA_SCOPES: &[&str] = &[
+    "block",
+    "constructor_body",
+    "method_declaration",
+    "constructor_declaration",
+    "compact_constructor_declaration",
+    "lambda_expression",
+    "for_statement",
+    "enhanced_for_statement",
+    "catch_clause",
+    "try_with_resources_statement",
+    "switch_block_statement_group",
+    "switch_rule",
+    "class_body",
+];
 
 const JAVA_TYPE_DECLS: &[&str] = &[
     "class_declaration",
@@ -1530,18 +1575,30 @@ fn java_declarators(n: Node<'_>, src: &[u8], out: &mut HashMap<String, Option<St
     }
 }
 
-/// Every name declared anywhere in a Java member: parameters, locals, resources, loop,
-/// catch, lambda and pattern variables (nested classes included).
-fn java_decls(member: Node<'_>, src: &[u8]) -> HashMap<String, Option<String>> {
-    let mut out = HashMap::new();
-    let mut stack = vec![member];
-    while let Some(n) = stack.pop() {
+/// Every declaration in a Java member, with the scope it is visible in: parameters,
+/// locals, resources, loop, catch, lambda and pattern variables (nested classes included).
+/// A pattern variable is given the block around it (its flow scope can reach past the
+/// `if`).
+fn java_decls(member: Node<'_>, src: &[u8]) -> JavaDecls {
+    let mut out: JavaDecls = HashMap::new();
+    let mut stack = vec![(member, member.id())];
+    while let Some((n, outer)) = stack.pop() {
+        let scope = if JAVA_SCOPES.contains(&n.kind()) {
+            n.id()
+        } else {
+            outer
+        };
+        // Declarations of this node, in the scope of `at`.
+        let mut found: HashMap<String, Option<String>> = HashMap::new();
+        let mut at = outer;
         match n.kind() {
             "local_variable_declaration" | "field_declaration" => {
-                java_declarators(n, src, &mut out)
+                java_declarators(n, src, &mut found)
             }
-            "formal_parameter" | "resource" | "enhanced_for_statement" => {
-                java_param(n, src, &mut out)
+            "formal_parameter" | "resource" => java_param(n, src, &mut found),
+            "enhanced_for_statement" => {
+                at = scope;
+                java_param(n, src, &mut found);
             }
             "catch_formal_parameter" => {
                 let mut c = n.walk();
@@ -1550,7 +1607,7 @@ fn java_decls(member: Node<'_>, src: &[u8]) -> HashMap<String, Option<String>> {
                     .find(|x| x.kind() == "catch_type")
                     .filter(|ct| ct.named_child_count() == 1)
                     .and_then(|ct| java_plain(ct.named_child(0), None, src));
-                declare(&mut out, n.child_by_field_name("name"), t, src);
+                declare(&mut found, n.child_by_field_name("name"), t, src);
             }
             "spread_parameter" => {
                 let mut c = n.walk();
@@ -1558,39 +1615,50 @@ fn java_decls(member: Node<'_>, src: &[u8]) -> HashMap<String, Option<String>> {
                     .named_children(&mut c)
                     .find(|x| x.kind() == "variable_declarator");
                 declare(
-                    &mut out,
+                    &mut found,
                     d.and_then(|d| d.child_by_field_name("name")),
                     None,
                     src,
                 );
             }
-            "lambda_expression" => match n.child_by_field_name("parameters") {
-                Some(p) if p.kind() == "identifier" => declare(&mut out, Some(p), None, src),
-                Some(p) if p.kind() == "inferred_parameters" => {
-                    let mut c = p.walk();
-                    for id in p.named_children(&mut c) {
-                        declare(&mut out, Some(id), None, src);
+            "lambda_expression" => {
+                at = scope;
+                match n.child_by_field_name("parameters") {
+                    Some(p) if p.kind() == "identifier" => declare(&mut found, Some(p), None, src),
+                    Some(p) if p.kind() == "inferred_parameters" => {
+                        let mut c = p.walk();
+                        for id in p.named_children(&mut c) {
+                            declare(&mut found, Some(id), None, src);
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             "instanceof_expression" => {
                 let t = java_plain(n.child_by_field_name("right"), None, src);
-                declare(&mut out, n.child_by_field_name("name"), t, src);
+                declare(&mut found, n.child_by_field_name("name"), t, src);
             }
             "type_pattern" | "record_pattern_component" => {
                 let mut c = n.walk();
                 let kids: Vec<Node<'_>> = n.named_children(&mut c).collect();
                 if let [ty, name] = kids.as_slice() {
-                    declare(&mut out, Some(*name), java_plain(Some(*ty), None, src), src);
+                    declare(
+                        &mut found,
+                        Some(*name),
+                        java_plain(Some(*ty), None, src),
+                        src,
+                    );
                 } else if let Some(name) = kids.last() {
-                    declare(&mut out, Some(*name), None, src);
+                    declare(&mut found, Some(*name), None, src);
                 }
             }
             _ => {}
         }
+        for (name, t) in found {
+            out.entry(name).or_default().push((at, t));
+        }
         let mut c = n.walk();
-        stack.extend(n.named_children(&mut c));
+        stack.extend(n.named_children(&mut c).map(|k| (k, scope)));
     }
     out
 }

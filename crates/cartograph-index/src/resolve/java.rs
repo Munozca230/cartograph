@@ -427,15 +427,19 @@ impl Resolver {
         } else {
             format!("{pkg}.{name}")
         };
+        // Main code never sees test sources: they are left out before the module and
+        // source-set preference, so a test double does not hide the main class.
+        let test = is_test_path(user);
         let cands: Vec<String> = self
             .declared
             .get(&fqn)?
             .iter()
             .filter(|c| c.as_str() != user && (!pkg.is_empty() || parent(c) == parent(user)))
+            .filter(|c| test || !is_test_path(c))
             .cloned()
             .collect();
         match self.prefer(user, &cands).as_slice() {
-            [one] if is_test_path(user) || !is_test_path(one) => Some((*one).clone()),
+            [one] => Some((*one).clone()),
             _ => None,
         }
     }
