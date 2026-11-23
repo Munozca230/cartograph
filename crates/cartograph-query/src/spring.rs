@@ -23,6 +23,11 @@ pub struct SpringTable {
     by_owner: HashMap<String, Vec<usize>>,
     /// Method (or type) → its sinks.
     sinks_of: HashMap<String, Vec<usize>>,
+    /// Each bean's type and its supertypes (see [`SpringTable::link`]).
+    ancestors: Vec<HashSet<String>>,
+    /// Files of beans and injection points that lie in a test, fixture or example tree:
+    /// their beans are injected only into the injection points of such files.
+    tests: HashSet<String>,
 }
 
 impl SpringTable {
@@ -43,6 +48,35 @@ impl SpringTable {
             }
         }
         t
+    }
+
+    /// Read the beans' supertypes from the symbol table and mark the files `in_tests`
+    /// says are tests; once, when the table is built.
+    pub fn link(
+        t: &SymbolTable,
+        in_tests: impl Fn(&str) -> bool,
+    ) -> (Vec<HashSet<String>>, HashSet<String>) {
+        let ancestors = t.spring.beans.iter().map(|b| ancestors(t, &b.ty)).collect();
+        let tests = t
+            .spring
+            .beans
+            .iter()
+            .map(|b| &b.file)
+            .chain(t.spring.injections.iter().map(|i| &i.file))
+            .filter(|f| in_tests(f))
+            .cloned()
+            .collect();
+        (ancestors, tests)
+    }
+
+    /// Set what [`SpringTable::link`] read.
+    pub fn set_links(&mut self, links: (Vec<HashSet<String>>, HashSet<String>)) {
+        (self.ancestors, self.tests) = links;
+    }
+
+    /// Whether a bean's or injection point's file lies in a test tree.
+    pub fn in_tests(&self, file: &str) -> bool {
+        self.tests.contains(file)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -116,13 +150,33 @@ fn ancestors(t: &SymbolTable, ty: &str) -> HashSet<String> {
     seen
 }
 
-/// The beans of type `ty`: its own beans and those of its subtypes, by label.
+/// The beans of type `ty` the application has: its own beans and those of its subtypes
+/// (not those declared in a test tree), by label.
 pub fn beans_of<'t>(t: &'t SymbolTable, ty: &str) -> Vec<&'t SpringBean> {
-    let mut v: Vec<&SpringBean> = t
-        .spring
+    beans_where(t, ty, false)
+}
+
+/// The beans an injection point may receive: [`beans_of`] its type, and for one in a test
+/// tree the beans the tests declare too.
+pub fn beans_for<'t>(t: &'t SymbolTable, inj: &SpringInjection) -> Vec<&'t SpringBean> {
+    beans_where(t, &inj.ty, t.spring.tests.contains(&inj.file))
+}
+
+fn beans_where<'t>(t: &'t SymbolTable, ty: &str, tests: bool) -> Vec<&'t SpringBean> {
+    let sp = &t.spring;
+    let mut v: Vec<&SpringBean> = sp
         .beans
         .iter()
-        .filter(|b| b.ty == ty || ancestors(t, &b.ty).contains(ty))
+        .enumerate()
+        .filter(|(_, b)| tests || !sp.tests.contains(&b.file))
+        .filter(|(i, b)| {
+            b.ty == ty
+                || match sp.ancestors.get(*i) {
+                    Some(a) => a.contains(ty),
+                    None => ancestors(t, &b.ty).contains(ty),
+                }
+        })
+        .map(|(_, b)| b)
         .collect();
     v.sort_by_key(|b| (bean_label(b), b.file.clone(), b.line));
     v.dedup_by(|a, b| a.ty == b.ty && a.name == b.name);
@@ -267,10 +321,9 @@ pub fn reaching<'t>(
         .filter(|i| i.uses.binary_search(&line).is_ok())
         .collect();
     let points = if on_line.is_empty() { points } else { on_line };
-    let all = beans_of(t, ty);
     let mut out: Vec<&SpringBean> = Vec::new();
     for p in points {
-        for b in pick(p, &all).0 {
+        for b in pick(p, &beans_for(t, p)).0 {
             if !out.iter().any(|x| std::ptr::eq(*x, b)) {
                 out.push(b);
             }

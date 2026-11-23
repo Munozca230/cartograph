@@ -14,7 +14,8 @@
 //!    the Spring beans that implement it (those injected where the call is made), down to
 //!    methods that read or write a collection or table ([`crate::spring`]). The data sink
 //!    shown is the nearest one that writes (for a request that is not a `GET`; the nearest
-//!    that reads for a `GET`); the others reached are listed by name.
+//!    that reads for a `GET`); the others reached are listed by name. Chains that write
+//!    come first, then other requests that are not a `GET`, then reads.
 //!
 //! Everything is bounded: walk depths, visited functions, chains and sinks listed.
 
@@ -22,7 +23,9 @@ use crate::spring::{dispatch, reaching};
 use crate::symbols::SymbolTable;
 use cartograph_core::{Bridge, BridgeKind, DataSink, SymbolCall, split_symbol_id};
 use serde::Serialize;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
 /// Deepest chain from `from` to `to`.
 const REACH_DEPTH: usize = 10;
@@ -63,6 +66,8 @@ pub struct SinkRow {
     pub entity: Option<String>,
     /// `path:line` of the call.
     pub at: String,
+    /// The method that makes the call writes (by its name: `save…`, `insert…`, `update…`).
+    pub writes: bool,
 }
 
 /// The slice past `to` over one of its bridges.
@@ -145,7 +150,11 @@ struct Graph<'t> {
     bridges_out: HashMap<&'t str, Vec<&'t Bridge>>,
     /// Destination symbol → the lines bridges land on it.
     landings: HashMap<&'t str, Vec<u32>>,
+    /// Interface method → the bean methods Spring may run for it (see [`dispatch`]).
+    impls: RefCell<HashMap<String, Rc<Impls<'t>>>>,
 }
+
+type Impls<'t> = Vec<(String, &'t cartograph_core::SpringBean)>;
 
 impl<'t> Graph<'t> {
     fn build(t: &'t SymbolTable) -> Graph<'t> {
@@ -179,6 +188,7 @@ impl<'t> Graph<'t> {
             out,
             bridges_out,
             landings,
+            impls: RefCell::new(HashMap::new()),
         }
     }
 
@@ -212,7 +222,7 @@ impl<'t> Graph<'t> {
             }
             if spring {
                 // An interface method: the beans Spring gives the caller.
-                let impls = dispatch(self.t, &c.target);
+                let impls = self.dispatch(&c.target);
                 if !impls.is_empty() {
                     let ty = crate::spring::type_of_method(self.t, &c.target);
                     let picked = ty
@@ -221,15 +231,15 @@ impl<'t> Graph<'t> {
                     let label = ty
                         .as_deref()
                         .map(|x| format!("Spring bean of {}", crate::spring::leaf(x)));
-                    for (m, bean) in impls {
+                    for (m, bean) in impls.iter() {
                         if picked
                             .as_ref()
-                            .is_some_and(|p| !p.iter().any(|b| std::ptr::eq(*b, bean)))
+                            .is_some_and(|p| !p.iter().any(|b| std::ptr::eq(*b, *bean)))
                         {
                             continue;
                         }
                         out.push(Edge {
-                            to: Node::whole(&m),
+                            to: Node::whole(m),
                             line: c.line,
                             via: label.clone(),
                         });
@@ -256,6 +266,18 @@ impl<'t> Graph<'t> {
             }
         }
         out
+    }
+
+    /// [`dispatch`], once per method.
+    fn dispatch(&self, id: &str) -> Rc<Impls<'t>> {
+        if let Some(v) = self.impls.borrow().get(id) {
+            return Rc::clone(v);
+        }
+        let v = Rc::new(dispatch(self.t, id));
+        self.impls
+            .borrow_mut()
+            .insert(id.to_string(), Rc::clone(&v));
+        v
     }
 
     fn label(&self, id: &str) -> String {
@@ -334,8 +356,8 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
     let mut parent: HashMap<Node, (Node, Edge)> = HashMap::new();
     let mut seen: HashSet<Node> = HashSet::from([start.clone()]);
     let mut queue: VecDeque<(Node, usize)> = VecDeque::from([(start.clone(), 0)]);
-    // (rank, depth, order, node, sink)
-    let mut found: Vec<((u8, usize, usize), Node, &DataSink)> = Vec::new();
+    // ((rank, depth, order), node, sink, writes)
+    let mut found: Vec<((u8, usize, usize), Node, &DataSink, bool)> = Vec::new();
     let mut visits = 0;
     while let Some((n, depth)) = queue.pop_front() {
         visits += 1;
@@ -352,7 +374,7 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
                 .unwrap_or("");
             let w = writes(name) || writes(d.via.rsplit('.').next().unwrap_or(""));
             let rank = u8::from(w == read);
-            found.push(((rank, depth, found.len()), n.clone(), d));
+            found.push(((rank, depth, found.len()), n.clone(), d, w));
         }
         if depth >= SINK_DEPTH {
             continue;
@@ -365,7 +387,7 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
         }
     }
     found.sort_by_key(|f| f.0);
-    let Some((_, node, best)) = found.first() else {
+    let Some((_, node, best, w)) = found.first() else {
         return (Vec::new(), None, Vec::new());
     };
     let hops = hops_to(g, &parent, node, Some(best.line));
@@ -377,9 +399,10 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
             .as_deref()
             .map(|e| crate::spring::leaf(e).to_string()),
         at: format!("{}:{}", best.file, best.line),
+        writes: *w,
     };
     let mut others: Vec<String> = Vec::new();
-    for (_, _, d) in &found {
+    for (_, _, d, _) in &found {
         if d.name == best.name && d.store == best.store {
             continue;
         }
@@ -496,8 +519,24 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
                 },
             ));
         }
-        // Writes before reads, then those that reach data.
-        continues.sort_by_key(|c| (c.1.key.starts_with("GET "), c.1.sink.is_none()));
+        // Those that reach data first; writes before reads; a creation (`POST`) before an
+        // update, a deletion, then the rest.
+        continues.sort_by_key(|c| {
+            let k = &c.1;
+            let method = match k.key.split_whitespace().next().unwrap_or("") {
+                "POST" => 0,
+                "PUT" => 1,
+                "PATCH" => 2,
+                "DELETE" => 3,
+                "GET" => 5,
+                _ => 4,
+            };
+            (
+                k.sink.is_none(),
+                !k.sink.as_ref().is_some_and(|x| x.writes),
+                method,
+            )
+        });
         let first_line = continues.first().map(|c| c.0);
         let continues: Vec<Continuation> = continues.into_iter().map(|c| c.1).collect();
         // The function of `to` hands over where it calls out.
@@ -506,16 +545,17 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
             last.line = line;
         }
         let chain = Chain { hops, continues };
-        let reads = chain
-            .continues
-            .first()
-            .is_none_or(|c| c.key.starts_with("GET "));
-        out.push((
-            u8::from(!chain.has_sink()),
-            u8::from(reads),
-            start_line,
-            chain,
-        ));
+        // Requests that write first, then the other changes, then reads.
+        let kind = chain.continues.first().map_or(2, |c| {
+            if c.sink.as_ref().is_some_and(|k| k.writes) {
+                0
+            } else if c.key.starts_with("GET ") {
+                2
+            } else {
+                1
+            }
+        });
+        out.push((u8::from(!chain.has_sink()), kind, start_line, chain));
     }
     out.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
     out.into_iter().map(|x| x.3).collect()

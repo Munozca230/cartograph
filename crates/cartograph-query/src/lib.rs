@@ -124,6 +124,12 @@ impl Repo {
         let repo = Repo::new(graph, config);
         let mut table = symbols::SymbolTable::build(symbols);
         table.members = repo.graph.members.clone();
+        let g = &repo.graph;
+        let links = spring::SpringTable::link(&table, |p| {
+            g.file_by_path(p)
+                .is_some_and(|f| test_trees::in_test_tree(g, f, graph::ROOT))
+        });
+        table.spring.set_links(links);
         Repo {
             symbols: table,
             ..repo

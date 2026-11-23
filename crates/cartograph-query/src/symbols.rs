@@ -1651,7 +1651,7 @@ fn spring_callers(
     decls: &[(String, String)],
     calls: &[Site<'_>],
 ) -> Option<SpringCallers> {
-    use crate::spring::{Why, bean_label, beans_of, declared, leaf, pick};
+    use crate::spring::{Why, bean_label, beans_for, beans_of, declared, leaf, pick};
     let ty = ty?;
     if t.spring.is_empty() {
         return None;
@@ -1668,9 +1668,8 @@ fn spring_callers(
             let Some(dt) = crate::spring::type_of_method(t, d) else {
                 continue;
             };
-            let all = beans_of(t, &dt);
             for i in t.spring.injections_of(&dt) {
-                if pick(i, &all).0.iter().any(|b| b.ty == ty) {
+                if pick(i, &beans_for(t, i)).0.iter().any(|b| b.ty == ty) {
                     points.push((i, dt.clone()));
                 }
             }
@@ -1680,13 +1679,16 @@ fn spring_callers(
         .iter()
         .flat_map(|(c, _)| crate::spring::caller_classes(t, c.caller.as_deref(), &c.file))
         .collect();
-    points.sort_by(|a, b| {
-        (!callers.contains(&a.0.owner), &a.0.file, a.0.line).cmp(&(
-            !callers.contains(&b.0.owner),
-            &b.0.file,
-            b.0.line,
-        ))
-    });
+    // The application's points before the tests'; those of the calling classes first.
+    let key = |i: &cartograph_core::SpringInjection| {
+        (
+            t.spring.in_tests(&i.file),
+            !callers.contains(&i.owner),
+            i.file.clone(),
+            i.line,
+        )
+    };
+    points.sort_by_key(|a| key(a.0));
     points.dedup_by(|a, b| std::ptr::eq(a.0, b.0));
     // A type nobody injects and no bean implements: nothing Spring adds.
     let implementors: Vec<&cartograph_core::SpringBean> =
@@ -1697,8 +1699,8 @@ fn spring_callers(
     let mut last: Option<Vec<String>> = None;
     let rows: Vec<SpringPoint> = points
         .iter()
-        .map(|(i, pty)| {
-            let all = beans_of(t, pty);
+        .map(|(i, _)| {
+            let all = beans_for(t, i);
             let (got, why) = pick(i, &all);
             let names: Vec<String> = got.iter().map(|b| bean_label(b)).collect();
             let same = last.as_ref() == Some(&names) && names.len() > 1;
