@@ -90,7 +90,8 @@ pub(super) fn is_function(lang: Lang, n: Node<'_>) -> bool {
 
 /// Whether the function `n` is one a definition stands for, so a call of that definition
 /// passes its parameters: a method, a top-level function, a function given to a
-/// module-level name, property or class field. A callback written inline is not one: its
+/// module-level name, a property of an object or a class field (wherever the object is
+/// built). A callback written inline is not one: its
 /// parameters are run-time values.
 pub(super) fn is_frame(lang: Lang, n: Node<'_>) -> bool {
     let outer_fn =
@@ -101,14 +102,14 @@ pub(super) fn is_frame(lang: Lang, n: Node<'_>) -> bool {
         (
             Lang::Js,
             "arrow_function" | "function_expression" | "function" | "generator_function",
-        ) => {
-            matches!(
-                n.parent().map(|p| p.kind()),
-                Some(
-                    "variable_declarator" | "pair" | "public_field_definition" | "field_definition"
-                )
-            ) && !outer_fn()
-        }
+        ) => match n.parent().map(|p| p.kind()) {
+            // A function of an object or a class field is called later with its own
+            // arguments, wherever the object is built (an exposure inside a callback).
+            Some("pair" | "public_field_definition" | "field_definition") => true,
+            // A local `const send = () => …` is part of the function around it.
+            Some("variable_declarator") => !outer_fn(),
+            _ => false,
+        },
         (Lang::Java, "method_declaration" | "constructor_declaration") => true,
         (Lang::Python, "function_definition") => !outer_fn(),
         _ => false,
@@ -1526,6 +1527,26 @@ contextBridge.exposeInMainWorld('api', {
                 ("get".into(), None),
             ]
         );
+    }
+
+    /// The functions of an object built inside a callback keep their own parameters: a
+    /// preload exposing `on(channel, cb)` from `process.once("loaded", …)` passes its
+    /// parameter on as the channel.
+    #[test]
+    fn an_object_function_inside_a_callback_keeps_its_parameters() {
+        use crate::symbols::strexpr::{Part, StrExpr};
+        let c = code(
+            r#"
+import { contextBridge, ipcRenderer } from 'electron';
+process.once('loaded', () => {
+  contextBridge.exposeInMainWorld('api', {
+    on: (channel: string, cb: () => void) => ipcRenderer.on(channel, cb),
+  });
+});
+"#,
+        );
+        assert_eq!(c.ipc.len(), 1);
+        assert_eq!(c.ipc[0].channel, StrExpr::one(Part::Param(0)));
     }
 
     #[test]
