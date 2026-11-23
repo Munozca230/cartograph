@@ -49,8 +49,8 @@ lambda or loop over an injected list (`rules.stream().flatMap(r -> r.discounts()
 
 Flows, slices and `callers` share one rule: what Spring chooses is annotated, never
 subtracted. A call names the method its receiver's type has or inherits. `super.m()` (and
-`Type.super.m()`), a private and a static method run as they are (a `super.m()` whose line has another call to
-an `m` that did not resolve is taken as any other). Any other call may run:
+`Type.super.m()`), a private and a static method run as they are (a `super.m()` whose line
+has another call to an `m` that did not resolve is taken as any other). Any other call may run:
 
 - the method it names, kept whenever it has a body; one without a body (abstract, or an
   interface's) gives its place to what the beans run, when there are any;
