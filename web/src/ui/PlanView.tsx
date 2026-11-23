@@ -150,6 +150,52 @@ interface Scene {
 /** Inside `x` (itself or a descendant), by id. */
 const within = (id: string, x: string) => id === x || chainOf(id).includes(x);
 
+/** A bridge drawn over the plan: never laid out, so turning bridges on moves nothing. */
+export interface BridgeLine {
+  key: string;
+  d: string;
+  head: string;
+  title: string;
+}
+
+/** Where the line from `r`'s center towards `to` leaves `r`. */
+function exitPoint(r: Rect, to: { x: number; y: number }) {
+  const c = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+  const dx = to.x - c.x;
+  const dy = to.y - c.y;
+  if (dx === 0 && dy === 0) return c;
+  const t = Math.min(dx === 0 ? Infinity : r.w / 2 / Math.abs(dx), dy === 0 ? Infinity : r.h / 2 / Math.abs(dy));
+  return { x: c.x + dx * t, y: c.y + dy * t };
+}
+
+/** Curved dashed lines between the cards a bridge links (both on the plan). */
+export function bridgeLines(bridges: readonly { src: string; dst: string; weight: number }[], cards: ReadonlyMap<string, Rect>): BridgeLine[] {
+  const out: BridgeLine[] = [];
+  for (const b of bridges) {
+    const a = cards.get(b.src);
+    const z = cards.get(b.dst);
+    if (!a || !z || b.src === b.dst) continue;
+    const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+    const cz = { x: z.x + z.w / 2, y: z.y + z.h / 2 };
+    const p = exitPoint(a, cz);
+    const q = exitPoint(z, ca);
+    // Bend to the left of the direction, so the two ways of a pair never overlap.
+    const mx = (p.x + q.x) / 2;
+    const my = (p.y + q.y) / 2;
+    const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+    const bend = Math.min(60, len * 0.2);
+    const cx = mx - ((q.y - p.y) / len) * bend;
+    const cy = my + ((q.x - p.x) / len) * bend;
+    out.push({
+      key: `${b.src}=>${b.dst}`,
+      d: `M${p.x},${p.y} Q${cx},${cy} ${q.x},${q.y}`,
+      head: arrowPath(q, { x: cx, y: cy }),
+      title: `${b.src.replace(/^(file|dir):/, "")} → ${b.dst.replace(/^(file|dir):/, "")}: ${b.weight} ${b.weight === 1 ? "puente" : "puentes"} (IPC, HTTP)`,
+    });
+  }
+  return out;
+}
+
 /** Geometry and classes for one frame: edges sorted so alerts draw on top. */
 function sceneOf({ plan, layout }: Drawn, chosen: string | null, found: FindingsOnPlan): Scene {
   // Only a card dims the rest: a selected box keeps the whole plan readable.
@@ -217,10 +263,12 @@ interface ContentProps {
   onTip: (e: React.PointerEvent, id: string | null, edge?: PlanEdge) => void;
   /** Workspace members by folder path (empty for a single repo). */
   members: Map<string, MemberCard>;
+  /** Bridges drawn over the plan (empty unless the toolbar turns them on). */
+  bridges: BridgeLine[];
 }
 
 /** Everything inside the camera transform. Memoized, so panning only moves one group. */
-const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered, pulsing, problems, kinds, onTip, members }: ContentProps) {
+const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered, pulsing, problems, kinds, onTip, members, bridges }: ContentProps) {
   // `fonts` is a prop only to redraw once the font has loaded (names are measured in it).
   const { plan, layout } = drawn;
   const axisH = layout.loose ? layout.loose.y - LOOSE_GAP.top : layout.height;
@@ -293,6 +341,17 @@ const PlanContent = memo(function PlanContent({ drawn, scene, selected, hovered,
           </g>
         ))}
       </g>
+      {bridges.length > 0 && (
+        <g className="bridges">
+          {bridges.map((b) => (
+            <g key={b.key} className="bridge">
+              <title>{b.title}</title>
+              <path className="line" d={b.d} />
+              <path className="head" d={b.head} />
+            </g>
+          ))}
+        </g>
+      )}
       <g className="cards">
         {plan.nodes.map((n) => {
           const r = layout.cards.get(n.id);
@@ -661,6 +720,9 @@ export function PlanView() {
   }, []);
 
   const scene = useMemo(() => (drawn ? sceneOf(drawn, selected, found) : null), [drawn, selected, found]);
+  const showBridges = useAppState((s) => s.showBridges);
+  const graphBridges = useAppState((s) => s.graph?.bridges);
+  const bridges = useMemo(() => (drawn && showBridges && graphBridges ? bridgeLines(graphBridges, drawn.layout.cards) : []), [drawn, showBridges, graphBridges]);
   // The controller clears the pulse after a few seconds, so a card mounted later doesn't replay it.
   const pulsing = useMemo(() => new Set(pulse?.ids ?? []), [pulse]);
 
@@ -844,7 +906,7 @@ export function PlanView() {
           aria-label="Plano por capas"
         >
           <g transform={`translate(${view.tx},${view.ty}) scale(${view.k})`}>
-            <PlanContent drawn={drawn} scene={scene} selected={selected} hovered={hovered} pulsing={pulsing} problems={problems} kinds={kinds} fonts={fontsTick} onTip={onTip} members={members} />
+            <PlanContent drawn={drawn} scene={scene} selected={selected} hovered={hovered} pulsing={pulsing} problems={problems} kinds={kinds} fonts={fontsTick} onTip={onTip} members={members} bridges={bridges} />
           </g>
         </svg>
       )}

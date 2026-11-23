@@ -51,7 +51,7 @@ function Levels() {
   );
 }
 
-function Toggle({ on, onClick, icon, children, title }: { on: boolean; onClick: () => void; icon: "pkg" | "loose" | "eye"; children: React.ReactNode; title: string }) {
+function Toggle({ on, onClick, icon, children, title }: { on: boolean; onClick: () => void; icon: "pkg" | "loose" | "eye" | "bridge"; children: React.ReactNode; title: string }) {
   return (
     <button type="button" className="chip toggle" aria-pressed={on} onClick={onClick} title={title}>
       <Icon name={icon} size={13} />
@@ -67,6 +67,8 @@ export function Toolbar() {
   const showIsolated = useAppState((s) => s.showIsolated);
   const showAll = useAppState((s) => s.showAllEdges);
   const hasExternals = useAppState((s) => (s.graph?.externals.length ?? 0) > 0);
+  const showBridges = useAppState((s) => s.showBridges);
+  const bridges = useAppState((s) => s.graph?.bridges?.length ?? 0);
   const up = plan ? plan.allEdges.filter((e) => e.upstream).length : 0;
   const isolated = plan?.isolatedCount ?? 0;
   const hidden = plan?.hidden ?? 0;
@@ -83,6 +85,16 @@ export function Toolbar() {
           title="Dibuja las librerías externas en la capa de abajo, agrupadas por ecosistema, con flechas desde lo que las usa"
         >
           Librerías
+        </Toggle>
+      )}
+      {bridges > 0 && (
+        <Toggle
+          on={showBridges}
+          icon="bridge"
+          onClick={() => controller.setShowBridges(!showBridges)}
+          title="Puentes: enlaces que ningún import declara (un canal IPC hasta su handler, una función que expone el preload, una ruta HTTP). Se dibujan punteados, encima del plano, sin moverlo."
+        >
+          Puentes
         </Toggle>
       )}
       {isolated > 0 && (

@@ -495,6 +495,10 @@ export class Controller {
     store.set({ showExternals });
   }
 
+  setShowBridges(showBridges: boolean) {
+    store.set({ showBridges });
+  }
+
   async loadDetail(id: string) {
     const s = store.get();
     const key = `${s.graph?.generation ?? 0}|${id}`;

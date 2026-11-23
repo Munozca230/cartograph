@@ -793,6 +793,20 @@ svg.dia {
     opacity: 1;
   }
 }
+.bridge {
+  & .line {
+    fill: none;
+    stroke: var(--live);
+    stroke-width: 1.6;
+    stroke-dasharray: 5 4;
+    stroke-linecap: round;
+    opacity: 0.85;
+  }
+  & .head {
+    fill: var(--live);
+    opacity: 0.9;
+  }
+}
 .hit {
   fill: none;
   stroke: transparent;

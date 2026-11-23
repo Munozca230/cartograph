@@ -109,6 +109,16 @@ export function findingLabel(f: Finding): string {
       return `Cadena de dependencias de ${fmt(m.depth)} pasos`;
     case "hidden_coupling":
       return `Acoplamiento oculto: cambian juntos en ${fmt(m.together)} commits sin importarse`;
+    case "ipc_no_handler":
+      return `Canal IPC sin handler: ${f.id.slice(f.id.indexOf(":") + 1)}`;
+    case "ipc_unexposed":
+      return "El renderer llama a una función que el preload no expone";
+    case "ipc_unused_handler":
+      return "Handler IPC que nadie invoca";
+    case "undeclared_member_dependency":
+      return `Usa código de otro repositorio sin declarar su paquete (${fmt(m.imports)} ${m.imports === 1 ? "import" : "imports"})`;
+    case "version_skew":
+      return "Depende de otra versión del paquete que construye otro repositorio";
     default:
       return f.title;
   }

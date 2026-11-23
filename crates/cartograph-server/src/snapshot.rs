@@ -79,6 +79,16 @@ pub struct FileEdge {
     pub confidence: Confidence,
 }
 
+/// A file → file bridge (see [`Snapshot::bridge_edges`]).
+#[derive(Debug, Clone, Copy)]
+pub struct BridgeEdge {
+    pub src: FileIx,
+    pub dst: FileIx,
+    /// Bridged sites.
+    pub weight: u64,
+    pub confidence: Confidence,
+}
+
 /// A file → Python namespace package (dir) import.
 #[derive(Debug, Clone, Copy)]
 pub struct NsEdge {
@@ -150,6 +160,9 @@ pub struct Snapshot {
     pub files: Vec<File>,
     pub externals: Vec<External>,
     pub file_edges: Vec<FileEdge>,
+    /// Bridges between files (edges of kind `bridge`: an IPC channel, an exposed preload
+    /// function, an HTTP route): never counted with the imports.
+    pub bridge_edges: Vec<BridgeEdge>,
     pub ns_edges: Vec<NsEdge>,
     pub ext_edges: Vec<ExtEdge>,
     pub packages: Vec<Package>,
@@ -280,6 +293,9 @@ pub struct Rollup {
     pub edges: BTreeMap<(NodeRef, NodeRef), (u64, [u64; 3])>,
     /// (src, ext) → weight.
     pub externals: BTreeMap<(NodeRef, ExtIx), u64>,
+    /// (src, dst) → (bridged sites, [exact, resolved, heuristic]): bridges, apart from the
+    /// imports in `edges`.
+    pub bridges: BTreeMap<(NodeRef, NodeRef), (u64, [u64; 3])>,
     /// Requested ids that were not applied.
     pub ignored: Vec<String>,
     /// Namespace-package imports whose target dir is expanded.
@@ -491,6 +507,19 @@ impl Snapshot {
             .map(|(i, e)| (e.id.clone(), i as ExtIx))
             .collect();
         let mut file_edges = Vec::new();
+        let mut bridge_edges = Vec::new();
+        for e in graph.edges.iter().filter(|e| e.kind == EdgeKind::Bridge) {
+            let src = e.src.strip_prefix("file:").and_then(|p| file_ix.get(p));
+            let dst = e.dst.strip_prefix("file:").and_then(|p| file_ix.get(p));
+            if let (Some(&src), Some(&dst)) = (src, dst) {
+                bridge_edges.push(BridgeEdge {
+                    src,
+                    dst,
+                    weight: e.weight,
+                    confidence: e.confidence,
+                });
+            }
+        }
         let mut ns_edges = Vec::new();
         let mut ext_edges = Vec::new();
         let mut confidence = HashMap::new();
@@ -701,6 +730,7 @@ impl Snapshot {
             files,
             externals,
             file_edges,
+            bridge_edges,
             ns_edges,
             ext_edges,
             packages,
@@ -744,6 +774,15 @@ impl Snapshot {
             .strip_prefix("file:")
             .and_then(|p| self.file_ix.get(p))
             .copied()
+    }
+
+    /// The path of a file or folder id (`""` for the root), or `None` for an unknown one.
+    pub fn path_of_id(&self, id: &str) -> Option<String> {
+        if let Some(f) = self.file_of_id(id) {
+            return Some(self.files[f as usize].path.clone());
+        }
+        self.dir_of_id(id)
+            .map(|d| self.dirs[d as usize].path.clone())
     }
 
     pub fn ext_of_id(&self, id: &str) -> Option<ExtIx> {
@@ -892,6 +931,14 @@ impl Snapshot {
         for e in &self.ext_edges {
             *out.externals.entry((file_rep(e.src), e.ext)).or_insert(0) += 1;
         }
+        for e in &self.bridge_edges {
+            let (a, b) = (file_rep(e.src), file_rep(e.dst));
+            if a != b {
+                let slot = out.bridges.entry((a, b)).or_insert((0, [0; 3]));
+                slot.0 += e.weight;
+                slot.1[conf_slot(e.confidence)] += e.weight;
+            }
+        }
         out
     }
 
@@ -1024,9 +1071,22 @@ impl Snapshot {
                 })
             })
             .collect();
+        let bridges: Vec<Value> = r
+            .bridges
+            .iter()
+            .map(|((a, b), (w, c))| {
+                json!({
+                    "src": self.node_ref_id(*a),
+                    "dst": self.node_ref_id(*b),
+                    "weight": w,
+                    "confidence": { "exact": c[0], "resolved": c[1], "heuristic": c[2] },
+                })
+            })
+            .collect();
         json!({
             "nodes": nodes,
             "edges": edges,
+            "bridges": bridges,
             "externals": externals,
             "ignored": r.ignored,
             "hidden_namespace_imports": r.hidden_namespace_imports,
@@ -1120,7 +1180,65 @@ impl Snapshot {
             "externals": externals,
             "unresolved": unresolved,
             "package": file.package,
+            "bridges": self.bridges_json(Some(&file.path), usize::MAX)["bridges"],
         })
+    }
+
+    /// `/api/bridges` body (without `generation`): the bridges with an end in `path` (a
+    /// file, or a folder and everything under it; every bridge without one), at most `limit`,
+    /// and the endpoints left unmatched there. Empty without a symbol layer.
+    pub fn bridges_json(&self, path: Option<&str>, limit: usize) -> Value {
+        let Some(layer) = &self.flows else {
+            return json!({ "bridges": [], "unmatched": [], "total": 0 });
+        };
+        let t = &layer.repo.symbols.bridges;
+        let under = |p: &str| match path {
+            None | Some("") => true,
+            Some(x) => p == x || p.strip_prefix(x).is_some_and(|r| r.starts_with('/')),
+        };
+        let api = |p: &str| api_id(&format!("file:{p}"));
+        let rows: Vec<&cartograph_core::Bridge> = t
+            .bridges
+            .iter()
+            .filter(|b| under(&b.src_file) || under(&b.dst_file))
+            .collect();
+        let bridges: Vec<Value> = rows
+            .iter()
+            .take(limit)
+            .map(|b| {
+                json!({
+                    "kind": b.kind,
+                    "subtype": b.subtype,
+                    "key": b.key,
+                    "src": api(&b.src_file),
+                    "src_line": b.src_line,
+                    "src_symbol": b.src,
+                    "dst": api(&b.dst_file),
+                    "dst_line": b.dst_line,
+                    "dst_symbol": b.dst,
+                    "confidence": b.confidence,
+                })
+            })
+            .collect();
+        let unmatched: Vec<Value> = t
+            .endpoints
+            .iter()
+            .filter(|e| e.detail.is_some() && under(&e.file))
+            .take(limit)
+            .map(|e| {
+                json!({
+                    "kind": e.kind,
+                    "role": e.role,
+                    "key": e.key,
+                    "label": e.label,
+                    "file": api(&e.file),
+                    "line": e.line,
+                    "symbol": e.symbol,
+                    "detail": e.detail,
+                })
+            })
+            .collect();
+        json!({ "bridges": bridges, "unmatched": unmatched, "total": rows.len() })
     }
 
     fn dir_detail(&self, d: DirIx) -> Value {

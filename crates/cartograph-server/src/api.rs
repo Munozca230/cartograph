@@ -151,6 +151,7 @@ fn routes() -> Router<Arc<AppState>> {
         .route("/api/graph", get(graph))
         .route("/api/node", get(node))
         .route("/api/packages", get(packages))
+        .route("/api/bridges", get(bridges))
         .route("/api/issues", get(issues))
         .route("/api/findings", get(findings))
         .route("/api/search", get(search))
@@ -388,6 +389,34 @@ async fn node(State(state): AppStateRef, RawQuery(raw): RawQuery) -> ApiResult {
         snap.node_detail(&id)
             .map(|v| axum::Json(with_generation(v, g)))
             .ok_or_else(|| ApiError::not_found(format!("no node {id:?}")))
+    })
+    .await
+}
+
+/// Default and maximum `limit` of `/api/bridges`.
+pub const BRIDGES_LIMIT: (u64, u64) = (2000, 100_000);
+
+async fn bridges(State(state): AppStateRef, RawQuery(raw): RawQuery) -> ApiResult {
+    let snap = snapshot(&state)?;
+    let g = snap.generation;
+    let q = parse_query(raw).map_err(|e| e.at(g))?;
+    let limit = num_param(&q, "limit")
+        .map_err(|e| e.at(g))?
+        .unwrap_or(BRIDGES_LIMIT.0)
+        .min(BRIDGES_LIMIT.1) as usize;
+    let node = param(&q, "node").map(str::to_string);
+    blocking(g, move || {
+        let path = match &node {
+            None => None,
+            Some(id) => match snap.path_of_id(id) {
+                Some(p) => Some(p),
+                None => return Err(ApiError::not_found(format!("no node {id:?}"))),
+            },
+        };
+        Ok(axum::Json(with_generation(
+            snap.bridges_json(path.as_deref(), limit),
+            g,
+        )))
     })
     .await
 }

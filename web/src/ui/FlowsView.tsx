@@ -131,9 +131,15 @@ const FlowContent = memo(function FlowContent({
       </g>
       <g className="edges">
         {edges.map(({ e, d, head, end, cls }) => (
-          <g key={edgeKey(e.src, e.dst)} className={`edge ${cls}`}>
-            <path className="line" d={d} strokeWidth={1.6} strokeDasharray={e.confidence === "heuristic" ? "5 4" : undefined} />
+          <g key={edgeKey(e.src, e.dst)} className={`edge ${cls}${e.via ? " via" : ""}`}>
+            <path className="line" d={d} strokeWidth={1.6} strokeDasharray={e.via ? "2 4" : e.confidence === "heuristic" ? "5 4" : undefined} />
             <path className="head" d={head} />
+            {/* A bridge (IPC, HTTP), not a call: its channel or route just before the arrow. */}
+            {e.via && (
+              <text className="ecount" x={end.x - 12} y={end.y + 13} textAnchor="end">
+                {e.via.length > 36 ? `${e.via.slice(0, 35)}…` : e.via}
+              </text>
+            )}
             {/* Several call sites, one edge: how many, just before the arrow. */}
             {e.calls > 1 && (
               <text className="ecount" x={end.x - 12} y={end.y - 5} textAnchor="end">
@@ -373,7 +379,7 @@ function FlowStage() {
       const dst = d.flow.nodes.find((x) => x.id === edge.dst);
       const lines: Tip["lines"] = [
         { text: `${src ? shortFile(src.file, "") : ""}:${edge.line}${edge.calls > 1 ? ` · ${edge.calls} llamadas` : ""}` },
-        { text: edge.confidence === "heuristic" ? "Heurística: el nombre es único en el repositorio" : `Llamada ${CONFIDENCE[edge.confidence]}` },
+        { text: edge.via ? `Puente, no una llamada: ${edge.via}` : edge.confidence === "heuristic" ? "Heurística: el nombre es único en el repositorio" : `Llamada ${CONFIDENCE[edge.confidence]}` },
       ];
       if (dst?.finding) lines.push({ text: `Llega a un archivo con ${dst.finding === "error" ? "un error" : "un aviso"} de arquitectura`, alert: true });
       setTip({ title: `${src?.name ?? edge.src} → ${dst?.name ?? edge.dst}`, lines, x: e.clientX, y: e.clientY });

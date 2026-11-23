@@ -124,6 +124,9 @@ export interface GraphResponse {
   generation: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Bridges between cards (an IPC channel, an exposed preload function, an HTTP route):
+   *  apart from `edges`, whose weights sum to the imports. */
+  bridges?: GraphEdge[];
   externals: GraphExternal[];
   ignored: string[];
   hidden_namespace_imports?: number;
@@ -131,6 +134,22 @@ export interface GraphResponse {
 
 /** Fields of a node as in /api/tree, without children. */
 export type FlatNode = Omit<TreeNode, "children">;
+
+/** One bridge with an end in a file (`/api/bridges`, `bridges` of `/api/node`). */
+export interface BridgeRow {
+  kind: "ipc" | "http" | "package";
+  /** `invoke`, `send`, `push`, `expose`, `maven`, `npm`. */
+  subtype: string;
+  /** Channel, route or coordinate (`users:get`, `window.api.getUser`). */
+  key: string;
+  src: string;
+  src_line: number;
+  src_symbol?: string | null;
+  dst: string;
+  dst_line: number;
+  dst_symbol?: string | null;
+  confidence: Confidence;
+}
 
 export interface FileDetail {
   generation: number;
@@ -140,6 +159,8 @@ export interface FileDetail {
   externals: { ext: string; specifier: string; line: number }[];
   unresolved: { line: number; specifier: string; reason: string; detail: string }[];
   package: string | null;
+  /** Bridges with an end in the file (absent from servers before bridges). */
+  bridges?: BridgeRow[];
 }
 
 export interface DirDetail {
@@ -214,7 +235,22 @@ export interface FindingEdge {
 export interface Finding {
   /** Stable: kind plus its main location (`cycle:file:src/a.ts`). */
   id: string;
-  kind: "layer_violation" | "fan_out_limit" | "cycle" | "folder_cycle" | "god_module" | "hub" | "sdp" | "orphan" | "deep_chain" | "hidden_coupling";
+  kind:
+    | "layer_violation"
+    | "fan_out_limit"
+    | "cycle"
+    | "folder_cycle"
+    | "god_module"
+    | "hub"
+    | "sdp"
+    | "orphan"
+    | "deep_chain"
+    | "hidden_coupling"
+    | "ipc_no_handler"
+    | "ipc_unexposed"
+    | "ipc_unused_handler"
+    | "undeclared_member_dependency"
+    | "version_skew";
   severity: Severity;
   /** Breaks a rule of cartograph.toml. */
   violation: boolean;
@@ -302,6 +338,8 @@ export interface FlowEdgeData {
   confidence: Confidence;
   line: number;
   calls: number;
+  /** A bridge, not a call (`ipc invoke users:get`): drawn dashed with this label. */
+  via?: string;
 }
 
 export interface FlowResponse {

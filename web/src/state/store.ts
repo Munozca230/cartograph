@@ -54,6 +54,8 @@ export interface AppState {
   showIsolated: boolean;
   /** Draw external packages as cards in the bottom layer. */
   showExternals: boolean;
+  /** Draw bridges (IPC channels, HTTP routes) between cards, dashed, over the plan. */
+  showBridges: boolean;
   explorerOpen: boolean;
   selected: string | null;
   hovered: string | null;
@@ -111,6 +113,7 @@ export const initialState: AppState = {
   showAllEdges: false,
   showIsolated: false,
   showExternals: false,
+  showBridges: false,
   explorerOpen: false,
   selected: null,
   hovered: null,

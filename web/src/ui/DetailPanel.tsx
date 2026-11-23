@@ -150,10 +150,26 @@ function FileBody({ d, more }: { d: FileDetail; more: boolean }) {
           <Block title="Importa" rows={imports} tone="out" empty="No importa otros archivos del repositorio." />
           <Block title="Lo importan" rows={importers} empty="Ningún archivo lo importa: puede ser un punto de entrada o código sin uso." />
           <Block title="Librerías" rows={exts.map((e) => ({ id: e, label: e.slice(4) }))} empty="No usa librerías externas." />
+          {(d.bridges?.length ?? 0) > 0 && <Block title="Puentes" unit="IPC, HTTP, paquetes" rows={bridgeRows(d)} empty="" />}
         </>
       )}
     </>
   );
+}
+
+/** The bridges of a file as rows: the other end, with the channel or route as the meta. */
+function bridgeRows(d: FileDetail) {
+  const me = d.node.id;
+  return (d.bridges ?? []).map((b) => {
+    const out = b.src === me;
+    const other = out ? b.dst : b.src;
+    const line = out ? b.src_line : b.dst_line;
+    return {
+      id: other,
+      label: `${out ? "→" : "←"} ${nameOf(other)}`,
+      meta: `${b.kind} ${b.subtype} ${b.key}${line ? ` · línea ${line}` : ""}`,
+    };
+  });
 }
 
 function ExtBody({ d, more }: { d: ExtDetail; more: boolean }) {
