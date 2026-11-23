@@ -58,6 +58,8 @@ pub const MAX_MISSING: usize = 3;
 #[derive(Debug, Default)]
 pub struct KeyTable {
     pub sites: Vec<KeySite>,
+    /// The index looked for keys (one written before them has none to trace).
+    pub indexed: bool,
     by_key: HashMap<String, Vec<usize>>,
     /// Constant names (`Action.READ_FILE`, and its last part `READ_FILE`) → sites.
     by_name: HashMap<String, Vec<usize>>,
@@ -77,6 +79,7 @@ impl KeyTable {
     pub fn build(s: &Symbols) -> KeyTable {
         let mut t = KeyTable {
             sites: s.keys.clone(),
+            indexed: s.keys_indexed || !s.keys.is_empty(),
             ..KeyTable::default()
         };
         for (i, k) in t.sites.iter().enumerate() {

@@ -567,6 +567,10 @@ pub struct Symbols {
     /// Where string keys are defined, run, listed and used (see [`crate::key`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<crate::key::KeySite>,
+    /// The indexer looked for string keys (an index written before them has none, which is
+    /// not the same as a repo without any).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keys_indexed: bool,
 }
 
 impl Symbols {

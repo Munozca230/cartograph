@@ -160,6 +160,45 @@ fn variants_are_lower_confidence_and_paths_still_win() {
     assert!(t.starts_with("no string key \"NOPE-NOPE\""), "{t}");
 }
 
+/// `kind: key` on an index whose symbol layer predates string keys (or that has none) says
+/// to re-index, rather than that the key does not exist.
+#[test]
+fn an_index_without_key_sites_says_to_reindex() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("r");
+    let p = root.join("src/a.ts");
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, "export const A = [\"x-1\", \"x-2\", \"x-3\"];\n").unwrap();
+    let mut out =
+        cartograph_index::index(&root, &cartograph_index::IndexOptions::default()).unwrap();
+    assert!(out.symbols.keys_indexed);
+    let fresh = Repo::with_symbols(
+        &out.graph,
+        &out.symbols,
+        cartograph_query::Config::default(),
+    );
+    let t = find(&fresh, "NOPE-1", Some(FindKind::Key)).unwrap().text;
+    assert!(t.starts_with("no string key"), "{t}");
+    // Written before key sites: the layer is there, its keys are not.
+    out.symbols.keys.clear();
+    out.symbols.keys_indexed = false;
+    let old = Repo::with_symbols(
+        &out.graph,
+        &out.symbols,
+        cartograph_query::Config::default(),
+    );
+    let e = find(&old, "x-1", Some(FindKind::Key))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("re-run `cartograph index`"), "{e}");
+    // No symbol layer at all.
+    let none = Repo::new(&out.graph, cartograph_query::Config::default());
+    let e = find(&none, "x-1", Some(FindKind::Key))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("re-run `cartograph index`"), "{e}");
+}
+
 /// A registration alone in its container is a use, and reads as one.
 #[test]
 fn a_lone_registration_is_a_use() {

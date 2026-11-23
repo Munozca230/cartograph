@@ -369,6 +369,16 @@ pub fn find(
     let mut key_hint = None;
     match kind {
         Some(FindKind::Key) => {
+            if !repo.symbols.indexed {
+                return Err(QueryError::BadArgument(
+                    "this index has no symbols; re-run `cartograph index`".into(),
+                ));
+            }
+            if !repo.symbols.keys.indexed {
+                return Err(QueryError::BadArgument(
+                    "this index was written before string keys; re-run `cartograph index`".into(),
+                ));
+            }
             return Ok(match crate::keys::answer(repo, query) {
                 Some(a) => traced(a),
                 None => Answer {

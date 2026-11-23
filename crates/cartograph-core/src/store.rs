@@ -1117,6 +1117,7 @@ fn clear_symbols(conn: &Connection) -> Result<()> {
         conn.execute("DELETE FROM symbol_supers", [])?;
     }
     conn.execute("DELETE FROM meta WHERE key = ?1", [SYMBOLS_INDEXED])?;
+    conn.execute("DELETE FROM meta WHERE key = ?1", [KEYS_INDEXED])?;
     if has_table(conn, "scip_files")? {
         conn.execute_batch("DELETE FROM scip_files; DELETE FROM scip_symbols;")?;
     }
@@ -1136,6 +1137,10 @@ const SCIP_STATS: &str = "scip_stats";
 /// Run-metadata key present while the symbol tables hold a layer the indexer computed
 /// (see [`Symbols::indexed`]), even an empty one.
 const SYMBOLS_INDEXED: &str = "symbols_indexed";
+
+/// Run-metadata key present while `key_sites` holds what the indexer found (see
+/// [`Symbols::keys_indexed`]), even nothing.
+const KEYS_INDEXED: &str = "keys_indexed";
 
 fn insert_symbols(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
     let mut stmt = tx.prepare(
@@ -1210,6 +1215,9 @@ fn insert_symbols(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
     }
     if s.indexed {
         set_meta(tx, SYMBOLS_INDEXED, "1")?;
+    }
+    if s.keys_indexed && has_table(tx, "key_sites")? {
+        set_meta(tx, KEYS_INDEXED, "1")?;
     }
     if !s.scip.is_empty() {
         let mut stmt = tx.prepare("INSERT OR IGNORE INTO scip_files (path) VALUES (?1)")?;
@@ -1438,6 +1446,12 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
     }
     if has_table(conn, "key_sites")? {
         read_keys(conn, &mut out)?;
+        out.keys_indexed = conn
+            .query_row("SELECT 1 FROM meta WHERE key = ?1", [KEYS_INDEXED], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some();
     }
     out.normalize();
     Ok(out)
@@ -2137,6 +2151,7 @@ mod tests {
             endpoints: Vec::new(),
             bridges: Vec::new(),
             keys: Vec::new(),
+            keys_indexed: false,
         };
         s.normalize();
         s
@@ -2175,6 +2190,7 @@ mod tests {
                     confidence: Confidence::Resolved,
                 },
             ],
+            keys_indexed: true,
             ..sample_symbols()
         };
         s.normalize();
@@ -2193,8 +2209,9 @@ mod tests {
             tx.write_graph(&sample()).unwrap();
             tx.write_symbols(&sample_keyed()).unwrap();
             tx.commit().unwrap();
-            // Written before the table existed: no keys kept.
+            // Written before the table existed: no keys kept, and none read as indexed.
             assert_eq!(store.load_symbols().unwrap(), sample_symbols());
+            assert!(!store.load_symbols().unwrap().keys_indexed);
         }
         let mut store = Store::open(&path).unwrap();
         assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
