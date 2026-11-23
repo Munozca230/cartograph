@@ -1,0 +1,83 @@
+{
+  "callees": {
+    "sym:src/main/java/com/acme/shop/order/controller/AdminController.java#AdminController.purge": [
+      "sym:src/main/java/com/acme/shop/order/controller/OrderReport.java#OrderReport.print",
+      "sym:src/main/java/com/acme/shop/order/service/OrderService.java#OrderService.purge"
+    ],
+    "sym:src/main/java/com/acme/shop/order/controller/OrderController.java#OrderController.audit": [
+      "sym:src/main/java/com/acme/shop/order/controller/OrderReport.java#OrderReport.print"
+    ],
+    "sym:src/main/java/com/acme/shop/order/controller/OrderController.java#OrderController.create": [
+      "sym:src/main/java/com/acme/shop/order/service/OrderService.java#OrderService.create"
+    ],
+    "sym:src/main/java/com/acme/shop/order/controller/OrderController.java#OrderController.find": [
+      "sym:src/main/java/com/acme/shop/order/service/OrderService.java#OrderService.find"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java#OrderServiceImpl.create": [
+      "sym:src/main/java/com/acme/shop/order/repository/OrderRepository.java#OrderRepository.insertOrder",
+      "sym:src/main/java/com/acme/shop/order/service/impl/OrderValidator.java#OrderValidator.check"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java#OrderServiceImpl.find": [
+      "sym:src/main/java/com/acme/shop/order/repository/OrderRepository.java#OrderRepository.findTitle"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderValidator.java#OrderValidator.lenient": [
+      "sym:src/main/java/com/acme/shop/order/service/impl/OrderValidator.java#OrderValidator"
+    ],
+    "sym:src/test/java/com/acme/shop/order/dto/CreateOrderDtoValidationTest.java#CreateOrderDtoValidationTest.titleIsRequired": [
+      "sym:src/main/java/com/acme/shop/order/dto/CreateOrderDto.java#CreateOrderDto"
+    ],
+    "sym:src/test/java/com/acme/shop/order/service/impl/OrderFixtures.java#OrderFixtures.dto": [
+      "sym:src/main/java/com/acme/shop/order/dto/CreateOrderDto.java#CreateOrderDto"
+    ],
+    "sym:src/test/java/com/acme/shop/order/service/impl/OrderServiceImplTest.java#OrderServiceImplTest.createChecksTheDto": [
+      "sym:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java#OrderServiceImpl",
+      "sym:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java#OrderServiceImpl.create",
+      "sym:src/main/java/com/acme/shop/order/service/impl/OrderValidator.java#OrderValidator.lenient",
+      "sym:src/test/java/com/acme/shop/order/service/impl/OrderFixtures.java#OrderFixtures.dto"
+    ]
+  },
+  "callers": {
+    "sym:src/main/java/com/acme/shop/order/controller/OrderReport.java#OrderReport.print": [
+      "file:src/main/java/com/acme/shop/order/controller/AdminController.java:23",
+      "file:src/main/java/com/acme/shop/order/controller/OrderController.java:36"
+    ],
+    "sym:src/main/java/com/acme/shop/order/repository/OrderRepository.java#OrderRepository.findTitle": [
+      "file:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java:25"
+    ],
+    "sym:src/main/java/com/acme/shop/order/repository/OrderRepository.java#OrderRepository.insertOrder": [
+      "file:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java:20"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/OrderService.java#OrderService.create": [
+      "file:src/main/java/com/acme/shop/order/controller/OrderController.java:18"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/OrderService.java#OrderService.find": [
+      "file:src/main/java/com/acme/shop/order/controller/OrderController.java:24"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/OrderService.java#OrderService.purge": [
+      "file:src/main/java/com/acme/shop/order/controller/AdminController.java:24"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/OrderService.java#OrderService.warmUp": [
+      "file:src/main/java/com/acme/shop/order/controller/AdminController.java:18"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java#OrderServiceImpl.create": [
+      "file:src/main/java/com/acme/shop/order/controller/OrderController.java:18",
+      "file:src/test/java/com/acme/shop/order/service/impl/OrderServiceImplTest.java (1)"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java#OrderServiceImpl.find": [
+      "file:src/main/java/com/acme/shop/order/controller/OrderController.java:24"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java#OrderServiceImpl.purge": [
+      "file:src/main/java/com/acme/shop/order/controller/AdminController.java:24"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderValidator.java#OrderValidator.check": [
+      "file:src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java:19"
+    ],
+    "sym:src/main/java/com/acme/shop/order/service/impl/OrderValidator.java#OrderValidator.lenient": [
+      "file:src/test/java/com/acme/shop/order/service/impl/OrderServiceImplTest.java:13"
+    ],
+    "sym:src/test/java/com/acme/shop/order/service/impl/OrderFixtures.java#OrderFixtures.dto": [
+      "file:src/test/java/com/acme/shop/order/service/impl/OrderServiceImplTest.java:14"
+    ]
+  },
+  "paths": {}
+}

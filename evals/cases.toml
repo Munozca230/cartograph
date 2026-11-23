@@ -876,7 +876,7 @@ repo = "slice"
 question = "Who reaches WireGateway.charge?"
 tool = "callers"
 args = { symbol = "WireGateway.charge" }
-contains = ["CheckoutService.java", "via PaymentGateway.charge (Spring bean)", "reaches another bean"]
+contains = ["CheckoutService.java", "via PaymentGateway.charge (Spring bean)", "Spring injects CardGateway here (@Primary)"]
 budget = 1000
 
 [[case]]

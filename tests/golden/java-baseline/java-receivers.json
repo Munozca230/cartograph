@@ -1,0 +1,47 @@
+{
+  "callees": {
+    "sym:src/main/java/com/acme/scope/Caller.java#Caller.blockScoped": [
+      "sym:src/main/java/com/acme/scope/Report.java#Report",
+      "sym:src/main/java/com/acme/scope/Report.java#Report.print",
+      "sym:src/main/java/com/acme/scope/Service.java#Service.create"
+    ],
+    "sym:src/main/java/com/acme/scope/Caller.java#Caller.inner": [
+      "sym:src/main/java/com/acme/scope/Base.java#Base"
+    ],
+    "sym:src/main/java/com/acme/scope/Caller.java#Caller.nested": [
+      "sym:src/main/java/com/acme/scope/Caller.java#Builder.build"
+    ],
+    "sym:src/main/java/com/acme/shapes/Painter.java#Painter.paint": [
+      "sym:src/main/java/com/acme/shapes/BaseShape.java#BaseShape.area",
+      "sym:src/main/java/com/acme/shapes/Shape.java#Shape.draw"
+    ],
+    "sym:src/main/java/com/acme/shapes/Square.java#Square.area": [
+      "sym:src/main/java/com/acme/shapes/BaseShape.java#BaseShape.area"
+    ]
+  },
+  "callers": {
+    "sym:src/main/java/com/acme/scope/Caller.java#Builder.build": [
+      "file:src/main/java/com/acme/scope/Caller.java:38"
+    ],
+    "sym:src/main/java/com/acme/scope/Report.java#Report.print": [
+      "file:src/main/java/com/acme/scope/Caller.java:12"
+    ],
+    "sym:src/main/java/com/acme/scope/Service.java#Service.create": [
+      "file:src/main/java/com/acme/scope/Caller.java:15"
+    ],
+    "sym:src/main/java/com/acme/shapes/BaseShape.java#BaseShape.area": [
+      "file:src/main/java/com/acme/shapes/Painter.java:9",
+      "file:src/main/java/com/acme/shapes/Square.java:6"
+    ],
+    "sym:src/main/java/com/acme/shapes/Outer.java#Inner.draw": [
+      "file:src/main/java/com/acme/shapes/Painter.java:8"
+    ],
+    "sym:src/main/java/com/acme/shapes/Shape.java#Shape.draw": [
+      "file:src/main/java/com/acme/shapes/Painter.java:8"
+    ],
+    "sym:src/main/java/com/acme/shapes/Square.java#Square.area": [
+      "file:src/main/java/com/acme/shapes/Painter.java:9"
+    ]
+  },
+  "paths": {}
+}

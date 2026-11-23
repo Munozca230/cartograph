@@ -44,6 +44,23 @@ fn callers(r: &Repo, sym: &str) -> String {
     symbols::callers(r, sym).unwrap().text
 }
 
+/// The line that lists caller `who`.
+fn line_of<'t>(t: &'t str, who: &str) -> &'t str {
+    t.lines()
+        .find(|l| l.contains(&format!(" {who} [")))
+        .unwrap_or("")
+}
+
+/// `who` is listed, and Spring injects another bean there.
+fn other(t: &str, who: &str) -> bool {
+    line_of(t, who).contains("(Spring injects ")
+}
+
+/// `who` is listed, with nothing against it.
+fn plain(t: &str, who: &str) -> bool {
+    !line_of(t, who).is_empty() && !other(t, who)
+}
+
 /// The slice from a page to the client that posts to `/api/orders`, over a controller that
 /// calls `flow.save(x)` on the field this declares.
 fn slice(field: &str, java: &[(&str, &str)]) -> String {
@@ -427,10 +444,10 @@ fn a_receiver_spring_did_not_inject_is_not_narrowed() {
     )]);
     let t = callers(&r, "Wire.charge");
     for m in ["given", "shadowed", "local"] {
-        assert!(t.contains(&format!("Till.{m}()")), "{m}: {t}");
+        assert!(plain(&t, &format!("Till.{m}()")), "{m}: {t}");
     }
-    assert!(!t.contains("Till.injected()"), "{t}");
-    assert!(!t.contains("Till.explicit()"), "{t}");
+    assert!(other(&t, "Till.injected()"), "{t}");
+    assert!(other(&t, "Till.explicit()"), "{t}");
     let t = callers(&r, "Card.charge");
     assert!(
         t.contains("Till.injected() [resolved, via Gateway.charge (Spring bean)]"),
@@ -469,14 +486,16 @@ fn an_injected_parameter_is_followed_into_its_field_and_loops() {
         ),
     ]);
     let t = callers(&r, "Wire.charge");
-    assert!(!t.contains("Till.viaField()"), "{t}");
-    assert!(t.contains("Till.notInjected()"), "{t}");
+    assert!(other(&t, "Till.viaField()"), "{t}");
+    assert!(plain(&t, "Till.notInjected()"), "{t}");
     for m in ["loop", "lambda", "typed"] {
         let want = format!("Batch.{m}() [resolved, via Gateway.charge (Spring bean)]");
         assert!(t.contains(&want), "{want}: {t}");
     }
     let t = callers(&r, "Card.charge");
-    assert!(!t.contains("Batch."), "{t}");
+    for m in ["loop", "lambda", "typed"] {
+        assert!(other(&t, &format!("Batch.{m}()")), "{m}: {t}");
+    }
 }
 
 #[test]
@@ -493,7 +512,7 @@ fn a_constructor_that_delegates_hands_its_parameters_over() {
 ",
     )]);
     let t = callers(&r, "Wire.charge");
-    assert!(!t.contains("Till.pay()"), "{t}");
+    assert!(other(&t, "Till.pay()"), "{t}");
     let t = callers(&r, "Card.charge");
     assert!(
         t.contains("Till.pay() [resolved, via Gateway.charge (Spring bean)]"),
@@ -529,7 +548,7 @@ fn every_collection_takes_every_bean_and_a_provider_streams_them() {
         let want = format!("Pool.{m}() [resolved, via Gateway.charge (Spring bean)]");
         assert!(t.contains(&want), "{want}: {t}");
     }
-    assert!(!t.contains("Pool.one()"), "{t}");
+    assert!(other(&t, "Pool.one()"), "{t}");
     let t = callers(&r, "Gateway.charge");
     assert!(t.contains("Deque<Gateway>) api/Pool.java"), "{t}");
     assert!(!t.contains("@Primary, of 2"), "{t}");
@@ -577,7 +596,7 @@ fn qualifiers_and_names_written_as_constants_and_aliases() {
     assert!(t.contains("odd (@Bean)"), "{t}");
     // Not narrowed: the primary one does not win over a qualifier.
     let t = callers(&r, "Wire.charge");
-    assert!(t.contains("Till.byUnknown()"), "{t}");
+    assert!(plain(&t, "Till.byUnknown()"), "{t}");
 }
 
 // 10 ---------------------------------------------------------------------------------
@@ -642,13 +661,13 @@ fn a_resource_without_a_name_is_found_by_its_member_before_its_type() {
             let want = format!("Till.{m}() [resolved, via Gateway.charge (Spring bean)]");
             assert!(t.contains(&want), "{pkg} {want}: {t}");
         }
-        assert!(!t.contains("Till.byType()"), "{pkg}: {t}");
+        assert!(other(&t, "Till.byType()"), "{pkg}: {t}");
         let t = callers(&r, "Card.charge");
         for m in ["byType", "all"] {
-            assert!(t.contains(&format!("Till.{m}()")), "{pkg} {m}: {t}");
+            assert!(plain(&t, &format!("Till.{m}()")), "{pkg} {m}: {t}");
         }
         for m in ["byField", "byName", "bySetter"] {
-            assert!(!t.contains(&format!("Till.{m}()")), "{pkg} {m}: {t}");
+            assert!(other(&t, &format!("Till.{m}()")), "{pkg} {m}: {t}");
         }
         let t = callers(&r, "Gateway.charge");
         for want in [
@@ -683,8 +702,8 @@ fn a_resource_narrows_nothing_it_cannot_tell() {
     ]);
     for sym in ["Card.charge", "Wire.charge", "Odd.charge"] {
         let t = callers(&r, sym);
-        assert!(t.contains("Till.byField()"), "{sym}: {t}");
-        assert!(t.contains("Till.byName()"), "{sym}: {t}");
+        assert!(plain(&t, "Till.byField()"), "{sym}: {t}");
+        assert!(plain(&t, "Till.byName()"), "{sym}: {t}");
     }
     // A name written as an expression, or looked up elsewhere; a qualifier is no name.
     let r = gateways(&[
@@ -708,7 +727,7 @@ fn a_resource_narrows_nothing_it_cannot_tell() {
     for sym in ["Card.charge", "Wire.charge"] {
         let t = callers(&r, sym);
         for m in ["expression", "lookup", "qualifier"] {
-            assert!(t.contains(&format!("Till.{m}()")), "{sym} {m}: {t}");
+            assert!(plain(&t, &format!("Till.{m}()")), "{sym} {m}: {t}");
         }
     }
     let t = callers(&r, "Gateway.charge");
@@ -746,7 +765,7 @@ fn a_nested_bean_and_a_generated_mapper_have_the_names_spring_gives_them() {
         ),
     ]);
     let t = callers(&r, "Card.charge");
-    assert!(t.contains("Till.one()") && t.contains("Till.two()"), "{t}");
+    assert!(plain(&t, "Till.one()") && plain(&t, "Till.two()"), "{t}");
     let t = callers(&r, "Gateway.charge");
     assert_eq!(t.matches("Card (@Primary, of 4)").count(), 2, "{t}");
 }
@@ -884,8 +903,8 @@ fn a_lombok_field_another_method_sets_is_not_narrowed() {
 ",
     )]);
     let t = callers(&r, "Wire.charge");
-    assert!(t.contains("Till.pay()"), "{t}");
-    assert!(!t.contains("Till.keep()"), "{t}");
+    assert!(plain(&t, "Till.pay()"), "{t}");
+    assert!(other(&t, "Till.keep()"), "{t}");
 }
 
 #[test]
@@ -926,13 +945,13 @@ fn a_parameter_given_another_value_is_not_what_spring_injects() {
         ),
     ]);
     let t = callers(&r, "Wire.charge");
-    assert!(t.contains("Till.pay()"), "{t}");
-    assert!(t.contains("Till.again()"), "{t}");
+    assert!(plain(&t, "Till.pay()"), "{t}");
+    assert!(plain(&t, "Till.again()"), "{t}");
     assert!(
         t.contains("api/Till.java (3)"),
         "the constructor's own call: {t}"
     );
-    assert!(!t.contains("Safe.pay()"), "{t}");
+    assert!(other(&t, "Safe.pay()"), "{t}");
 }
 
 #[test]
@@ -1028,13 +1047,13 @@ fn a_named_resource_keeps_its_name_in_a_holder_and_type_is_not_a_name() {
     )]);
     let t = callers(&r, "Wire.charge");
     for m in ["one", "all", "typed", "named"] {
-        assert!(t.contains(&format!("Till.{m}()")), "{m}: {t}");
+        assert!(plain(&t, &format!("Till.{m}()")), "{m}: {t}");
     }
     let t = callers(&r, "Card.charge");
     for m in ["one", "typed", "named"] {
-        assert!(!t.contains(&format!("Till.{m}()")), "{m}: {t}");
+        assert!(other(&t, &format!("Till.{m}()")), "{m}: {t}");
     }
-    assert!(t.contains("Till.all()"), "{t}");
+    assert!(plain(&t, "Till.all()"), "{t}");
     let t = callers(&r, "Gateway.charge");
     assert!(
         t.contains("ObjectProvider<Gateway> @Resource(name = \"wire\")) api/Till.java:3: Wire (by name, of 2)"),
@@ -1097,8 +1116,8 @@ fn a_field_set_again_after_delegating_is_not_narrowed() {
 ",
     )]);
     let t = callers(&r, "Wire.charge");
-    assert!(t.contains("Till.pay()"), "{t}");
-    assert!(!t.contains("Till.keep()"), "{t}");
+    assert!(plain(&t, "Till.pay()"), "{t}");
+    assert!(other(&t, "Till.keep()"), "{t}");
 }
 
 #[test]
@@ -1146,5 +1165,125 @@ public interface Rows extends CassandraRepository<OrderLine, Long> { }
             "jdbc order_line Lines.save",
             "mongo orderLine Docs.save",
         ]
+    );
+}
+
+// What Spring chooses is annotated, never subtracted ---------------------------------
+
+#[test]
+fn a_call_is_never_left_out_for_what_spring_injects() {
+    let r = gateways(&[
+        ("api/Fast.java", "public interface Fast extends Gateway { }"),
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    @Autowired private Gateway gateway;
+    void both(Gateway other) { gateway.charge(); other.charge(); }
+    void below(Fast fast) { fast.charge(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Wire.charge");
+    assert!(t.contains(":4 Till.both()"), "{t}");
+    assert!(
+        line_of(&t, "Till.both()").contains("(Spring injects Card here (@Primary))"),
+        "{t}"
+    );
+    // A receiver of an interface below may hold it too.
+    assert!(plain(&t, "Till.below()"), "{t}");
+    assert!(!t.contains("reaches another bean"), "{t}");
+}
+
+#[test]
+fn a_method_with_a_body_stays_whatever_spring_injects() {
+    use cartograph_query::flow::{CallIndex, symbol_card};
+    let r = repo(&[
+        (
+            "api/Base.java",
+            "public class Base {
+    public void save(String a) { }
+    public void save(String a, String b) { }
+    public void done() { }
+}
+",
+        ),
+        (
+            "api/Sub.java",
+            "@Service public class Sub extends Base {
+    @Override public void save(String a, String b) { }
+}
+",
+        ),
+        (
+            "api/Made.java",
+            "public class Made extends Base { @Override public void done() { } }",
+        ),
+        (
+            "api/Config.java",
+            "@Configuration public class Config { @Bean Base made() { return new Made(); } }",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired @Qualifier(\"sub\") private Base sub;
+    @Autowired @Qualifier(\"made\") private Base made;
+    void overload() { sub.save(\"a\"); }
+    void declared() { made.done(); }
+}
+",
+        ),
+    ]);
+    let ix = CallIndex::build(&r);
+    let callees = |m: &str| -> Vec<String> {
+        symbol_card(&r, &ix, &format!("sym:api/Desk.java#Desk.{m}"))
+            .unwrap()
+            .callees
+            .iter()
+            .map(|c| c.id.rsplit('#').next().unwrap_or("").to_string())
+            .collect()
+    };
+    // The bean overrides the other overload only.
+    assert_eq!(callees("overload")[0], "Base.save");
+    // The bean is known by its declared type.
+    assert_eq!(callees("declared")[0], "Base.done");
+    let t = callers(&r, "Made.done");
+    assert!(plain(&t, "Desk.declared()"), "{t}");
+}
+
+#[test]
+fn a_route_of_an_abstract_method_goes_on_to_its_bean() {
+    use cartograph_query::flow::{CallIndex, file_flows};
+    let r = repo(&[
+        (
+            "ui/client.ts",
+            "export function post() {\n  return fetch('/api/orders', { method: 'POST' });\n}\n",
+        ),
+        (
+            "api/OrderApi.java",
+            "@RequestMapping(\"/api/orders\") public abstract class OrderApi {\n    @PostMapping abstract void create();\n}\n",
+        ),
+        (
+            "api/OrderController.java",
+            "@RestController public class OrderController extends OrderApi {\n    @Autowired private Store store;\n    @Override void create() { store.put(); }\n}\n",
+        ),
+        ("api/Store.java", "public interface Store { void put(); }"),
+        (
+            "api/DiskStore.java",
+            "@Service public class DiskStore implements Store { @Override public void put() { } }",
+        ),
+    ]);
+    let f = flow_of(&r, "sym:ui/client.ts#post");
+    let has = |a: &str, b: &str| f.iter().any(|(x, y)| x == a && y == b);
+    assert!(has("post", "OrderApi.create"), "{f:?}");
+    assert!(has("OrderApi.create", "OrderController.create"), "{f:?}");
+    assert!(has("OrderController.create", "DiskStore.put"), "{f:?}");
+    // And back: the route a bean's file serves.
+    let ix = CallIndex::build(&r);
+    let back = file_flows(&r, &ix, "api/DiskStore.java").unwrap();
+    assert!(
+        back.entries.iter().any(|e| e.name.contains("/api/orders")),
+        "{:?}",
+        back.entries.iter().map(|e| &e.name).collect::<Vec<_>>()
     );
 }

@@ -7,7 +7,7 @@
 //! and row counts instead ([`FlowOptions`], the `MAX_*` constants), because a screen, not a
 //! context window, receives them.
 
-use crate::dispatch::Dispatcher;
+use crate::dispatch::{Dispatcher, Via};
 use crate::graph::{FileIx, ROOT};
 use crate::kind::FileKind;
 use crate::overview::in_test_tree;
@@ -47,6 +47,16 @@ const SOURCE_ROOTS: &[&str] = &["src", "lib", "app", "source", "pkg", "internal"
 /// The `via` of a flow edge to the method a Spring bean runs for the one a call names (an
 /// interface's, a base class's).
 pub const SPRING_VIA: &str = "Spring bean";
+/// The same, where Spring injects other beans.
+pub const SPRING_OTHER_VIA: &str = "another Spring bean";
+
+fn spring_via(v: Via) -> Option<String> {
+    match v {
+        Via::Named => None,
+        Via::Bean => Some(SPRING_VIA.to_string()),
+        Via::OtherBean => Some(SPRING_OTHER_VIA.to_string()),
+    }
+}
 
 /// Calls of one caller to one target, merged.
 #[derive(Debug, Clone)]
@@ -70,6 +80,8 @@ pub struct CallIndex {
     /// Methods without a body → what the beans below them run (see
     /// [`CallIndex::declared_edges`]).
     declared: HashMap<String, Vec<Callee>>,
+    /// Method → the callers that reach it as a bean's.
+    spring_into: HashMap<String, Vec<String>>,
     /// Symbol id → index in `repo.symbols.symbols` (the first definition when ids repeat).
     sym: HashMap<String, usize>,
     /// Callable symbols by file path, in line order.
@@ -110,45 +122,62 @@ impl CallIndex {
         }
         let mut calls: Vec<&cartograph_core::SymbolCall> = t.calls.iter().collect();
         calls.sort_by(|a, b| (&a.file, a.line, &a.target).cmp(&(&b.file, b.line, &b.target)));
-        let mut pos: HashMap<(String, String), usize> = HashMap::new();
+        // `(caller, target)` → whether it is among `beans`, and where.
+        let mut pos: HashMap<(String, String), (bool, usize)> = HashMap::new();
+        let mut beans: HashMap<String, Vec<Callee>> = HashMap::new();
         for c in calls {
             let caller = c
                 .caller
                 .clone()
                 .unwrap_or_else(|| format!("file:{}", c.file));
             // Spring: what the beans a call is made on run, in place of the method it names.
-            let reach = dispatch.reach(c);
-            let plain = [(c.target.as_str(), false)];
-            let to: Vec<(&str, bool)> = match &reach {
-                Some(r) => r.edges(&c.target).collect(),
-                None => plain.to_vec(),
-            };
-            let list = ix.out.entry(caller.clone()).or_default();
-            for (target, spring) in to {
-                match pos.get(&(caller.clone(), target.to_string())) {
-                    Some(&k) => {
-                        let e = &mut list[k];
+            let mut reach = dispatch.reach(c);
+            if reach.is_empty() {
+                reach.push((c.target.clone(), Via::Named));
+            }
+            // The method named (or the first bean, in place of one without a body) keeps its
+            // place among the calls; the beans go after them.
+            let place = reach
+                .iter()
+                .position(|(_, v)| *v == Via::Named)
+                .unwrap_or(0);
+            for (i, (target, via)) in reach.into_iter().enumerate() {
+                let key = (caller.clone(), target);
+                if let Some(&(tail, k)) = pos.get(&key) {
+                    let list = if tail { &mut beans } else { &mut ix.out };
+                    if let Some(e) = list.get_mut(&key.0).and_then(|v| v.get_mut(k)) {
                         e.calls += 1;
                         if rank(c.confidence) < rank(e.confidence) {
                             e.confidence = c.confidence;
                         }
-                        // A plain call too.
-                        if !spring {
+                        if via == Via::Named {
                             e.via = None;
                         }
                     }
-                    None => {
-                        pos.insert((caller.clone(), target.to_string()), list.len());
-                        list.push(Callee {
-                            target: target.to_string(),
-                            line: c.line,
-                            confidence: c.confidence,
-                            calls: 1,
-                            via: spring.then(|| SPRING_VIA.to_string()),
-                        });
-                    }
+                    continue;
                 }
+                let tail = i != place;
+                let list = if tail { &mut beans } else { &mut ix.out };
+                let list = list.entry(key.0.clone()).or_default();
+                pos.insert(key.clone(), (tail, list.len()));
+                list.push(Callee {
+                    target: key.1,
+                    line: c.line,
+                    confidence: c.confidence,
+                    calls: 1,
+                    via: spring_via(via),
+                });
             }
+        }
+        for (caller, mut list) in beans {
+            list.sort_by_key(|c| c.via.as_deref() == Some(SPRING_OTHER_VIA));
+            for c in &list {
+                ix.spring_into
+                    .entry(c.target.clone())
+                    .or_default()
+                    .push(caller.clone());
+            }
+            ix.out.entry(caller).or_default().extend(list);
         }
         // Bridges between two functions (a renderer view → the exposed preload function →
         // the main-process handler) continue a flow, marked as such.
@@ -208,29 +237,23 @@ impl CallIndex {
         let t = &repo.symbols;
         for s in t.symbols.iter().filter(|s| s.kind.is_callable()) {
             let id = s.id();
-            let Some(r) = dispatch.declared(&id) else {
-                continue;
-            };
-            let list = r
-                .runs
-                .iter()
-                .map(|(m, _)| Callee {
-                    target: m.clone(),
-                    line: t.symbol(m).map_or(0, |s| s.line),
+            let list: Vec<Callee> = dispatch
+                .declared(&id)
+                .into_iter()
+                .filter(|(m, _)| *m != id)
+                .map(|(m, via)| Callee {
+                    line: t.symbol(&m).map_or(0, |s| s.line),
+                    target: m,
                     confidence: Confidence::Resolved,
                     calls: 1,
-                    via: Some(SPRING_VIA.to_string()),
+                    via: spring_via(via),
                 })
                 .collect();
+            for c in &list {
+                let into = self.spring_into.entry(c.target.clone()).or_default();
+                into.push(id.clone());
+            }
             self.declared.insert(id, list);
-        }
-    }
-
-    /// The callees of the function a flow starts at.
-    fn start(&self, id: &str) -> &[Callee] {
-        match self.callees(id) {
-            [] => self.declared.get(id).map_or(&[], Vec::as_slice),
-            v => v,
         }
     }
 
@@ -244,7 +267,11 @@ impl CallIndex {
     }
 
     fn callees(&self, id: &str) -> &[Callee] {
-        self.out.get(id).map_or(&[], Vec::as_slice)
+        // A method without a body, got to other than by a call: what its beans run.
+        match self.out.get(id).map_or(&[][..], Vec::as_slice) {
+            [] => self.declared.get(id).map_or(&[], Vec::as_slice),
+            v => v,
+        }
     }
 
     /// The worst problem finding on a file (`error` or `warning`).
@@ -647,14 +674,6 @@ pub fn flow(
 
     let mut nodes: Vec<FlowNode> = Vec::new();
     let mut at: HashMap<String, usize> = HashMap::new();
-    let start = root.clone();
-    let kids = |id: &str| {
-        if id == start {
-            ix.start(id)
-        } else {
-            ix.callees(id)
-        }
-    };
     let make = |id: &str, d: u32| -> FlowNode {
         let s = ix.symbol(repo, id);
         let file = file_of(id, s);
@@ -666,7 +685,7 @@ pub fn flow(
             end_line: s.map_or(1, |s| s.end_line),
             callers: t.callers_of(id).len(),
             depth: d,
-            callees: kids(id).iter().filter(|c| c.target != id).count(),
+            callees: ix.callees(id).iter().filter(|c| c.target != id).count(),
             more: 0,
             open: false,
             finding: ix.mark(&file),
@@ -685,7 +704,7 @@ pub fn flow(
         let id = nodes[n].id.clone();
         let d = nodes[n].depth;
         let mut added = Vec::new();
-        for c in kids(&id) {
+        for c in ix.callees(&id) {
             if c.target == id || at.contains_key(&c.target) {
                 continue;
             }
@@ -746,7 +765,7 @@ pub fn flow(
     for node in &mut nodes {
         let id = node.id.as_str();
         let mut more = 0;
-        for c in kids(id) {
+        for c in ix.callees(id) {
             if c.target == id {
                 continue;
             }
@@ -1000,7 +1019,7 @@ pub fn symbol_card(repo: &Repo, ix: &CallIndex, id: &str) -> Result<SymbolCard, 
     let production_total = prod.len();
     prod.truncate(MAX_CALLERS);
 
-    let all: Vec<&Callee> = ix.start(&id).iter().filter(|c| c.target != id).collect();
+    let all: Vec<&Callee> = ix.callees(&id).iter().filter(|c| c.target != id).collect();
     let callee_lanes: HashSet<String> = all
         .iter()
         .map(|c| ix.lane_of(&file_of(&c.target, ix.symbol(repo, &c.target))))
@@ -1142,15 +1161,24 @@ pub fn file_flows(repo: &Repo, ix: &CallIndex, file: &str) -> Result<FileFlows, 
     'walk: for _ in 0..THROUGH_DEPTH {
         let mut next = Vec::new();
         for id in &frontier {
-            for &i in t.callers_of(id) {
+            let calls = t.callers_of(id).iter().map(|&i| {
                 let c = &t.calls[i];
-                if is_test_file(repo, &c.file) {
+                let up = c.caller.clone();
+                (up.unwrap_or_else(|| format!("file:{}", c.file)), &c.file)
+            });
+            let beans = ix
+                .spring_into
+                .get(id)
+                .into_iter()
+                .flatten()
+                .filter_map(|c| {
+                    let file = &ix.symbol(repo, c)?.file;
+                    Some((c.clone(), file))
+                });
+            for (up, file) in calls.chain(beans) {
+                if is_test_file(repo, file) {
                     continue;
                 }
-                let up = c
-                    .caller
-                    .clone()
-                    .unwrap_or_else(|| format!("file:{}", c.file));
                 if reached.insert(up.clone()) {
                     if reached.len() > THROUGH_BUDGET {
                         partial = true;

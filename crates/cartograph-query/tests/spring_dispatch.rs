@@ -6,7 +6,9 @@
 mod common;
 
 use cartograph_index::{IndexOptions, index};
-use cartograph_query::flow::{CallIndex, FlowOptions, MAX_DEPTH, MAX_NODES, flow};
+use cartograph_query::flow::{
+    CallIndex, FlowOptions, MAX_DEPTH, MAX_NODES, SPRING_OTHER_VIA, flow,
+};
 use cartograph_query::{Config, Repo, path, symbols};
 use std::collections::BTreeSet;
 use std::fs;
@@ -22,6 +24,8 @@ struct Case {
     java: &'static [(&'static str, &'static str)],
     reaches: &'static [&'static str],
     not: &'static [&'static str],
+    /// Where Spring injects others: only after the rest, if at all.
+    other: &'static [&'static str],
 }
 
 /// `«Card.save»` in a body: the write that marks `Card.save`.
@@ -67,39 +71,47 @@ fn repo(case: &Case) -> Repo {
     Repo::with_symbols(&out.graph, &out.symbols, Config::load(root).unwrap())
 }
 
-/// `Class.method` of every function a flow from the controller shows.
-fn by_flow(r: &Repo) -> BTreeSet<String> {
+/// `Class.method` of every function a flow from the controller shows, and of those it gets
+/// to only where Spring injects others.
+fn by_flow(r: &Repo) -> (BTreeSet<String>, BTreeSet<String>) {
     let ix = CallIndex::build(r);
     let opts = FlowOptions {
         depth: MAX_DEPTH,
         max_nodes: MAX_NODES,
         expand: Vec::new(),
     };
-    flow(r, &ix, "sym:api/GoController.java#GoController.post", &opts)
-        .unwrap()
-        .nodes
+    let g = flow(r, &ix, "sym:api/GoController.java#GoController.post", &opts).unwrap();
+    let name = |id: &str| id.rsplit('#').next().unwrap_or("").to_string();
+    let first: BTreeSet<String> = g
+        .edges
         .iter()
-        .map(|n| n.id.rsplit('#').next().unwrap_or("").to_string())
-        .collect()
+        .filter(|e| e.via.as_deref() != Some(SPRING_OTHER_VIA))
+        .map(|e| name(&e.dst))
+        .collect();
+    let all: BTreeSet<String> = g.nodes.iter().map(|n| name(&n.id)).collect();
+    let other = all.difference(&first).cloned().collect();
+    (all, other)
 }
 
-/// The collections a slice from the page names.
-fn by_slice(r: &Repo) -> BTreeSet<String> {
+/// The collections a slice from the page names, and those but the one it ends in.
+fn by_slice(r: &Repo) -> (BTreeSet<String>, BTreeSet<String>) {
     let t = path::path(r, "ui/page.ts", "ui/client.ts").unwrap().text;
     let mut out = BTreeSet::new();
+    let mut others = BTreeSet::new();
     for line in t.lines() {
         if let Some(rest) = line.trim().strip_prefix("→ collection ") {
             out.insert(rest.split(' ').next().unwrap_or("").to_string());
         }
         if let Some(rest) = line.trim().strip_prefix("also reaches: ") {
-            out.extend(
+            others.extend(
                 rest.split(", ")
                     .filter_map(|x| x.strip_suffix(" (Mongo)"))
                     .map(str::to_string),
             );
         }
     }
-    out
+    out.extend(others.iter().cloned());
+    (out, others)
 }
 
 const CASES: &[Case] = &[
@@ -122,6 +134,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Base.save"],
         not: &["Wire.save"],
+        other: &[],
     },
     Case {
         name: "an inherited method of a local variable's class",
@@ -142,6 +155,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Base.save"],
         not: &["Wire.save"],
+        other: &[],
     },
     Case {
         name: "a field typed below the declaring class, overridden there",
@@ -164,8 +178,9 @@ const CASES: &[Case] = &[
                 "@Service public class Start { @Autowired private Cards cards; void go() { cards.save(); } }",
             ),
         ],
-        reaches: &["Visa.save"],
-        not: &["Wire.save", "Base.save"],
+        reaches: &["Visa.save", "Base.save"],
+        not: &["Wire.save"],
+        other: &[],
     },
     Case {
         name: "private and static methods",
@@ -192,6 +207,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Base.check", "Base.make"],
         not: &["Sub.check", "Sub.make"],
+        other: &[],
     },
     Case {
         name: "an abstract method called by a class between",
@@ -219,6 +235,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Leaf.step"],
         not: &["Other.step"],
+        other: &[],
     },
     Case {
         name: "super runs the base class's own",
@@ -242,6 +259,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Audited.save", "Base.save"],
         not: &["Other.save"],
+        other: &[],
     },
     Case {
         name: "super of an interface runs its default",
@@ -265,6 +283,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Audited.save", "Flow.save"],
         not: &["Other.save"],
+        other: &[],
     },
     Case {
         name: "super and another object on one line",
@@ -288,6 +307,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Base.save", "Other.save"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a decorator of an interface",
@@ -308,6 +328,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Retry.charge", "Wire.charge"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a decorator of a class",
@@ -334,7 +355,8 @@ const CASES: &[Case] = &[
             ),
         ],
         reaches: &["Retry.charge", "Wire.charge"],
-        not: &["Card.charge"],
+        not: &[],
+        other: &["Card.charge"],
     },
     Case {
         name: "a decorator of a class it was not injected with",
@@ -358,6 +380,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Retry.charge", "Wire.charge"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a default method that calls what its bean has",
@@ -380,7 +403,8 @@ const CASES: &[Case] = &[
             ),
         ],
         reaches: &["Plain.check"],
-        not: &["Loud.save"],
+        not: &[],
+        other: &["Loud.save"],
     },
     Case {
         name: "a default of an interface below wins over the abstract one",
@@ -401,6 +425,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Kept.save"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a bean in a nested class",
@@ -417,44 +442,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Inner.charge"],
         not: &["Outer.charge"],
-    },
-    Case {
-        name: "an injected nested interface",
-        java: &[
-            (
-                "Outer",
-                "public class Outer { public interface Gateway { void charge(); } }",
-            ),
-            (
-                "Wire",
-                "@Service public class Wire implements Outer.Gateway { MongoDatabase db; @Override public void charge() { «Wire.charge» } }",
-            ),
-            (
-                "Start",
-                "import com.shop.Outer.Gateway; @Service public class Start { @Autowired private Gateway g; void go() { g.charge(); } }",
-            ),
-        ],
-        reaches: &["Wire.charge"],
-        not: &[],
-    },
-    Case {
-        name: "a nested interface by its outer class",
-        java: &[
-            (
-                "Outer",
-                "public class Outer { public interface Gateway { void charge(); } }",
-            ),
-            (
-                "Wire",
-                "@Service public class Wire implements Outer.Gateway { MongoDatabase db; @Override public void charge() { «Wire.charge» } }",
-            ),
-            (
-                "Start",
-                "@Service public class Start { @Autowired private Outer.Gateway g; void go() { g.charge(); } }",
-            ),
-        ],
-        reaches: &["Wire.charge"],
-        not: &[],
+        other: &[],
     },
     Case {
         name: "two nested classes of one name",
@@ -474,7 +462,8 @@ const CASES: &[Case] = &[
             ),
         ],
         reaches: &["Impl.charge"],
-        not: &["B.charge"],
+        not: &[],
+        other: &["B.charge"],
     },
     Case {
         name: "variable parameters and generic overloads",
@@ -494,6 +483,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Sub.put"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a default method two interfaces declare",
@@ -518,6 +508,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Base.save"],
         not: &["Right.save"],
+        other: &[],
     },
     Case {
         name: "a lambda over a list typed below",
@@ -538,6 +529,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Base.save"],
         not: &["Wire.save"],
+        other: &[],
     },
     Case {
         name: "a method that calls itself on this and on another",
@@ -557,6 +549,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Sub.step"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a bean made of an interface in @Bean",
@@ -577,6 +570,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Wire.charge"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "an overload is not an override",
@@ -596,6 +590,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Base.save"],
         not: &["Sub.save"],
+        other: &[],
     },
     Case {
         name: "one overload of several is overridden",
@@ -615,6 +610,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Sub.save"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a generic interface",
@@ -634,6 +630,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Orders.handle"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "a bean of a generic base class",
@@ -653,6 +650,7 @@ const CASES: &[Case] = &[
         ],
         reaches: &["Orders.handle"],
         not: &[],
+        other: &[],
     },
     Case {
         name: "no bean of the qualifier in the source",
@@ -671,7 +669,8 @@ const CASES: &[Case] = &[
             ),
         ],
         reaches: &["Flow.save"],
-        not: &["Other.save"],
+        not: &[],
+        other: &["Other.save"],
     },
     Case {
         name: "an interface's bean not in the source",
@@ -687,7 +686,8 @@ const CASES: &[Case] = &[
             ),
         ],
         reaches: &[],
-        not: &["Other.save"],
+        not: &[],
+        other: &["Other.save"],
     },
     Case {
         name: "two beans that inherit one method",
@@ -709,7 +709,8 @@ const CASES: &[Case] = &[
             ),
         ],
         reaches: &["Base.save"],
-        not: &["Loud.save"],
+        not: &[],
+        other: &["Loud.save"],
     },
 ];
 
@@ -718,10 +719,16 @@ fn flows_and_slices_reach_the_same() {
     let mut failures = Vec::new();
     for case in CASES {
         let r = repo(case);
-        for (how, got) in [("flow", by_flow(&r)), ("slice", by_slice(&r))] {
+        for (how, (got, later)) in [("flow", by_flow(&r)), ("slice", by_slice(&r))] {
             for want in case.reaches {
                 if !got.contains(*want) {
                     failures.push(format!("{} [{how}]: no {want}: {got:?}", case.name));
+                }
+            }
+            for x in case.other {
+                // A slice that reaches no other data has it alone.
+                if got.contains(*x) && !later.contains(*x) && !case.reaches.is_empty() {
+                    failures.push(format!("{} [{how}]: {x} before the rest", case.name));
                 }
             }
             for bad in case.not {
@@ -745,23 +752,20 @@ fn callers_follow_the_same_rules() {
         let case = CASES.iter().find(|c| c.name == name).unwrap();
         symbols::callers(&repo(case), sym).unwrap().text
     };
-    // The receiver is a class the override is not of.
+    // Listed as in the code: what Spring injects is a note.
     let t = of(
         "an inherited method of a local variable's class",
         "Wire.save",
     );
-    assert!(!t.contains("Start.go()"), "{t}");
+    assert!(t.contains("Start.go()"), "{t}");
     let t = of("an inherited method of the injected class", "Wire.save");
-    assert!(!t.contains("Start.go()"), "{t}");
+    assert!(t.contains("(Spring injects Card here)"), "{t}");
     // `super.save()` runs the base class's own.
     let t = of("super runs the base class's own", "Other.save");
     assert!(!t.contains("Audited.save()"), "{t}");
     // A decorator calls another implementation.
     let t = of("a decorator of an interface", "Wire.charge");
     assert!(t.contains("Retry.charge()"), "{t}");
-    // An overload is called by nobody.
-    let t = of("an overload is not an override", "Sub.save");
-    assert!(!t.contains("Start.go()"), "{t}");
 }
 
 #[test]

@@ -1,0 +1,43 @@
+{
+  "callees": {
+    "sym:src/main/java/com/acme/Service.java#Service.run": [
+      "sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.audit",
+      "sym:src/main/java/com/acme/core/Repo.java#Repo.saveEverything",
+      "sym:src/main/java/com/acme/core/Store.java#Store.reload"
+    ],
+    "sym:src/main/java/com/acme/core/Repo.java#Repo.load": [
+      "sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.audit",
+      "sym:src/main/java/com/acme/core/Store.java#Store.reload"
+    ],
+    "sym:src/main/java/com/acme/core/Repo.java#Repo.saveEverything": [
+      "sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.saveEverything"
+    ],
+    "sym:src/main/java/com/acme/core/Store.java#Store.reload": [
+      "sym:src/main/java/com/acme/core/Store.java#Store.load"
+    ]
+  },
+  "callers": {
+    "sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.audit": [
+      "file:src/main/java/com/acme/Service.java:12",
+      "file:src/main/java/com/acme/core/Repo.java:6",
+      "file:src/main/java/com/acme/core/Repo.java:7"
+    ],
+    "sym:src/main/java/com/acme/core/BaseRepo.java#BaseRepo.saveEverything": [
+      "file:src/main/java/com/acme/core/Repo.java:13"
+    ],
+    "sym:src/main/java/com/acme/core/Repo.java#Repo.load": [
+      "file:src/main/java/com/acme/core/Store.java:7"
+    ],
+    "sym:src/main/java/com/acme/core/Repo.java#Repo.saveEverything": [
+      "file:src/main/java/com/acme/Service.java:10"
+    ],
+    "sym:src/main/java/com/acme/core/Store.java#Store.load": [
+      "file:src/main/java/com/acme/core/Store.java:7"
+    ],
+    "sym:src/main/java/com/acme/core/Store.java#Store.reload": [
+      "file:src/main/java/com/acme/Service.java:11",
+      "file:src/main/java/com/acme/core/Repo.java:8"
+    ]
+  },
+  "paths": {}
+}

@@ -67,9 +67,8 @@ fn a_qualifier_and_a_primary_pick_one_gateway_each() {
         t.contains(":24 CheckoutService.pay() [resolved, via PaymentGateway.charge (Spring bean)]"),
         "{t}"
     );
-    assert!(!t.contains(":22 "), "{t}");
     assert!(
-        t.contains("1 call through PaymentGateway.charge reaches another bean"),
+        t.contains(":22 CheckoutService.pay() [resolved, via PaymentGateway.charge (Spring injects WireGateway here (qualified))]"),
         "{t}"
     );
     let a = symbols::callers(&r, "WireGateway.charge").unwrap();
@@ -78,7 +77,10 @@ fn a_qualifier_and_a_primary_pick_one_gateway_each() {
         t.contains(":22 CheckoutService.pay() [resolved, via PaymentGateway.charge (Spring bean)]"),
         "{t}"
     );
-    assert!(!t.contains(":24 "), "{t}");
+    assert!(
+        t.contains(":24 CheckoutService.pay() [resolved, via PaymentGateway.charge (Spring injects CardGateway here (@Primary))]"),
+        "{t}"
+    );
 }
 
 #[test]
@@ -88,10 +90,15 @@ fn a_bean_of_a_list_is_reached_through_the_interface() {
     let t = &a.text;
     assert!(t.contains("PricingEngine.java"), "{t}");
     assert!(t.contains("via PriceRule.discounts (Spring bean)"), "{t}");
-    // Not a bean (it may be built with `new`): a plain supertype hop, never a Spring one.
+    // Not a bean: listed, with what Spring does inject.
     let a = symbols::callers(&r, "LegacyRule.discounts").unwrap();
-    assert!(a.text.contains("via PriceRule.discounts]"), "{}", a.text);
-    assert!(!a.text.contains("Spring bean"), "{}", a.text);
+    assert!(
+        a.text.contains(
+            "via PriceRule.discounts (Spring injects CouponRule, SeasonRule, VolumeRule here)]"
+        ),
+        "{}",
+        a.text
+    );
 }
 
 #[test]

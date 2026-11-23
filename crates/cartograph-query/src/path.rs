@@ -45,6 +45,8 @@ pub struct PathResult {
     pub crossings_more: usize,
     /// Shortest path first; at most 3.
     pub paths: Vec<Vec<Step>>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub paths_more: usize,
     /// When A does not reach B: a path from B to A, if there is one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reverse: Option<Vec<Step>>,
@@ -292,6 +294,7 @@ pub fn path_with(
             .take(if limit >= 3 { 3 } else { 1 })
             .map(|p| steps(repo, p))
             .collect(),
+        paths_more: 0,
         reverse: reverse.as_ref().map(|p| steps(repo, p)),
         slice: Vec::new(),
         slice_full: 0,
@@ -315,6 +318,7 @@ pub fn path_with(
                         .take(alts)
                         .map(|p| steps_along(repo, p, &prefer))
                         .collect(),
+                    paths_more: paths.len().saturating_sub(alts),
                     slice: chains
                         .iter()
                         .take(full + brief)
@@ -406,6 +410,9 @@ fn render(r: &PathResult) -> String {
         for p in longer {
             render_path(&mut s, p);
         }
+    }
+    if r.paths_more > 0 {
+        s.push_str(&format!("  +{} more paths\n", r.paths_more));
     }
     render_slice(&mut s, r, &b);
     s

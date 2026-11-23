@@ -1,0 +1,122 @@
+{
+  "callees": {
+    "sym:api/src/main/java/com/shop/api/notify/Desk.java#Desk.work": [
+      "sym:api/src/main/java/com/shop/api/notify/Notifier.java#Notifier.send",
+      "sym:api/src/main/java/com/shop/api/notify/Printer.java#Printer.print",
+      "sym:api/src/main/java/com/shop/api/notify/Scanner.java#Scanner.scan"
+    ],
+    "sym:api/src/main/java/com/shop/api/notify/PrinterConfig.java#PrinterConfig.printer": [
+      "sym:api/src/main/java/com/shop/api/notify/LaserPrinter.java#LaserPrinter"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderController.java#OrderController.create": [
+      "sym:api/src/main/java/com/shop/api/order/OrderService.java#OrderService.create"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderController.java#OrderController.get": [
+      "sym:api/src/main/java/com/shop/api/order/OrderService.java#OrderService.find"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.check": [
+      "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.next"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.create": [
+      "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.check",
+      "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.persist",
+      "sym:store/src/main/java/com/shop/store/Order.java#Order"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.find": [
+      "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.byId"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.persist": [
+      "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.save"
+    ],
+    "sym:api/src/main/java/com/shop/api/payment/CheckoutService.java#CheckoutService.pay": [
+      "sym:api/src/main/java/com/shop/api/payment/PaymentGateway.java#PaymentGateway.charge",
+      "sym:api/src/main/java/com/shop/api/payment/Receipt.java#Receipt"
+    ],
+    "sym:api/src/main/java/com/shop/api/pricing/SeasonRule.java#SeasonRule.discounts": [
+      "sym:api/src/main/java/com/shop/api/pricing/Discount.java#Discount"
+    ],
+    "sym:api/src/main/java/com/shop/api/pricing/VolumeRule.java#VolumeRule.discounts": [
+      "sym:api/src/main/java/com/shop/api/pricing/Discount.java#Discount"
+    ],
+    "sym:store/src/main/java/com/shop/store/Counters.java#Counters.bump": [
+      "sym:store/src/main/java/com/shop/store/Db.java#Db.db"
+    ],
+    "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.byId": [
+      "sym:store/src/main/java/com/shop/store/Db.java#Db.db"
+    ],
+    "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.next": [
+      "sym:store/src/main/java/com/shop/store/Counters.java#Counters.bump"
+    ],
+    "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.save": [
+      "sym:store/src/main/java/com/shop/store/Db.java#Db.db"
+    ]
+  },
+  "callers": {
+    "sym:api/src/main/java/com/shop/api/notify/BaseNotifier.java#BaseNotifier.send": [
+      "file:api/src/main/java/com/shop/api/notify/Desk.java:18"
+    ],
+    "sym:api/src/main/java/com/shop/api/notify/FlatScanner.java#FlatScanner.scan": [
+      "file:api/src/main/java/com/shop/api/notify/Desk.java:20"
+    ],
+    "sym:api/src/main/java/com/shop/api/notify/LaserPrinter.java#LaserPrinter.print": [
+      "file:api/src/main/java/com/shop/api/notify/Desk.java:19"
+    ],
+    "sym:api/src/main/java/com/shop/api/notify/Notifier.java#Notifier.send": [
+      "file:api/src/main/java/com/shop/api/notify/Desk.java:18"
+    ],
+    "sym:api/src/main/java/com/shop/api/notify/Printer.java#Printer.print": [
+      "file:api/src/main/java/com/shop/api/notify/Desk.java:19"
+    ],
+    "sym:api/src/main/java/com/shop/api/notify/Scanner.java#Scanner.scan": [
+      "file:api/src/main/java/com/shop/api/notify/Desk.java:20"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderService.java#OrderService.create": [
+      "file:api/src/main/java/com/shop/api/order/OrderController.java:15"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderService.java#OrderService.find": [
+      "file:api/src/main/java/com/shop/api/order/OrderController.java:20"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.check": [
+      "file:api/src/main/java/com/shop/api/order/OrderServiceImpl.java:11"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.create": [
+      "file:api/src/main/java/com/shop/api/order/OrderController.java:15"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.find": [
+      "file:api/src/main/java/com/shop/api/order/OrderController.java:20"
+    ],
+    "sym:api/src/main/java/com/shop/api/order/OrderServiceImpl.java#OrderServiceImpl.persist": [
+      "file:api/src/main/java/com/shop/api/order/OrderServiceImpl.java:13"
+    ],
+    "sym:api/src/main/java/com/shop/api/payment/CardGateway.java#CardGateway.charge": [
+      "file:api/src/main/java/com/shop/api/payment/CheckoutService.java:22",
+      "file:api/src/main/java/com/shop/api/payment/CheckoutService.java:24"
+    ],
+    "sym:api/src/main/java/com/shop/api/payment/PaymentGateway.java#PaymentGateway.charge": [
+      "file:api/src/main/java/com/shop/api/payment/CheckoutService.java:22",
+      "file:api/src/main/java/com/shop/api/payment/CheckoutService.java:24"
+    ],
+    "sym:api/src/main/java/com/shop/api/payment/WireGateway.java#WireGateway.charge": [
+      "file:api/src/main/java/com/shop/api/payment/CheckoutService.java:22",
+      "file:api/src/main/java/com/shop/api/payment/CheckoutService.java:24"
+    ],
+    "sym:store/src/main/java/com/shop/store/Counters.java#Counters.bump": [
+      "file:store/src/main/java/com/shop/store/OrderStore.java:22"
+    ],
+    "sym:store/src/main/java/com/shop/store/Db.java#Db.db": [
+      "file:store/src/main/java/com/shop/store/Counters.java:7",
+      "file:store/src/main/java/com/shop/store/OrderStore.java:11",
+      "file:store/src/main/java/com/shop/store/OrderStore.java:17"
+    ],
+    "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.byId": [
+      "file:api/src/main/java/com/shop/api/order/OrderServiceImpl.java:18"
+    ],
+    "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.next": [
+      "file:api/src/main/java/com/shop/api/order/OrderServiceImpl.java:22"
+    ],
+    "sym:store/src/main/java/com/shop/store/OrderStore.java#OrderStore.save": [
+      "file:api/src/main/java/com/shop/api/order/OrderServiceImpl.java:26"
+    ]
+  },
+  "paths": {}
+}

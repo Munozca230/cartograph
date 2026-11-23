@@ -106,15 +106,19 @@ export function pathOf(id: string): string {
 
 /** The `via` of an edge from an interface method to a Spring bean's method (the server's `SPRING_VIA`). */
 export const SPRING_VIA = "Spring bean";
+/** The same where Spring injects other beans (the server's `SPRING_OTHER_VIA`). */
+export const SPRING_OTHER_VIA = "another Spring bean";
 
 /** The label drawn on a dashed edge: a bridge's channel or route, or "bean de Spring". */
 export function viaLabel(via: string): string {
   if (via === SPRING_VIA) return "bean de Spring";
+  if (via === SPRING_OTHER_VIA) return "otro bean de Spring";
   return via.length > 36 ? `${via.slice(0, 35)}…` : via;
 }
 
 /** The tooltip line of a dashed edge. */
 export function viaTip(via: string): string {
   if (via === SPRING_VIA) return "Bean de Spring: la llamada a la interfaz ejecuta este método";
+  if (via === SPRING_OTHER_VIA) return "Otro bean de Spring: aquí Spring inyecta otros";
   return `Puente, no una llamada: ${via}`;
 }

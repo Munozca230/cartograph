@@ -1185,10 +1185,6 @@ pub struct SpringCallers {
     pub points: Vec<SpringPoint>,
     #[serde(skip_serializing_if = "is_zero")]
     pub points_more: usize,
-    /// Calls through a supertype's declaration left out because Spring gives the calling
-    /// field or parameter other beans: `(Type.m, count)`.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub other_beans: Vec<(String, usize)>,
 }
 
 /// One injection point and what it receives.
@@ -1358,10 +1354,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
     };
     // Direct calls, then calls to the method as a supertype declares it.
     let decls = if def.kind == SymbolKind::Method {
-        let mut v = super_decls(t, &id);
-        // Java: an overload, a private or a static method overrides nothing.
-        v.retain(|(d, _)| t.spring.overrides(d, &id));
-        v
+        super_decls(t, &id)
     } else {
         Vec::new()
     };
@@ -1375,18 +1368,11 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
     // purpose (`super.m()` in the override): not a call that may run the override.
     let own = split_symbol_id(&id)
         .and_then(|(p, q)| q.rsplit_once('.').map(|(ty, _)| format!("sym:{p}#{ty}.")));
-    // Spring: a call through a supertype's declaration made on an injected field or
-    // parameter reaches the beans Spring gives it, and no other implementation.
     let own_ty = crate::spring::type_of_method(t, &id);
     let dispatch = crate::dispatch::Dispatcher::new(t);
-    let mut other_beans: Vec<(String, usize)> = Vec::new();
     for (d, name) in &decls {
         let before = calls.len();
         let decl_ty = crate::spring::type_of_method(t, d);
-        // Only a method some bean runs can be passed over by Spring: a class that is no
-        // bean (a test's fake, one built with `new`) is reached whatever Spring injects.
-        let of_a_bean = dispatch.of_a_bean(d, &id);
-        let mut others = 0;
         for &i in t.callers_of(d) {
             let c = &t.calls[i];
             let mine = own.as_ref().is_some_and(|o| {
@@ -1394,63 +1380,24 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                     .as_deref()
                     .is_some_and(|x| x.starts_with(o.as_str()))
             });
-            // `super.m()` runs the method it names; a receiver of a class this one is not
-            // of never holds it.
-            let elsewhere = match (&own_ty, &decl_ty) {
-                (Some(own), Some(dt)) => {
-                    dispatch.as_named(c)
-                        || dispatch
-                            .receivers(c, dt)
-                            .iter()
-                            .all(|r| r != dt && r != own && !crate::spring::is_subtype(t, own, r))
-                }
-                _ => false,
-            };
-            if mine || elsewhere {
+            // `super.m()`, a private and a static method run as they are.
+            if mine || dispatch.as_named(c) {
                 continue;
             }
-            let beans = decl_ty.as_deref().and_then(|dt| dispatch.injected(c, dt));
-            // What each bean runs there; a bean whose class is not known, or no bean of
-            // the repo (one from a jar), says nothing: the plain hop stays.
-            let ran: Option<Vec<String>> = match &beans {
-                Some(beans) if !beans.is_empty() => {
-                    beans.iter().map(|b| dispatch.ran(b, d)).collect()
-                }
-                _ => None,
-            };
-            match ran {
-                Some(ms) if ms.contains(&id) => {
-                    calls.push((c, Some(format!("{name} (Spring bean)"))));
-                }
-                Some(_) if of_a_bean => others += 1,
-                _ => calls.push((c, Some(name.clone()))),
-            }
+            let note = decl_ty
+                .as_deref()
+                .and_then(|dt| dispatch.injected(c, dt))
+                .and_then(|given| spring_note(&dispatch, &given, d, &id));
+            calls.push((
+                c,
+                Some(note.map_or(name.clone(), |n| format!("{name} ({n})"))),
+            ));
         }
         if calls.len() > before {
             through_decls.push(clip(name, 120));
         }
-        if others > 0 {
-            other_beans.push((clip(name, 120), others));
-        }
     }
-    let spring = match spring_callers(t, own_ty.as_deref(), &decls, &calls) {
-        Some(mut sp) => {
-            sp.other_beans = other_beans;
-            Some(sp)
-        }
-        None if !other_beans.is_empty() => Some(SpringCallers {
-            ty: own_ty
-                .as_deref()
-                .map_or(String::new(), |x| clip(crate::spring::leaf(x), 80)),
-            beans: 0,
-            bean: false,
-            bean_names: Vec::new(),
-            points: Vec::new(),
-            points_more: 0,
-            other_beans,
-        }),
-        None => None,
-    };
+    let spring = spring_callers(t, own_ty.as_deref(), &decls, &calls);
     let through = calls.iter().filter(|c| c.1.is_some()).count();
     let bridged = bridged_callers(t, &id);
     let mut by_file: BTreeMap<&str, Vec<Site<'_>>> = BTreeMap::new();
@@ -1532,7 +1479,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                                     caller: c.caller.as_ref().map(|x| clip(x, 240)),
                                     confidence: c.confidence,
                                     scip: t.from_scip(c),
-                                    via: via.as_deref().map(|v| clip(v, 140)),
+                                    via: via.as_deref().map(|v| clip(v, 200)),
                                 })
                                 .collect(),
                             more: if per == 0 {
@@ -1837,8 +1784,45 @@ fn spring_callers(
         },
         points: rows,
         points_more: 0,
-        other_beans: Vec::new(),
     })
+}
+
+/// What Spring makes of a call through declaration `d` of method `id`: `Spring bean` when a
+/// bean it injects there runs `id`, else which beans it does inject. `None` when that is
+/// not known (none in the repo, one whose class is not known).
+fn spring_note(
+    dispatch: &crate::dispatch::Dispatcher<'_, SymbolTable>,
+    (beans, why): &(Vec<&cartograph_core::SpringBean>, crate::spring::Why),
+    d: &str,
+    id: &str,
+) -> Option<String> {
+    use crate::spring::Why;
+    if beans
+        .iter()
+        .any(|b| dispatch.ran(b, d).as_deref() == Some(id))
+    {
+        return Some("Spring bean".into());
+    }
+    // The class a `@Bean` method makes may be any below its declared type.
+    if beans
+        .iter()
+        .any(|b| b.factory.is_some() || dispatch.ran(b, d).is_none())
+    {
+        return None;
+    }
+    let names: Vec<String> = beans
+        .iter()
+        .take(3)
+        .map(|b| clip(&crate::spring::bean_label(b), 40))
+        .collect();
+    let names = spring_names(&names, beans.len().saturating_sub(3));
+    let why = match why {
+        Why::Primary => " (@Primary)",
+        Why::Qualifier => " (qualified)",
+        Why::Name => " (by name)",
+        _ => "",
+    };
+    (!beans.is_empty()).then(|| format!("Spring injects {names} here{why}"))
 }
 
 /// `CouponRule, SeasonRule, +2 more`.
@@ -1856,19 +1840,6 @@ fn render_spring(r: &CallersResult, s: &mut String) {
     let Some(sp) = &r.spring else {
         return;
     };
-    for (decl, n) in &sp.other_beans {
-        s.push_str(&format!(
-            "{n} call{} through {decl} reach{} {} (Spring injects {} there)\n",
-            if *n == 1 { "" } else { "s" },
-            if *n == 1 { "es" } else { "" },
-            if *n == 1 {
-                "another bean"
-            } else {
-                "other beans"
-            },
-            if *n == 1 { "it" } else { "them" },
-        ));
-    }
     if sp.points.is_empty() {
         if sp.beans > 0 {
             s.push_str(&format!(

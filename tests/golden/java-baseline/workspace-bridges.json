@@ -1,0 +1,20 @@
+{
+  "callees": {
+    "sym:api/src/main/java/com/acme/api/Billing.java#Billing.total": [
+      "sym:lib/src/main/java/com/acme/lib/Money.java#Money.cents"
+    ],
+    "sym:api/src/main/java/com/acme/api/Reports.java#Reports.run": [
+      "sym:legacy/src/main/java/com/acme/legacy/OldPrices.java#OldPrices",
+      "sym:legacy/src/main/java/com/acme/legacy/OldPrices.java#OldPrices.list"
+    ]
+  },
+  "callers": {
+    "sym:legacy/src/main/java/com/acme/legacy/OldPrices.java#OldPrices.list": [
+      "file:api/src/main/java/com/acme/api/Reports.java:7"
+    ],
+    "sym:lib/src/main/java/com/acme/lib/Money.java#Money.cents": [
+      "file:api/src/main/java/com/acme/api/Billing.java:7"
+    ]
+  },
+  "paths": {}
+}

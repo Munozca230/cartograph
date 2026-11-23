@@ -1,0 +1,97 @@
+{
+  "callees": {
+    "sym:core/src/main/java/com/acme/core/Runner.java#Runner.run": [
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.archive",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.close",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.export",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.load",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.lock",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.open",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.print",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.restore",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.save",
+      "sym:core/src/main/java/com/acme/core/Documents.java#Documents.share"
+    ],
+    "sym:server/app/src/main/java/com/acme/server/actions/FileActionBindings.java#FileActionBindings.bindings": [
+      "sym:server/app/src/main/java/com/acme/server/actions/ActionBinding.java#ActionBinding"
+    ],
+    "sym:server/app/src/main/java/com/acme/server/files/FileController.java#FileController.read": [
+      "sym:server/app/src/main/java/com/acme/server/files/FileServiceImpl.java#FileServiceImpl.read"
+    ],
+    "sym:server/app/src/main/java/com/acme/server/files/FilePaths.java#FilePaths.normalize": [
+      "sym:server/app/src/main/java/com/acme/server/files/FilePaths.java#FilePaths"
+    ],
+    "sym:server/app/src/main/java/com/acme/server/files/FileServiceImpl.java#FileServiceImpl.read": [
+      "sym:core/src/main/java/com/acme/core/Action.java#Action.key"
+    ],
+    "sym:server/app/src/test/java/com/acme/server/actions/FileActionBindingsTest.java#FileActionBindingsTest.bindsTheFileActions": [
+      "sym:server/app/src/main/java/com/acme/server/actions/FileActionBindings.java#FileActionBindings",
+      "sym:server/app/src/main/java/com/acme/server/actions/FileActionBindings.java#FileActionBindings.bindings"
+    ],
+    "sym:server/app/src/test/java/com/acme/server/actions/FileStoreTest.java#FileStoreTest.storesWhatTheServiceReads": [
+      "sym:server/app/src/test/java/com/acme/server/support/TestFiles.java#TestFiles.service"
+    ],
+    "sym:server/app/src/test/java/com/acme/server/files/FileControllerIT.java#FileControllerIT.servesAFile": [
+      "sym:server/app/src/main/java/com/acme/server/files/FileController.java#FileController",
+      "sym:server/app/src/main/java/com/acme/server/files/FileServiceImpl.java#FileServiceImpl"
+    ],
+    "sym:server/app/src/test/java/com/acme/server/files/FilePathsTest.java#FilePathsTest.normalizes": [
+      "sym:server/app/src/main/java/com/acme/server/files/FilePaths.java#FilePaths.normalize"
+    ],
+    "sym:server/app/src/test/java/com/acme/server/files/FileServiceImplTest.java#FileServiceImplTest.readsWithTheActionKey": [
+      "sym:server/app/src/main/java/com/acme/server/files/FileServiceImpl.java#FileServiceImpl"
+    ],
+    "sym:server/app/src/test/java/com/acme/server/support/TestFiles.java#TestFiles.service": [
+      "sym:server/app/src/main/java/com/acme/server/files/FileServiceImpl.java#FileServiceImpl"
+    ]
+  },
+  "callers": {
+    "sym:core/src/main/java/com/acme/core/Action.java#Action.key": [
+      "file:server/app/src/main/java/com/acme/server/files/FileServiceImpl.java:10"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.archive": [
+      "file:core/src/main/java/com/acme/core/Runner.java:28"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.close": [
+      "file:core/src/main/java/com/acme/core/Runner.java:11"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.export": [
+      "file:core/src/main/java/com/acme/core/Runner.java:22"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.load": [
+      "file:core/src/main/java/com/acme/core/Runner.java:25"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.lock": [
+      "file:core/src/main/java/com/acme/core/Runner.java:34",
+      "file:core/src/main/java/com/acme/core/Runner.java:37"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.open": [
+      "file:core/src/main/java/com/acme/core/Runner.java:8"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.print": [
+      "file:core/src/main/java/com/acme/core/Runner.java:17"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.restore": [
+      "file:core/src/main/java/com/acme/core/Runner.java:31"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.save": [
+      "file:core/src/main/java/com/acme/core/Runner.java:14"
+    ],
+    "sym:core/src/main/java/com/acme/core/Documents.java#Documents.share": [
+      "file:core/src/main/java/com/acme/core/Runner.java:21"
+    ],
+    "sym:server/app/src/main/java/com/acme/server/actions/FileActionBindings.java#FileActionBindings.bindings": [
+      "file:server/app/src/test/java/com/acme/server/actions/FileActionBindingsTest.java:8"
+    ],
+    "sym:server/app/src/main/java/com/acme/server/files/FilePaths.java#FilePaths.normalize": [
+      "file:server/app/src/test/java/com/acme/server/files/FilePathsTest.java:8"
+    ],
+    "sym:server/app/src/main/java/com/acme/server/files/FileServiceImpl.java#FileServiceImpl.read": [
+      "file:server/app/src/main/java/com/acme/server/files/FileController.java:16"
+    ],
+    "sym:server/app/src/test/java/com/acme/server/support/TestFiles.java#TestFiles.service": [
+      "file:server/app/src/test/java/com/acme/server/actions/FileStoreTest.java:10"
+    ]
+  },
+  "paths": {}
+}

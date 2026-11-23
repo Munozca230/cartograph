@@ -181,17 +181,6 @@ impl SpringTable {
             .filter(|b| !self.tests.contains(&b.file))
     }
 
-    /// Method `a` may override method `b` (or the other way): neither is known to be
-    /// private or static, and they share a number of parameters.
-    pub fn overrides(&self, a: &str, b: &str) -> bool {
-        match (self.method(a), self.method(b)) {
-            (Some(x), Some(y)) => {
-                !x.private && !y.private && !x.is_static && !y.is_static && x.overlaps(y)
-            }
-            _ => true,
-        }
-    }
-
     /// What is known of a Java method.
     pub fn method(&self, id: &str) -> Option<&Method> {
         self.methods.get(id)

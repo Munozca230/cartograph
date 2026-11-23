@@ -19,7 +19,7 @@
 //!
 //! Everything is bounded: walk depths, visited functions, chains and sinks listed.
 
-use crate::dispatch::Dispatcher;
+use crate::dispatch::{Dispatcher, Via};
 use crate::symbols::SymbolTable;
 use cartograph_core::{Bridge, BridgeKind, DataSink, SymbolCall, split_symbol_id};
 use serde::Serialize;
@@ -120,6 +120,8 @@ struct Edge {
     to: Node,
     line: u32,
     via: Option<String>,
+    /// To a bean where Spring injects others: followed when there is nothing else left.
+    other: bool,
 }
 
 /// A node of the walk: a symbol (or `file:` for top-level code), maybe only the lines of
@@ -218,15 +220,9 @@ impl<'t> Graph<'t> {
                 continue;
             }
             if spring {
-                // An interface or base class method: what the beans there run.
-                if let Some(r) = self.dispatch.reach(c) {
-                    let label = crate::spring::type_of_method(self.t, &c.target)
-                        .map(|x| format!("Spring bean of {}", crate::spring::leaf(&x)));
-                    out.extend(r.edges(&c.target).map(|(m, spring)| Edge {
-                        to: Node::whole(m),
-                        line: c.line,
-                        via: label.clone().filter(|_| spring),
-                    }));
+                let reach = self.dispatch.reach(c);
+                if !reach.is_empty() {
+                    out.extend(self.spring_edges(reach, &c.target, c.line));
                     continue;
                 }
             }
@@ -234,6 +230,7 @@ impl<'t> Graph<'t> {
                 to: Node::whole(&c.target),
                 line: c.line,
                 via: None,
+                other: false,
             });
         }
         for b in self.bridges_out.get(n.id.as_str()).into_iter().flatten() {
@@ -245,10 +242,39 @@ impl<'t> Graph<'t> {
                     to,
                     line: b.src_line,
                     via: Some(crate::bridges::step_label(b)),
+                    other: false,
                 });
             }
         }
+        // A method without a body a bridge lands on.
+        if spring && out.is_empty() {
+            let reach = self.dispatch.declared(&n.id);
+            out = self
+                .spring_edges(reach, &n.id, self.line_of(&n.id))
+                .collect();
+        }
         out
+    }
+
+    /// The edges of a call to `target` Spring has a part in.
+    fn spring_edges(
+        &self,
+        reach: Vec<(String, Via)>,
+        target: &str,
+        line: u32,
+    ) -> impl Iterator<Item = Edge> {
+        let ty = crate::spring::type_of_method(self.t, target).unwrap_or_default();
+        let ty = crate::spring::leaf(&ty).to_string();
+        reach.into_iter().map(move |(m, via)| Edge {
+            to: Node::whole(&m),
+            line,
+            via: match via {
+                Via::Named => None,
+                Via::Bean => Some(format!("Spring bean of {ty}")),
+                Via::OtherBean => Some(format!("another Spring bean of {ty}")),
+            },
+            other: via == Via::OtherBean,
+        })
     }
 
     fn label(&self, id: &str) -> String {
@@ -369,8 +395,9 @@ fn writes(d: &DataSink, method: &str) -> bool {
     starts(method, WRITES)
 }
 
-/// A data sink the walk found: `((rank, depth, method's turn, line), method, sink, writes)`.
-type Found<'t> = ((u8, usize, usize, u32), Node, &'t DataSink, bool);
+/// A data sink the walk found: `((through other beans, rank, depth, method's turn, line),
+/// method, sink, writes)`.
+type Found<'t> = ((bool, u8, usize, usize, u32), Node, &'t DataSink, bool);
 
 /// From a handler: the nearest data sink (writes first unless `read`), and the other
 /// collections reached.
@@ -381,7 +408,19 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
     let mut queue: VecDeque<(Node, usize)> = VecDeque::from([(start.clone(), 0)]);
     let mut found: Vec<Found<'_>> = Vec::new();
     let mut visits = 0;
-    while let Some((n, depth)) = queue.pop_front() {
+    // Beans Spring does not choose, once the rest is walked.
+    let mut later: VecDeque<(Node, usize)> = VecDeque::new();
+    let mut other = false;
+    loop {
+        let Some((n, depth)) = queue.pop_front() else {
+            if other || later.is_empty() {
+                break;
+            }
+            other = true;
+            queue.append(&mut later);
+            queue.retain(|(n, _)| seen.insert(n.clone()));
+            continue;
+        };
         visits += 1;
         if visits > SINK_VISITS {
             break;
@@ -396,12 +435,19 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
                 .unwrap_or("");
             let w = writes(d, name);
             let rank = u8::from(w == read);
-            found.push(((rank, depth, visits, d.line), n.clone(), d, w));
+            found.push(((other, rank, depth, visits, d.line), n.clone(), d, w));
         }
         if depth >= SINK_DEPTH {
             continue;
         }
         for e in g.edges(&n, true) {
+            if e.other && !other {
+                if !seen.contains(&e.to) {
+                    parent.entry(e.to.clone()).or_insert((n.clone(), e.clone()));
+                    later.push_back((e.to.clone(), depth + 1));
+                }
+                continue;
+            }
             if seen.insert(e.to.clone()) {
                 parent.insert(e.to.clone(), (n.clone(), e.clone()));
                 queue.push_back((e.to.clone(), depth + 1));
