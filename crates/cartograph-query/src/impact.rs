@@ -1,6 +1,7 @@
 //! `impact(nodes[])`: what breaks if these change, within [`limits::IMPACT`]. Transitive
-//! dependents (tests apart) grouped by folder, the **tests to run** (test files that reach
-//! any of the nodes, directly or transitively; classified as in `kind.rs`), and the entry
+//! dependents (tests apart), file by file when they all fit, else grouped by folder; the
+//! **tests to run** (test files that reach any of the nodes, directly or transitively;
+//! classified as in `kind.rs`), and the entry
 //! points reached. Type-only dependencies (TypeScript `import type`…) count: changing a
 //! type still breaks the build. What is reached only through them is marked `type_only`.
 //! With git history, files that usually change with a target but are not reached through
@@ -58,6 +59,10 @@ pub struct Impact {
     pub type_only: usize,
     pub folders: Vec<FolderImpact>,
     pub folders_more: usize,
+    /// Every dependent file, nearest first, when they all fit the answer (a handful);
+    /// empty otherwise, and `folders` sums them up.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<TestHit>,
     /// Test files that reach a target, nearest first.
     pub tests: Vec<TestHit>,
     pub tests_more: usize,
@@ -159,6 +164,9 @@ pub fn impact(repo: &Repo, nodes: &[String]) -> Result<Answer<Impact>, QueryErro
             e.2 += 1;
         }
     }
+    let mut nearest: Vec<(u32, FileIx)> =
+        dependents.iter().map(|&f| (dist[f as usize], f)).collect();
+    nearest.sort_by(|a, b| (a.0, g.path(a.1)).cmp(&(b.0, g.path(b.1))));
     let mut folders: Vec<(DirIx, usize, usize, usize)> =
         by.into_iter().map(|(d, (a, b, t))| (d, a, b, t)).collect();
     folders.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.cmp(&a.1)).then(a.0.cmp(&b.0)));
@@ -223,6 +231,18 @@ pub fn impact(repo: &Repo, nodes: &[String]) -> Result<Answer<Impact>, QueryErro
                 })
                 .collect(),
             folders_more: folders.len().saturating_sub(limit),
+            files: if nearest.len() <= limit {
+                nearest
+                    .iter()
+                    .map(|&(hops, f)| TestHit {
+                        id: g.id(NodeRef::File(f)),
+                        hops,
+                        type_only: typed(f),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             tests: tests
                 .iter()
                 .take(limit)
@@ -282,7 +302,17 @@ fn render(r: &Impact) -> String {
         r.folders.len() + r.folders_more,
         total_tests
     );
-    if !r.folders.is_empty() {
+    if !r.files.is_empty() {
+        s.push_str("dependents (hops to the change):\n");
+        for f in &r.files {
+            let types = if f.type_only { " (type)" } else { "" };
+            s.push_str(&format!(
+                "  {} {}{types}\n",
+                clip(&short(&f.id), 140),
+                f.hops
+            ));
+        }
+    } else if !r.folders.is_empty() {
         s.push_str("by folder (dependents, direct):\n");
         for f in &r.folders {
             let types = if f.type_only > 0 {

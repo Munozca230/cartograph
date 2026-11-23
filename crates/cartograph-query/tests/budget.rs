@@ -6,7 +6,7 @@ use cartograph_core::{
     CallStats, Confidence, Edge, EdgeKind, EntryKind, EntryPoint, Graph, ImportSite, Node,
     NodeKind, SuperType, Symbol, SymbolCall, SymbolKind, Symbols, node_id, symbol_id,
 };
-use cartograph_query::budget::{json_tokens, limits, tokens};
+use cartograph_query::budget::{JSON_BUDGET_FACTOR, json_tokens, limits, tokens};
 use cartograph_query::deps::{Direction, Level};
 use cartograph_query::list::Filter;
 use cartograph_query::{
@@ -124,7 +124,10 @@ fn assert_fits<T: Serialize>(what: &str, a: &Answer<T>, budget: usize) {
         "{what}: text {t} > {budget} tokens:\n{}",
         a.text
     );
-    assert!(j <= budget, "{what}: JSON {j} > {budget} tokens");
+    assert!(
+        j <= budget * JSON_BUDGET_FACTOR,
+        "{what}: JSON {j} > {budget} x {JSON_BUDGET_FACTOR} tokens"
+    );
     assert!(!a.text.is_empty(), "{what}: empty");
 }
 

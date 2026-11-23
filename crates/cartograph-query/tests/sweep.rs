@@ -6,7 +6,7 @@
 //! `CARTOGRAPH_SWEEP_DB=<data dir>/graph.db cargo test --release -p cartograph-query --test sweep -- --ignored`.
 
 use cartograph_core::Store;
-use cartograph_query::budget::{json_tokens, limits, tokens};
+use cartograph_query::budget::{JSON_BUDGET_FACTOR, json_tokens, limits, tokens};
 use cartograph_query::deps::{Direction, Level};
 use cartograph_query::graph::NodeRef;
 use cartograph_query::list::Filter;
@@ -27,7 +27,7 @@ fn over<T: Serialize>(
     match a {
         Ok(a) => {
             let (t, j) = (tokens(&a.text), json_tokens(&a.data));
-            if t > budget || j > budget {
+            if t > budget || j > budget * JSON_BUDGET_FACTOR {
                 bad.push(format!("{what}: text {t}, json {j} > {budget}"));
             }
         }

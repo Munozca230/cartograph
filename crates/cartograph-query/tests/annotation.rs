@@ -3,7 +3,7 @@
 
 mod common;
 
-use cartograph_query::budget::{json_tokens, limits, tokens};
+use cartograph_query::budget::{JSON_BUDGET_FACTOR, json_tokens, limits, tokens};
 use cartograph_query::explain::{Annotation, explain_with};
 
 #[test]
@@ -34,7 +34,7 @@ fn explain_shows_the_note_within_budget() {
     .unwrap();
     assert!(a.text.contains("note (stale"), "{}", a.text);
     assert!(tokens(&a.text) <= limits::EXPLAIN, "{}", tokens(&a.text));
-    assert!(json_tokens(&a.data) <= limits::EXPLAIN);
+    assert!(json_tokens(&a.data) <= limits::EXPLAIN * JSON_BUDGET_FACTOR);
 
     let a = explain_with(&repo, "src/main.ts", |_| None).unwrap();
     assert!(a.text.ends_with("note: none\n"), "{}", a.text);

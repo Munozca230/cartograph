@@ -5,7 +5,7 @@
 
 mod common;
 
-use cartograph_query::budget::{json_tokens, limits, tokens};
+use cartograph_query::budget::{JSON_BUDGET_FACTOR, json_tokens, limits, tokens};
 use cartograph_query::deps::{Direction, Level};
 use cartograph_query::find::FindKind;
 use cartograph_query::list::Filter;
@@ -29,7 +29,10 @@ fn both<T: Serialize>(name: &str, a: &Answer<T>, budget: usize) {
         "{name}: text over budget:\n{}",
         a.text
     );
-    assert!(json_tokens(&a.data) <= budget, "{name}: JSON over budget");
+    assert!(
+        json_tokens(&a.data) <= budget * JSON_BUDGET_FACTOR,
+        "{name}: JSON over budget"
+    );
     golden(&format!("query-app/{name}.txt"), &a.text);
     let json = serde_json::to_string_pretty(&a.data).unwrap() + "\n";
     golden(&format!("query-app/{name}.json"), &json);

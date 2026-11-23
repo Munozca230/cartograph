@@ -10,7 +10,7 @@ mod git_fixture;
 
 use cartograph_core::Store;
 use cartograph_index::{IndexOptions, git, index_to_store};
-use cartograph_query::budget::{json_tokens, limits, tokens};
+use cartograph_query::budget::{JSON_BUDGET_FACTOR, json_tokens, limits, tokens};
 use cartograph_query::list::Filter;
 use cartograph_query::{Answer, Config, FindingKind, Repo, explain, hotspots, impact, list};
 use common::golden;
@@ -46,7 +46,10 @@ fn repo_with(ix: &Indexed, config: Config) -> Repo {
 
 fn check<T: Serialize>(name: &str, a: &Answer<T>, budget: usize) {
     assert!(tokens(&a.text) <= budget, "{name}: text over budget");
-    assert!(json_tokens(&a.data) <= budget, "{name}: json over budget");
+    assert!(
+        json_tokens(&a.data) <= budget * JSON_BUDGET_FACTOR,
+        "{name}: json over budget"
+    );
     golden(&format!("query-history/{name}.txt"), &a.text);
     let json = serde_json::to_string_pretty(&a.data).unwrap() + "\n";
     golden(&format!("query-history/{name}.json"), &json);

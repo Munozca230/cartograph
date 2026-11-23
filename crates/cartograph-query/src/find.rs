@@ -74,6 +74,7 @@ pub fn find_symbols(repo: &crate::Repo, query: &str) -> Result<Answer<FindResult
         &[25, 20, 15, 10, 6, 3],
         |limit| FindResult {
             query: query.to_string(),
+            note: None,
             hits: hits
                 .iter()
                 .take(limit)
@@ -115,6 +116,10 @@ pub struct Hit {
 #[derive(Debug, Clone, Serialize)]
 pub struct FindResult {
     pub query: String,
+    /// Said before the hits when none holds the query as written: they are symbols found
+    /// instead, or only letter-by-letter matches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub hits: Vec<Hit>,
     /// Matches left out.
     pub more: usize,
@@ -213,6 +218,12 @@ fn score(query: &str, path: &str, name: &str) -> Option<(f64, bool)> {
 /// (`resolve` → `tests/remote_solver.rs`) are noise and left out; they stay when nothing
 /// matches as a substring, for typos (`rslv`).
 pub fn search(g: &RepoGraph, query: &str, kind: Option<FindKind>) -> Vec<(f64, NodeRef)> {
+    search_hits(g, query, kind).0
+}
+
+/// [`search`], and whether its hits hold every term as a substring (`false`: they only
+/// match letter by letter, or there are none).
+fn search_hits(g: &RepoGraph, query: &str, kind: Option<FindKind>) -> (Vec<(f64, NodeRef)>, bool) {
     let q = query.trim().to_lowercase().replace('\\', "/");
     let q = q.trim_start_matches("file:").trim_start_matches("dir:");
     let mut hits: Vec<(f64, bool, NodeRef, &str)> = Vec::new();
@@ -241,7 +252,8 @@ pub fn search(g: &RepoGraph, query: &str, kind: Option<FindKind>) -> Vec<(f64, N
             }
         }
     }
-    if hits.iter().any(|h| h.1) {
+    let substring = hits.iter().any(|h| h.1);
+    if substring {
         hits.retain(|h| h.1);
     }
     let mut hits: Vec<(f64, NodeRef, &str)> =
@@ -252,7 +264,57 @@ pub fn search(g: &RepoGraph, query: &str, kind: Option<FindKind>) -> Vec<(f64, N
             .then(a.2.len().cmp(&b.2.len()))
             .then(a.2.cmp(b.2))
     });
-    hits.into_iter().map(|(s, n, _)| (s, n)).collect()
+    (
+        hits.into_iter().map(|(s, n, _)| (s, n)).collect(),
+        substring,
+    )
+}
+
+/// Lower case, letters and digits only: `GET-DATE`, `get_date` and `getDate` are alike.
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Symbols whose `Class.name` holds the query once case and separators are ignored
+/// (`GET-DATE` → `ACTION_GET_DATE`, `getDate`), most called first. Empty for a query of
+/// fewer than three letters or digits.
+fn loose_symbols(repo: &crate::Repo, query: &str) -> Vec<Hit> {
+    let q = squash(query);
+    let t = &repo.symbols;
+    if q.chars().count() < 3 || !t.indexed {
+        return Vec::new();
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut hits: Vec<(usize, String, Hit)> = Vec::new();
+    for x in &t.symbols {
+        let id = x.id();
+        if !squash(&x.qualified()).contains(&q) || !seen.insert(id.clone()) {
+            continue;
+        }
+        let calls = t.callers_of(&id).len();
+        let label = format!(
+            "{}:{} {} {}",
+            x.file,
+            x.line,
+            x.kind.as_str(),
+            x.qualified()
+        );
+        hits.push((
+            calls,
+            id.clone(),
+            Hit {
+                id: budget::clip(&id, 240),
+                kind: FindKind::Sym,
+                label: budget::clip(&label, 200),
+                size: calls as u64,
+            },
+        ));
+    }
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    hits.into_iter().map(|h| h.2).collect()
 }
 
 fn hit(g: &RepoGraph, n: NodeRef) -> Hit {
@@ -283,12 +345,39 @@ pub fn find(
         return Err(QueryError::BadArgument("query is empty".into()));
     }
     let g = &repo.graph;
-    let all = search(g, query, kind);
+    let (all, substring) = search_hits(g, query, kind);
+    let steps = [25, 20, 15, 10, 6, 3];
+    // No path holds it: a symbol may (a constant, a function), else say the hits are
+    // only letter-by-letter matches.
+    if !substring && kind.is_none() {
+        let syms = loose_symbols(repo, query);
+        if !syms.is_empty() {
+            return Ok(fit(
+                limits::FIND,
+                &steps,
+                |limit| FindResult {
+                    query: query.to_string(),
+                    note: Some(
+                        "no file, folder or library has it in its name; symbols that do \
+                         (case and separators ignored):"
+                            .into(),
+                    ),
+                    hits: syms.iter().take(limit).cloned().collect(),
+                    more: syms.len().saturating_sub(limit),
+                },
+                render,
+            ));
+        }
+    }
+    let note = (!substring && !all.is_empty()).then(|| {
+        "no exact or substring match; closest (its letters in order), likely unrelated:".to_string()
+    });
     Ok(fit(
         limits::FIND,
-        &[25, 20, 15, 10, 6, 3],
+        &steps,
         |limit| FindResult {
             query: query.to_string(),
+            note: note.clone(),
             hits: all.iter().take(limit).map(|&(_, n)| hit(g, n)).collect(),
             more: all.len().saturating_sub(limit),
         },
@@ -301,6 +390,10 @@ fn render(r: &FindResult) -> String {
         return format!("no match for {:?}\n", r.query);
     }
     let mut s = String::new();
+    if let Some(note) = &r.note {
+        s.push_str(note);
+        s.push('\n');
+    }
     for h in &r.hits {
         let size = match h.kind {
             FindKind::File => format!("{} LOC", h.size),

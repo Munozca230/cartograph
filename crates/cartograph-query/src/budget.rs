@@ -53,9 +53,16 @@ pub struct Answer<T> {
     pub text: String,
 }
 
-/// Build with the largest item limit of `steps` (descending) whose text and JSON both fit in
-/// `budget` tokens. If even the smallest does not fit, the text is cut line by line with an
-/// explicit "+N more lines" marker (the JSON keeps the smallest build).
+/// How much larger than the text budget the JSON of an answer may be. The text is what an
+/// agent reads; the JSON (`--structured`) repeats every id and path in full and costs about
+/// twice the tokens, so holding it to the text's budget made the JSON, not the text, decide
+/// how many items an answer lists.
+pub const JSON_BUDGET_FACTOR: usize = 2;
+
+/// Build with the largest item limit of `steps` (descending) whose text fits in `budget`
+/// tokens and whose JSON fits in `budget` × [`JSON_BUDGET_FACTOR`]. If even the smallest
+/// does not fit, the text is cut line by line with an explicit "+N more lines" marker (the
+/// JSON keeps the smallest build).
 pub fn fit<T, B, R>(budget: usize, steps: &[usize], build: B, render: R) -> Answer<T>
 where
     T: Serialize,
@@ -66,7 +73,7 @@ where
     for &limit in steps {
         let data = build(limit);
         let text = render(&data);
-        if tokens(&text) <= budget && json_tokens(&data) <= budget {
+        if tokens(&text) <= budget && json_tokens(&data) <= budget * JSON_BUDGET_FACTOR {
             return Answer { data, text };
         }
         last = Some((data, text));

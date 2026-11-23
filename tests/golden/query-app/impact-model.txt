@@ -1,10 +1,15 @@
 impact of src/core/model.ts (1 file): 10 files depend on it (6 directly, 2 through types only) in 5 folders, plus 3 test files
-by folder (dependents, direct):
-  src/ 3 2
-  src/core/ 3 1 (1 type)
-  src/ui/ 2 1 (1 type)
-  scripts/ 1 1
-  src/infra/ 1 1
+dependents (hops to the change):
+  scripts/seed.ts 1
+  src/big.ts 1
+  src/core/service.ts 1
+  src/dead.ts 1
+  src/infra/db.ts 1
+  src/ui/widgets.ts 1 (type)
+  src/core/repo.ts 2
+  src/core/util.ts 2 (type)
+  src/main.ts 2
+  src/ui/app.ts 2
 tests to run: 3 of 3 in the repo (100%), 0 import it directly (hops to the change):
   src/core/service.test.ts 2
   src/ui/app.spec.ts 3

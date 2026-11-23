@@ -12,23 +12,24 @@ It works with any MCP client or coding agent that can start a stdio server: see
 
 ## Tools
 
-Every answer is compact text within a token budget. Long lists end in `+N more`; nothing
-is dropped silently. `--structured` adds the same data as JSON in `structuredContent`; it
-is off by default because some clients show only the structured JSON to the model,
-*instead of* the text, which reads worse and costs about twice the tokens.
+Every answer is compact text within a token budget: the budget, not a fixed count,
+decides how many items it lists. Long lists end in `+N more`; nothing is dropped
+silently. `--structured` adds the same data as JSON in `structuredContent` (held to twice
+the budget); it is off by default because some clients show only the structured JSON to
+the model, *instead of* the text, which reads worse and costs about twice the tokens.
 
 | Tool | Use it instead of… | Arguments (defaults) | Budget |
 |---|---|---|---|
 | `overview` | listing directories, reading READMEs | `path` (repo), `depth` 1-4 (1) | 1.5k tokens |
 | `explain` | opening a file to learn its role and neighbours | `node` | 1k |
 | `deps` | grepping import statements | `node`, `dir` out/in/both (out), `depth` 1-3 (1), `level` file/folder (file) | 1.5k |
-| `impact` | guessing what an edit breaks and which tests to run | `nodes` (list) | 1.5k |
-| `find` | glob/grep for a name | `query`, `kind` file/dir/ext/sym (all but sym) | 0.8k |
+| `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder) | `nodes` (list) | 1.5k |
+| `find` | glob/grep for a name | `query`, `kind` file/dir/ext/sym (all but sym; symbols too when no path has it) | 0.8k |
 | `path` | tracing why A depends on B by hand | `from`, `to` | 0.8k |
 | `symbols` | reading a file for its outline | `node` | 1k |
 | `callers` | grepping a function name before changing it | `symbol` | 1k |
 | `hierarchy` | grepping `extends` / `implements` / `impl … for` | `symbol` (a type, or a method of one) | 0.8k |
-| `entries` | searching for main, routes, commands | `kind`, `within` | 1k |
+| `entries` | searching for main, routes, commands, IPC handlers | `kind`, `within` | 1k |
 | `findings` | reviewing structure by eye | `kind` (list), `severity`, `within`, `violations` | 1.5k |
 | `check` | — (rules of `cartograph.toml`) | `base` (none): a git revision; then only violations the change introduces fail | 1k |
 | `diff` | reading `git diff` to review a branch | `base` (merge-base with the default branch) | 1.5k |
@@ -102,6 +103,7 @@ URL with a one-line description of what it shows.
 |---|---|
 | unknown id | `isError: true`, "did you mean: a, b, c?" from fuzzy matches, or a pointer to `find` |
 | ambiguous symbol name | `isError: true` with the candidate ids |
+| `find` with no path holding the query | the symbols whose name holds it (case and separators ignored: `GET-DATE` finds `ACTION_GET_DATE`) after a line saying so; with none, the letter-by-letter matches after "no exact or substring match; closest …" |
 | `callers` of a name no symbol has | the symbols whose name starts with it (else contains it, 3 characters at least): one is answered for, with a first line that says so (no `formatAction`; showing `formatActionCommand`); several are the ambiguous error above; none is the unknown-id error |
 | bad enum value (`dir: "up"`) | `isError: true` with the accepted values |
 | wrong type, missing field | `isError: true`, "failed to deserialize parameters: missing field `node`" |

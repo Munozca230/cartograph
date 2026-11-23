@@ -37,6 +37,50 @@
     }
   ],
   "folders_more": 0,
+  "files": [
+    {
+      "id": "file:scripts/seed.ts",
+      "hops": 1
+    },
+    {
+      "id": "file:src/big.ts",
+      "hops": 1
+    },
+    {
+      "id": "file:src/core/service.ts",
+      "hops": 1
+    },
+    {
+      "id": "file:src/dead.ts",
+      "hops": 1
+    },
+    {
+      "id": "file:src/infra/db.ts",
+      "hops": 1
+    },
+    {
+      "id": "file:src/ui/widgets.ts",
+      "hops": 1,
+      "type_only": true
+    },
+    {
+      "id": "file:src/core/repo.ts",
+      "hops": 2
+    },
+    {
+      "id": "file:src/core/util.ts",
+      "hops": 2,
+      "type_only": true
+    },
+    {
+      "id": "file:src/main.ts",
+      "hops": 2
+    },
+    {
+      "id": "file:src/ui/app.ts",
+      "hops": 2
+    }
+  ],
   "tests": [
     {
       "id": "file:src/core/service.test.ts",

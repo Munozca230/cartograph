@@ -150,7 +150,7 @@ fn path_and_name_matching_several_symbols_is_ambiguous() {
 }
 
 /// `find` with kind `sym` searches symbols, as `find_symbols` does; without a kind it
-/// searches paths and packages only.
+/// searches paths and packages, and symbols only when no path has the query.
 #[test]
 fn find_with_kind_sym_searches_symbols() {
     let r = repo(&[(
@@ -170,7 +170,25 @@ fn find_with_kind_sym_searches_symbols() {
         hits(Some(FindKind::Sym)),
         vec!["sym:src/a.ts#compactSegments"]
     );
-    assert!(hits(None).iter().all(|h| !h.starts_with("sym:")));
+    // No path holds it: the symbols that do, said so.
+    let none = find::find(&r, "compactSegments", None).unwrap();
+    assert_eq!(
+        none.data
+            .hits
+            .iter()
+            .map(|h| h.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sym:src/a.ts#compactSegments"]
+    );
+    assert!(
+        none.text.starts_with("no file, folder or library has it"),
+        "{}",
+        none.text
+    );
+    // A path that holds it: paths only, no note.
+    let path = find::find(&r, "src/a", None).unwrap();
+    assert!(path.data.hits.iter().all(|h| !h.id.starts_with("sym:")));
+    assert!(path.data.note.is_none());
     let direct = find::find_symbols(&r, "compactSegments").unwrap();
     let via = find::find(&r, "compactSegments", Some(FindKind::Sym)).unwrap();
     assert_eq!(via.text, direct.text);
@@ -397,4 +415,64 @@ fn callers_complete_a_partial_name() {
         symbols::callers(&r, "formatActonCommand"),
         Err(QueryError::UnknownNode { .. })
     ));
+}
+
+/// `find` of a name no path holds and no symbol has: the letter-by-letter matches come with
+/// a note saying they are not substring matches. Symbols match with case and separators
+/// ignored (`GET-DATE` finds `ACTION_GET_DATE`).
+#[test]
+fn find_says_when_hits_are_only_approximate() {
+    let r = repo(&[
+        (
+            "src/actions.ts",
+            "export const ACTION_GET_DATE = \"GET-DATE\";\n",
+        ),
+        ("scripts/migrate-legacy-data.js", "const a = 1;\n"),
+    ]);
+    let a = find::find(&r, "GET-DATE", None).unwrap();
+    assert!(
+        a.text.starts_with("no file, folder or library has it"),
+        "{}",
+        a.text
+    );
+    assert!(a.text.contains("ACTION_GET_DATE"), "{}", a.text);
+    let a = find::find(&r, "gtlgcy", None).unwrap();
+    assert!(
+        a.text.starts_with("no exact or substring match; closest"),
+        "{}",
+        a.text
+    );
+    assert!(a.text.contains("migrate-legacy-data.js"), "{}", a.text);
+    let a = find::find(&r, "migrate", None).unwrap();
+    assert!(a.data.note.is_none(), "{}", a.text);
+}
+
+/// `hierarchy` lists as many subtypes as its text budget holds: 21 subclasses with long
+/// paths all fit (the JSON, with every id and path in full, no longer decides).
+#[test]
+fn hierarchy_lists_what_the_budget_holds() {
+    let dir = "src/main/platform/execution/steps/implementations";
+    let mut files = vec![(
+        format!("{dir}/StepBase.ts"),
+        "export abstract class StepBase {\n    run(): void {}\n}\n".to_string(),
+    )];
+    for i in 0..21 {
+        files.push((
+            format!("{dir}/ConcreteStepNumber{i:02}.ts"),
+            format!(
+                "import {{ StepBase }} from './StepBase';\nexport class ConcreteStepNumber{i:02} extends StepBase {{}}\n"
+            ),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
+    let r = repo(&refs);
+    let h = cartograph_query::hierarchy::hierarchy(&r, "StepBase").unwrap();
+    assert_eq!(h.data.subtypes, 21);
+    assert_eq!(h.data.subs_more, 0, "{}", h.text);
+    assert!(
+        cartograph_query::budget::tokens(&h.text) <= cartograph_query::budget::limits::HIERARCHY
+    );
 }
