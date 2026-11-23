@@ -476,7 +476,7 @@ tool        calls errors  p50 ms  p95 ms  avg tok  max tok budget   over  trunc
 callers         9      3       3      19      395      473   1000      0    50%
 explain         9      6       4      23      256      256   1000      0   100%
 deps            6      3       1       2      122      124   1500      0     0%
-find            6      0       9      46      172      303   1500      0    50%
+find            6      0       9      46      172      303    800      0    50%
 impact          6      0       3       4      522      616   1500      0     0%
 overview        4      0       3     323      561      601   1500      0   100%
 check           3      0       1       1       54       57   1000      0     0%
@@ -486,7 +486,7 @@ hotspots        3      0       2       2       37       40   1000      0     0%
 path            3      0       3       3      155      157    800      0     0%
 symbols         3      0       2       2      126      128   1000      0     0%
 unknown         1      1       1       1        0        0      -      -     0%
-(tokens = chars/4 of the text sent; over = answers above the budget; trunc = answers that left items out, "+N more")
+(tokens = chars/4 of the text sent; over = answers above the budget; trunc = answers that left items out, "+N more"; a `find` that answers with a string key's trace is counted as `find:trace`, with the trace's 1.5k budget)
 
 errors: ambiguous 3, bad_argument 3, bad_params 3, unknown_node 3, unknown_tool 1
 ```

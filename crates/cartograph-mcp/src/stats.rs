@@ -37,6 +37,24 @@ pub const VERSION: u8 = 1;
 /// client sent is not recorded).
 pub const UNKNOWN_TOOL: &str = "unknown";
 
+/// What a `find` that answers with a string key's trace is recorded as: its budget is the
+/// trace's, and the other `find` answers keep theirs.
+pub const FIND_TRACE: &str = "find:trace";
+
+/// The name a call is recorded under: [`FIND_TRACE`] for a `find` whose answer is a key's
+/// trace (its header `key "…":`), else the tool's.
+pub fn stats_tool<'t>(tool: &'t str, text: &str) -> &'t str {
+    let traced = text
+        .lines()
+        .take(3)
+        .any(|l| l.starts_with("key \"") && l.ends_with(':'));
+    if tool == "find" && traced {
+        FIND_TRACE
+    } else {
+        tool
+    }
+}
+
 /// Who wrote a record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,7 +152,12 @@ impl Recorder {
     ) {
         let mut r = self.record(Source::Mcp, tool, took);
         match res {
-            Ok(CallToolResponse::Complete(c)) => describe(c, &mut r),
+            Ok(CallToolResponse::Complete(c)) => {
+                describe(c, &mut r);
+                if r.status == Status::Ok {
+                    r.tool = stats_tool(tool, &result_text(c)).to_string();
+                }
+            }
             Ok(_) => {}
             // The message names the tool or an argument: only the kind is recorded.
             Err(_) => {
@@ -316,8 +339,9 @@ pub fn budget_of(tool: &str) -> Option<usize> {
         "explain" => EXPLAIN,
         "deps" => DEPS,
         "impact" => IMPACT,
-        // A string key's trace may take up to TRACE; paths and symbols stay within FIND.
-        "find" => TRACE,
+        "find" => FIND,
+        // A `find` that answers with a string key's trace (see `stats_tool`).
+        FIND_TRACE => TRACE,
         "path" => PATH,
         "findings" => FINDINGS,
         "check" => CHECK,
@@ -499,6 +523,20 @@ mod tests {
     /// processes likely in a test.
     pub(super) static ROTATE_PAUSE_MS: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(0);
+
+    #[test]
+    fn a_find_that_traces_a_key_is_counted_apart() {
+        let trace =
+            "key \"READ-FILE\" in 2 members (core, ui):\ndefined (1):\n  a.java:3 enum A.R\n";
+        assert_eq!(stats_tool("find", trace), FIND_TRACE);
+        let variant = "no key is the query as written; the closest differs in case or \
+                       separators (lower confidence): \"READ-FILE\"\nkey \"READ-FILE\":\ndefined (1):\n";
+        assert_eq!(stats_tool("find", variant), FIND_TRACE);
+        assert_eq!(stats_tool("find", "src/key.rs  12 LOC\n"), "find");
+        assert_eq!(stats_tool("impact", trace), "impact");
+        assert_eq!(budget_of("find"), Some(budget::limits::FIND));
+        assert_eq!(budget_of(FIND_TRACE), Some(budget::limits::TRACE));
+    }
 
     #[test]
     fn truncation_markers() {
