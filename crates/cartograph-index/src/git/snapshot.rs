@@ -473,12 +473,17 @@ impl BaseSpec {
 
 /// The base of each member of `ws` (see the module docs). `spec` `None` = each member's
 /// default base. A revision named for that member alone must resolve; one given for every
-/// member may be missing from some (they take their working tree).
+/// member (or the default) may be missing from some (they take their working tree), but
+/// not from every member asked for it: that is an error, as for a single repo (a typo in
+/// the revision must not compare every member with itself).
 pub fn workspace_bases(
     ws: &cartograph_core::Workspace,
     spec: Option<&BaseSpec>,
 ) -> Result<Vec<MemberBase>, IndexError> {
     let mut out = Vec::new();
+    // Members asked for the shared revision (or the default), and the first failure.
+    let (mut shared_asked, mut shared_found) = (0, 0);
+    let mut shared_error: Option<String> = None;
     for m in &ws.members {
         let base = |revision, note: Option<String>| MemberBase {
             member: m.name.clone(),
@@ -501,13 +506,38 @@ pub fn workspace_bases(
             Some((rev, _)) => resolve_in(&opened, rev),
             None => default_base(&m.root),
         };
+        let shared = !matches!(wanted, Some((_, true)));
+        if shared {
+            shared_asked += 1;
+        }
         match (resolved, wanted) {
-            (Ok(r), _) => out.push(base(Some(r), None)),
+            (Ok(r), _) => {
+                shared_found += usize::from(shared);
+                out.push(base(Some(r), None));
+            }
             (Err(e), Some((rev, true))) => {
                 return Err(IndexError::Git(format!("member {}: {rev}: {e}", m.name)));
             }
-            (Err(e), _) => out.push(base(None, Some(e.to_string()))),
+            (Err(e), _) => {
+                shared_error.get_or_insert_with(|| format!("member {}: {e}", m.name));
+                out.push(base(None, Some(e.to_string())));
+            }
         }
+    }
+    if shared_asked > 0 && shared_found == 0 {
+        let what = match spec.and_then(|s| s.all.as_deref()) {
+            Some(rev) => format!("revision {rev:?}"),
+            None => "a default base".to_string(),
+        };
+        return Err(IndexError::Git(format!(
+            "no member's repository has {what} ({})",
+            shared_error.unwrap_or_default()
+        )));
+    }
+    if !out.iter().any(|b| b.revision.is_some()) {
+        return Err(IndexError::Git(
+            "no member is a git repository; diff and check --base need one".into(),
+        ));
     }
     Ok(out)
 }

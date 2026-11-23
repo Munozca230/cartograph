@@ -58,7 +58,7 @@ fn union(parent: &mut [usize], a: usize, b: usize) {
 }
 
 /// People: author index → person index, and each person's display name.
-fn people(raw: &GitRaw) -> (HashMap<u32, usize>, Vec<String>) {
+pub(super) fn people(raw: &GitRaw) -> (HashMap<u32, usize>, Vec<String>) {
     let n = raw.authors.len();
     let mut parent: Vec<usize> = (0..n).collect();
     let mut by_email: HashMap<&str, usize> = HashMap::new();

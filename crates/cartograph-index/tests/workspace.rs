@@ -280,3 +280,108 @@ fn a_member_folder_alone_is_a_plain_repo() {
     );
     assert!(out.graph.node("dir:api").is_none());
 }
+
+/// Every commit names an author that is stored.
+fn authors_complete(store: &Store) {
+    let raw = store.load_git_raw().unwrap();
+    let ids: std::collections::HashSet<u32> = raw.authors.iter().map(|a| a.id).collect();
+    for c in &raw.commits {
+        assert!(
+            ids.contains(&c.author),
+            "commit {} names a missing author",
+            c.id
+        );
+    }
+}
+
+#[test]
+fn a_member_rebuilt_from_scratch_keeps_its_authors() {
+    let ws = workspace_basic();
+    let data = tempfile::tempdir().unwrap();
+    let (_, mut store) = index(&ws.root, data.path());
+    git::update(&ws.root, &mut store).unwrap();
+    authors_complete(&store);
+    // A rewritten history (the cursor is no ancestor of HEAD any more): a full rebuild of
+    // that member alone, by the same people.
+    let api = ws.repo("api");
+    api.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    api.touch("src/main/java/com/acme/api/UserService.java", "// again");
+    api.commit(GRACE, 4, "review again");
+    let out = git::update(&ws.root, &mut store).unwrap();
+    assert!(out.read);
+    let api_status: GitStatus =
+        serde_json::from_str(&store.get_meta("git:api").unwrap().unwrap()).unwrap();
+    assert_eq!(api_status.mode, "full");
+    authors_complete(&store);
+    let h = store.load_history().unwrap();
+    let service = h
+        .files
+        .iter()
+        .find(|f| f.path == "api/src/main/java/com/acme/api/UserService.java")
+        .unwrap();
+    assert_eq!(service.authors.len(), 2, "{:?}", service.authors);
+}
+
+#[test]
+fn people_are_counted_per_member_and_once_in_the_summary() {
+    let ws = workspace_basic();
+    let data = tempfile::tempdir().unwrap();
+    let (_, mut store) = index(&ws.root, data.path());
+    let out = git::update(&ws.root, &mut store).unwrap();
+    let member = |m: &str| -> GitStatus {
+        serde_json::from_str(&store.get_meta(&format!("git:{m}")).unwrap().unwrap()).unwrap()
+    };
+    assert_eq!(member("lib").authors, 1, "only Ada committed to lib");
+    assert_eq!(member("api").authors, 2);
+    assert_eq!(out.status.authors, 2, "Ada and Grace, once each");
+}
+
+#[test]
+fn a_member_removed_then_added_again_is_read_again() {
+    let ws = workspace_basic();
+    let data = tempfile::tempdir().unwrap();
+    let file = ws.root.join(cartograph_core::WORKSPACE_FILE);
+    let full = std::fs::read_to_string(&file).unwrap();
+    let (_, mut store) = index(&ws.root, data.path());
+    git::update(&ws.root, &mut store).unwrap();
+    // Without mcp: its rows and keys go.
+    let without = full.replace("[[member]]\nname = \"mcp\"\npath = \"mcp\"\n", "");
+    assert_ne!(without, full);
+    std::fs::write(&file, &without).unwrap();
+    git::update(&ws.root, &mut store).unwrap();
+    for k in ["git:mcp", "git_cursor:mcp", "git_scope:mcp"] {
+        assert_eq!(store.get_meta(k).unwrap(), None, "{k}");
+    }
+    assert!(!store.git_members().unwrap().contains(&"mcp".to_string()));
+    // Back, HEAD unchanged: its history is read again.
+    std::fs::write(&file, &full).unwrap();
+    git::update(&ws.root, &mut store).unwrap();
+    let h = store.load_history().unwrap();
+    assert!(
+        h.files.iter().any(|f| f.path == "mcp/src/tools.ts"),
+        "{:?}",
+        h.files
+    );
+}
+
+#[test]
+fn a_single_repo_over_a_workspace_store_starts_over() {
+    let ws = workspace_basic();
+    let data = tempfile::tempdir().unwrap();
+    let (_, mut store) = index(&ws.root, data.path());
+    git::update(&ws.root, &mut store).unwrap();
+    // The same data dir, now for the API alone.
+    let out = git::update(&ws.root.join("backend-api"), &mut store).unwrap();
+    assert!(out.read);
+    assert_eq!(out.status.commits, 2);
+    assert_eq!(store.git_members().unwrap(), vec![String::new()]);
+    assert_eq!(store.get_meta("git:api").unwrap(), None);
+    let h = store.load_history().unwrap();
+    assert!(
+        h.files
+            .iter()
+            .any(|f| f.path == "src/main/java/com/acme/api/UserService.java")
+    );
+    assert!(h.files.iter().all(|f| !f.path.starts_with("api/")));
+    authors_complete(&store);
+}

@@ -465,6 +465,17 @@ impl Store {
         Ok(history)
     }
 
+    /// The members the stored git rows belong to (`""` for a single repo).
+    pub fn git_members(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT member FROM git_commits ORDER BY member")?;
+        let out = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(out)
+    }
+
     /// Raw connection, for ad-hoc queries (reports, tests).
     pub fn connection(&self) -> &Connection {
         &self.conn
@@ -614,8 +625,24 @@ impl WriteTx<'_> {
         delete_history_under(&self.tx, member)
     }
 
-    /// Delete the git layer of every member not in `keep` (and that of a single repo).
+    /// Delete the git layer of every member not in `keep` (and that of a single repo, unless
+    /// `keep` holds `""`): rows, aggregates and their meta keys (status, cursor, scope), so a
+    /// member added again starts from scratch.
     pub fn retain_git_members(&self, keep: &[&str]) -> Result<()> {
+        let mut stmt = self.tx.prepare(
+            "SELECT key FROM meta WHERE key LIKE 'git:%' OR key LIKE 'git_cursor%'
+               OR key LIKE 'git_scope%'",
+        )?;
+        let keys: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        drop(stmt);
+        for k in keys {
+            let member = k.split_once(':').map_or("", |(_, m)| m);
+            if !keep.contains(&member) {
+                self.tx.execute("DELETE FROM meta WHERE key = ?1", [&k])?;
+            }
+        }
         let mut stmt = self.tx.prepare("SELECT DISTINCT member FROM git_commits")?;
         let found: Vec<String> = stmt
             .query_map([], |r| r.get::<_, String>(0))?
@@ -633,6 +660,9 @@ impl WriteTx<'_> {
             } else {
                 self.clear_git_member(m)?;
             }
+        }
+        if keep.contains(&"") {
+            return Ok(());
         }
         // Aggregates of paths outside every member (a single repo before).
         let mut stmt = self.tx.prepare("SELECT path FROM git_files")?;

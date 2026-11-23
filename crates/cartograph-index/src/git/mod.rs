@@ -73,7 +73,18 @@ fn status(state: GitState) -> GitStatus {
 /// `root` holds a `cartograph-workspace.toml`, with each member's repository.
 pub fn update(root: &Path, store: &mut Store) -> Result<GitOutcome, IndexError> {
     match cartograph_core::Workspace::find(root)? {
-        None => update_member(root, "", store),
+        None => {
+            // A workspace's history (this data dir held one before) is no single repo's.
+            if store.git_members()?.iter().any(|m| !m.is_empty()) {
+                let tx = store.begin_replace()?;
+                tx.retain_git_members(&[""])?;
+                tx.clear_git()?;
+                tx.delete_meta(CURSOR_META)?;
+                tx.delete_meta(SCOPE_META)?;
+                tx.commit()?;
+            }
+            update_member(root, "", store)
+        }
         Some(ws) => update_workspace(&ws, store),
     }
 }
@@ -92,6 +103,8 @@ fn update_workspace(
         outcomes.push((m.name.as_str(), update_member(&m.root, &m.name, store)?));
     }
     let mut st = summary(&outcomes);
+    // People are counted once across members (one may commit to several).
+    st.authors = aggregate::people(&store.load_git_raw()?).1.len() as u64;
     let previous = store.load_history()?.status;
     let read = outcomes.iter().any(|(_, o)| o.read);
     // Without a read, the pass numbers are those of the last one (as for a single repo).
@@ -120,8 +133,12 @@ fn summary(outcomes: &[(&str, GitOutcome)]) -> GitStatus {
         .map(|(_, o)| &o.status)
         .filter(|s| s.state == GitState::Ok)
         .collect();
+    let errored = outcomes
+        .iter()
+        .any(|(_, o)| o.status.state == GitState::Error);
     let mut st = status(match (ok.is_empty(), outcomes.first()) {
         (false, _) => GitState::Ok,
+        (true, _) if errored => GitState::Error,
         (true, Some((_, o))) => o.status.state,
         (true, None) => GitState::NoGit,
     });
@@ -373,13 +390,19 @@ fn update_member(root: &Path, member: &str, store: &mut Store) -> Result<GitOutc
     })
 }
 
-/// The rows of one member: its commits and their changes, with every author.
+/// The rows of one member: its commits and their changes, with their authors.
 fn only_member(raw: GitRaw, member: &str) -> GitRaw {
     let seqs: HashSet<u32> = raw
         .commits
         .iter()
         .filter(|c| c.member == member)
         .map(|c| c.seq)
+        .collect();
+    let authors: HashSet<u32> = raw
+        .commits
+        .iter()
+        .filter(|c| c.member == member)
+        .map(|c| c.author)
         .collect();
     GitRaw {
         commits: raw
@@ -392,14 +415,20 @@ fn only_member(raw: GitRaw, member: &str) -> GitRaw {
             .into_iter()
             .filter(|c| seqs.contains(&c.seq))
             .collect(),
-        authors: raw.authors,
+        authors: raw
+            .authors
+            .into_iter()
+            .filter(|a| authors.contains(&a.id))
+            .collect(),
     }
 }
 
 /// Append `scanned` (parents first) to `raw`, as commits of `keys.member` with its paths;
-/// returns just the new rows.
+/// returns just the new rows, with every author they name (known ones too: a member's
+/// rebuild deletes the authors only it named, and writes them back from these).
 fn append(raw: &mut GitRaw, scanned: &[scan::Scanned], keys: &Keys) -> GitRaw {
     let mut new = GitRaw::default();
+    let mut named: HashSet<u32> = HashSet::new();
     let mut ids: HashMap<(String, String), u32> = raw
         .authors
         .iter()
@@ -415,14 +444,16 @@ fn append(raw: &mut GitRaw, scanned: &[scan::Scanned], keys: &Keys) -> GitRaw {
                 let id = next_author;
                 next_author += 1;
                 ids.insert(key, id);
-                new.authors.push(GitAuthor {
-                    id,
-                    name: s.name.clone(),
-                    email_hash: s.email_hash.clone(),
-                });
                 id
             }
         };
+        if named.insert(author) {
+            new.authors.push(GitAuthor {
+                id: author,
+                name: s.name.clone(),
+                email_hash: s.email_hash.clone(),
+            });
+        }
         new.commits.push(GitCommit {
             seq,
             id: s.id.clone(),
@@ -441,7 +472,13 @@ fn append(raw: &mut GitRaw, scanned: &[scan::Scanned], keys: &Keys) -> GitRaw {
             removed: c.removed,
         }));
     }
-    raw.authors.extend(new.authors.iter().cloned());
+    let known: HashSet<u32> = raw.authors.iter().map(|a| a.id).collect();
+    raw.authors.extend(
+        new.authors
+            .iter()
+            .filter(|a| !known.contains(&a.id))
+            .cloned(),
+    );
     raw.commits.extend(new.commits.iter().cloned());
     raw.changes.extend(new.changes.iter().cloned());
     new
@@ -506,4 +543,33 @@ fn record_error(
         changed,
         read: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(state: GitState) -> GitOutcome {
+        GitOutcome {
+            status: status(state),
+            changed: false,
+            read: false,
+        }
+    }
+
+    #[test]
+    fn a_workspace_without_history_says_why() {
+        let none = [
+            ("api", outcome(GitState::NoGit)),
+            ("lib", outcome(GitState::Error)),
+        ];
+        assert_eq!(summary(&none).state, GitState::Error);
+        let empty = [("api", outcome(GitState::NoCommits))];
+        assert_eq!(summary(&empty).state, GitState::NoCommits);
+        let one = [
+            ("api", outcome(GitState::Error)),
+            ("lib", outcome(GitState::Ok)),
+        ];
+        assert_eq!(summary(&one).state, GitState::Ok);
+    }
 }
