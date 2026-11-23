@@ -42,6 +42,11 @@ fixture = "../tests/fixtures/spring-java"
 [repos.workspace]
 fixture = "../tests/fixtures/workspace-basic"
 
+# Bridges between members: IPC through a preload and a handler wrapper, a library package
+# at an older version, a class two members declare, a member's npm package.
+[repos.bridges]
+fixture = "../tests/fixtures/workspace-bridges"
+
 # A layered app. main: an old cycle and an old ui -> db violation. Branch feature: a new
 # cycle (model <-> service) and a new core -> ui import. Uncommitted: an unresolved import.
 [repos.layered]
@@ -646,3 +651,77 @@ repo = "workspace"
 question = "Does the workspace respect its rules and each repository's own?"
 tool = "check"
 contains = ["cartograph-workspace.toml", "layer_violation:api.service->api.client"]
+
+# =====================================================================================
+# Bridges: links no import states (tests/fixtures/workspace-bridges)
+# =====================================================================================
+
+[[case]]
+id = "br-callers-over-ipc"
+repo = "bridges"
+question = "Who calls DocsModule.onSave? It is an IPC handler registered through a base-class wrapper."
+tool = "callers"
+args = { symbol = "DocsModule.onSave" }
+contains = ["docs:save", "desktop/src/preload/index.ts", "desktop/src/renderer/App.tsx"]
+budget = 1000
+
+[[case]]
+id = "br-ipc-findings"
+repo = "bridges"
+question = "Are there IPC channels nothing serves, or renderer calls the preload does not expose?"
+tool = "findings"
+args = { kind = ["ipc_no_handler", "ipc_unexposed"] }
+contains = ["nope", "window.api.notExposed"]
+not_contains = ["docs:save", "users:get"]
+
+[[case]]
+id = "br-path-renderer-to-handler"
+repo = "bridges"
+question = "How does the renderer's App reach the documents module of the main process?"
+tool = "path"
+args = { from = "desktop:src/renderer/App.tsx", to = "desktop:src/main/docs.ts" }
+contains = ["window.api.saveDoc", "desktop/src/preload/index.ts", "ipc invoke docs:save", "desktop/src/main/docs.ts"]
+in_order = true
+
+[[case]]
+id = "br-unmatched-dynamic-not-reported"
+repo = "bridges"
+question = "What IPC is left without its other side?"
+tool = "bridges"
+args = { kind = "ipc", unmatched = true }
+contains = ["nope", "unexposed", "docs:unused", "dynamic"]
+budget = 1000
+
+[[case]]
+id = "br-package-trap-same-class"
+repo = "bridges"
+question = "Billing imports com.acme.lib.Money, which two repositories declare: which one does it use?"
+tool = "deps"
+args = { node = "api:src/main/java/com/acme/api/Billing.java" }
+contains = ["lib/src/main/java/com/acme/lib/Money.java"]
+not_contains = ["legacy/"]
+
+[[case]]
+id = "br-package-findings"
+repo = "bridges"
+question = "Does the API use code of a repository it does not declare, or an old version of the library?"
+tool = "findings"
+args = { kind = ["undeclared_member_dependency", "version_skew"] }
+contains = ["undeclared_member_dependency:api->legacy", "OldPrices.java", "maven:com.acme:lib", "1.4.0-SNAPSHOT"]
+
+[[case]]
+id = "br-impact-over-ipc"
+repo = "bridges"
+question = "I change the documents module of the main process: what on the renderer side is affected?"
+tool = "impact"
+args = { nodes = ["desktop:src/main/docs.ts"] }
+contains = ["reached over bridges", "desktop/src/preload/index.ts", "desktop/src/renderer/App.tsx"]
+
+[[case]]
+id = "br-ts-member-package"
+repo = "bridges"
+question = "Where does the desktop app's import of @acme/ui-kit lead?"
+tool = "deps"
+args = { node = "desktop:src/renderer/App.tsx" }
+contains = ["ui/src/index.ts"]
+not_contains = ["npm:@acme/ui-kit"]

@@ -55,6 +55,16 @@ Las dependencias dentro de una misma capa siempre están permitidas. Una capa no
 - `max_fan_out` (entero ≥ 1): un archivo que depende de más archivos distintos es un hallazgo `fan_out_limit`.
 - `no_cycles`: `true` (todo ciclo es una violación), `false` o `[]` (ninguno), o una lista de rutas: un ciclo es una violación cuando algún archivo de su ciclo más corto cae en esas rutas. Un ciclo entre archivos Java de un mismo paquete que solo se nombran sin import queda dentro del paquete, la unidad de diseño (como en ArchUnit): es informativo y nunca una violación, tampoco en `check --base`; basta un import entre paquetes para que vuelva a contar. Esas dependencias sin import sí cuentan para las capas y `max_fan_out`: son dependencias reales entre archivos.
 
+- `layers_count_bridges` (`false` por defecto): las capas juzgan también los puentes (un canal IPC, una función que expone el preload, una ruta HTTP) como si fueran imports. Sin esto, un cliente puede llamar a una capa que no puede importar.
+
+## `[bridges]`
+Qué puentes se construyen (ver [bridges.md](bridges.md)): `ipc`, `packages` y `http`, cada uno `true` o `false`. En un repositorio solo, `ipc` está activo por defecto (cuenta solo en archivos que importan `electron`) y `packages` y `http` no; en un workspace, todos.
+
+```toml
+[bridges]
+ipc = false
+```
+
 ## `[thresholds]`
 Los hallazgos que miden el repo contra sí mismo usan la valla de Tukey sobre la distribución del propio repo (Q3 + `fence` × rango intercuartílico) más un piso pequeño. Todos son opcionales:
 
@@ -77,7 +87,7 @@ Los hallazgos que miden el repo contra sí mismo usan la valla de Tukey sobre la
 | `max_coupling` | 10 | Máximo de hallazgos de acoplamiento oculto (los más fuertes primero). |
 
 ## `[findings]`
-- `disable`: tipos de hallazgo que no se calculan. Tipos: `layer_violation`, `fan_out_limit`, `cycle`, `folder_cycle`, `god_module`, `hub`, `sdp`, `orphan`, `deep_chain`, `hidden_coupling`.
+- `disable`: tipos de hallazgo que no se calculan. Tipos: `layer_violation`, `fan_out_limit`, `cycle`, `folder_cycle`, `god_module`, `hub`, `sdp`, `orphan`, `deep_chain`, `hidden_coupling`, `ipc_no_handler`, `ipc_unexposed`, `ipc_unused_handler`, `undeclared_member_dependency`, `version_skew`.
 
 ## `ignore`
 Lista de rutas cuyos archivos quedan fuera de todos los hallazgos (no aparecen ni rompen reglas). No cambia el índice ni las consultas como `explain` o `deps`.
@@ -104,6 +114,7 @@ cartograph.toml:2: unknown field `max_fanout`, expected `max_fan_out` or `no_cyc
 `cartograph check` sale con código 2 si el archivo no es válido (y con 1 si hay violaciones, 0 si no). `cartograph serve` no se cae: usa los valores por defecto y muestra el error en `GET /api/findings` (`config.error`) y en el cajón de problemas.
 
 ## Qué miran los hallazgos
+- Los puentes (IPC, HTTP, paquetes) no son imports: ningún ciclo, cadena, módulo dios, cuello de botella, dependencia estable, huérfano ni fan-in los cuenta; las capas tampoco, salvo con `layers_count_bridges`. Sus propios hallazgos (`ipc_no_handler`, `ipc_unexposed`, `ipc_unused_handler`, `undeclared_member_dependency`, `version_skew`) se explican en [bridges.md](bridges.md).
 - Solo dependencias entre archivos del repo: `import`, `extends`, `implements`, `uses` y las conexiones de señales de Godot. Un import de una carpeta (paquete de Go, comodín de Java, `using` de C#, paquete de espacio de nombres de Python) alcanza a los archivos directos de esa carpeta del mismo lenguaje, sin sus pruebas. Sin import también hay dependencia (`uses`): de un archivo Java al que declara un tipo de su mismo paquete que nombra (también desde `src/test/`), y de una prueba de Go (`_test.go`) a su paquete.
 - Las pruebas no cuentan: dependen del código y nunca al revés, y solo agregarían ruido (ciclos a través de ayudantes de prueba, fan-in de las suites). Módulos dios, cuellos de botella, dependencias estables y cadenas miran solo archivos de código (no scripts, configuración ni pruebas).
 - Que un módulo raíz declare o reexporte sus submódulos (`lib.rs`/`mod.rs`/`foo.rs` → `foo/…` en Rust, `__init__.py` en Python) es estructura, no dependencia; los barriles de TS/JS (`index.ts`) sí cuentan, porque un ciclo a través de ellos rompe en ejecución.

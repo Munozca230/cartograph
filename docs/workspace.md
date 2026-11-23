@@ -55,8 +55,27 @@ why in a comment. It prints the file; `--write` writes it (`--force` to overwrit
 
 Member names cannot be id kinds or ecosystems (`file`, `dir`, `sym`, `npm`, `maven`,
 `go`…), so `name:` never reads as anything else. Two members cannot share or nest folders.
-Tables for later features (`[bridges]`, `[member.http]`, `produces`) are accepted and
-ignored for now.
+`[bridges]` turns kinds of bridges on or off (every kind is on in a workspace; see
+[bridges.md](bridges.md)). Tables for later features (`[member.http]`, `produces`) are
+accepted and ignored for now.
+
+## Bridges between members
+
+Members reach each other without imports too, and the workspace links them
+([bridges.md](bridges.md)):
+
+- **packages**: a dependency in a member's `pom.xml`, Gradle build or `package.json` on a
+  package another member builds is a bridge to that member's manifest, and declares that
+  member. A Java import of a class several members declare resolves within the declared
+  members; one only an undeclared member has is a guess and an
+  `undeclared_member_dependency`. A TypeScript import of another member's package,
+  declared in `package.json`, resolves to its source. Another version than the member
+  builds is a `version_skew`.
+- **Electron IPC**: inside a member, the renderer reaches main-process handlers through
+  the preload.
+
+`bridges`, `callers`, `deps`, `explain`, `impact`, `path` and `diff` show them; the map draws
+them dashed over the plan when the toolbar turns them on.
 
 ## Ids and paths
 
@@ -156,5 +175,5 @@ member's card in its own hue with its branch. A single repository's answers are 
 
 - One combined index: a change in any member re-resolves the whole workspace (the
   extraction cache keeps unchanged files from being parsed again).
-- Calls and dependencies between members over HTTP, IPC or published packages
-  (a Maven or npm dependency on another member) are not linked yet.
+- Calls between members over HTTP are not linked yet (IPC and packages are: see
+  [bridges.md](bridges.md)).

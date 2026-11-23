@@ -36,11 +36,17 @@ offline, and writes nothing inside the analyzed repository unless you let it.
   - `cartograph diff [base]` shows what a branch changes in the architecture (findings,
     dependencies between modules, unresolved imports);
   - `cartograph infer` proposes layers from the dependency graph.
+- **Bridges.** Links no import states, kept apart from imports: an Electron renderer
+  reaching a main-process handler through the preload and an IPC channel (channels read
+  through constants and handler wrappers), and in a workspace a dependency on the package
+  another repository builds. `callers`, `deps`, `impact`, `path` and the map follow them;
+  channels without a handler and undeclared or skewed dependencies are findings. See
+  [docs/bridges.md](docs/bridges.md).
 - **Git layer.** Per-file churn, last change, owners, co-change and hotspots, read with
   gix (no `git` binary needed) and updated incrementally.
 - **MCP server.** `cartograph mcp <repo>` is a stdio MCP server for any MCP client or
   coding agent. Its tools are `overview`, `explain`, `deps`, `impact`, `find`, `path`,
-  `symbols`, `callers`, `hierarchy`, `entries`, `findings`, `check`, `diff`, `hotspots`,
+  `symbols`, `callers`, `hierarchy`, `bridges`, `entries`, `findings`, `check`, `diff`, `hotspots`,
   `annotate` and `open_map`. Each answer is compact text within a token budget, and the
   index stays fresh while the agent edits. Notes left with `annotate` can live in a
   versioned `cartograph-notes.toml` next to the code. When the user asks to see the architecture or
@@ -180,6 +186,8 @@ base. See [docs/workspace.md](docs/workspace.md).
 - [docs/mcp.md](docs/mcp.md): the MCP server, its tools, evals and usage stats.
 - [docs/diff.md](docs/diff.md): `diff` and `check --base`.
 - [docs/workspace.md](docs/workspace.md): several repositories as one map.
+- [docs/bridges.md](docs/bridges.md): IPC channels and packages between files and
+  repositories.
 - [docs/api-f2.md](docs/api-f2.md): the HTTP API behind the web UI.
 - [docs/release.md](docs/release.md): building release archives and publishing to npm.
 - [web/README.md](web/README.md) and [web/DESIGN.md](web/DESIGN.md): the web UI.

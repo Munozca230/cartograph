@@ -25,10 +25,11 @@ the model, *instead of* the text, which reads worse and costs about twice the to
 | `deps` | grepping import statements | `node`, `dir` out/in/both (out), `depth` 1-3 (1), `level` file/folder (file) | 1.5k |
 | `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder) | `nodes` (list) | 1.5k |
 | `find` | glob/grep for a name | `query`, `kind` file/dir/ext/sym (all but sym; symbols too when no path has it) | 0.8k |
-| `path` | tracing why A depends on B by hand | `from`, `to` | 0.8k |
+| `path` | tracing why A depends on B by hand | `from`, `to`, `bridges` (true: steps over an IPC channel or an exposed preload function count, and say so) | 0.8k |
 | `symbols` | reading a file for its outline (a line per definition; when that does not fit, the uncalled members of the biggest objects and classes by name, `api (150, pub): save, load, +148 more`, then the other symbols that do not fit) | `node` | 1k |
 | `callers` | grepping a function name before changing it | `symbol` | 1k |
 | `hierarchy` | grepping `extends` / `implements` / `impl … for` | `symbol` (a type, or a method of one) | 0.8k |
+| `bridges` | grepping IPC channel names, `exposeInMainWorld`, manifests | `node`, `kind` ipc/http/package, `member`, `unmatched` (false: the bridges; true: what has no other side) | 1k |
 | `entries` | searching for main, routes, commands, IPC handlers | `kind`, `within` | 1k |
 | `findings` | reviewing structure by eye | `kind` (list), `severity`, `within`, `violations` | 1.5k |
 | `check` | — (rules of `cartograph.toml`) | `base` (none): a git revision; then only violations the change introduces fail | 1k |
@@ -212,7 +213,7 @@ With a binary from a release archive or built from source:
 
 The server indexes in the background at startup, so it can be registered before the repo
 has an index. Without an MCP client, the same answers come from the CLI:
-`cartograph query <overview|explain|deps|impact|find|path|symbols|callers|hierarchy|entries|findings|hotspots> …`,
+`cartograph query <overview|explain|deps|impact|find|path|symbols|callers|hierarchy|bridges|entries|findings|hotspots> …`,
 `cartograph check` and `cartograph diff`.
 
 ### A workspace of several repositories
@@ -250,7 +251,9 @@ the map instead of from grep:
 4. **Before changing a function, method or type**: `callers(symbol)`. Update every caller
    it lists; confirm the `heuristic` ones by reading them.
 5. **Dependencies**: `deps(node, dir: "in" | "out")`; `path(from, to)` explains why A
-   depends on B (each step with its import line).
+   depends on B (each step with its import line). What reaches code without an import
+   (an Electron IPC channel, a workspace member's package) is a bridge: `bridges(node)`
+   lists them, and `callers`, `deps`, `impact` and `path` show them apart from imports.
 6. **Before finishing**: `check` (the rules of `cartograph.toml`; with `base: "main"`
    only what the change introduces fails) and `findings(within: <folder you changed>)` for
    new cycles or violations. `diff` shows what the change does to the architecture.
@@ -483,12 +486,15 @@ The suite is not part of `cargo test` (only the runner is, in
 a finding to fix, and it stays visible instead of being weakened to keep the build green.
 CI runs it in a job that may fail without failing the workflow.
 
-### Results (2026-11-23, 45 cases: 45 pass)
+### Results (2026-11-23, 53 cases: 53 pass)
 
 Every answer is within its budget. Since the first run below, cases were added for dense
-symbol listings and for workspaces (`ws-*` on `tests/fixtures/workspace-basic`: members as
+symbol listings, for workspaces (`ws-*` on `tests/fixtures/workspace-basic`: members as
 top-level folders, the `member:path` alias, member-relative and ambiguous paths, impact
-across members, and each member's own rules).
+across members, and each member's own rules) and for bridges (`br-*` on
+`tests/fixtures/workspace-bridges`: callers over IPC back to the renderer, IPC findings,
+a path through the preload, what is left unmatched, a class two members declare, an
+undeclared member and a version skew, impact over IPC, a member's npm package).
 
 The first run (2026-11-21, 34 cases) is kept below for its defects. Two cases on the `inherit-ts` fixture cover inheritance:
 `callers` of a base method lists the calls made through subclasses that inherit it (and

@@ -70,6 +70,7 @@ Grafo agregado al nivel visible en pantalla.
   - `depth` es `all` (sin distinguir mayúsculas) o solo dígitos ASCII que valgan al menos 1: sin signo (`+5` da 400), sin espacios ni decimales. Un número mayor que el nivel más profundo abre todo. Cualquier otro valor da 400 `bad_request`.
 - **Aristas**: cada arista de import archivo→archivo se eleva al ancestro de origen y al de destino que estén en la frontera. Las que quedan dentro del mismo nodo de la frontera se descartan, y las demás se suman por par.
 - **Invariante, con test**: la suma de `weight` es igual al número de aristas archivo→archivo que cruzan entre nodos distintos de la frontera.
+- **Puentes**: `bridges` (`[{ src, dst, weight, confidence }]`, con la misma forma que `edges`) eleva igual los puentes entre archivos (un canal IPC, una función que expone el preload; ver [bridges.md](bridges.md)); `weight` cuenta los sitios. Van aparte: nunca suman en `edges` ni en `fan_in`/`fan_out`.
 ```json
 {
   "generation": 3,
@@ -85,9 +86,25 @@ Grafo agregado al nivel visible en pantalla.
 En los nodos del grafo, `fan_in` y `fan_out` son los grados ponderados dentro de este grafo agregado.
 
 ## GET /api/node?id=<id>
-- **file**: el nodo, `imports` (`[{ target, specifier, line, confidence }]`), `importers` (`[{ source, line, confidence }]`), `externals` (`[{ ext, specifier, line }]`), `unresolved` (`[{ line, specifier, reason, detail }]`) y `package` (el id del paquete que lo contiene, o null).
+- **file**: el nodo, `imports` (`[{ target, specifier, line, confidence }]`), `importers` (`[{ source, line, confidence }]`), `externals` (`[{ ext, specifier, line }]`), `unresolved` (`[{ line, specifier, reason, detail }]`), `package` (el id del paquete que lo contiene, o null) y `bridges` (los puentes con un extremo en el archivo, como en `/api/bridges`).
 - **dir**: el nodo, sus métricas, los 10 hijos con más LOC, las 10 dependencias salientes y las 10 entrantes más pesadas (agregadas a nivel de directorio hermano) y los paquetes externos más usados.
 - **ext**: los archivos que lo importan.
+
+## GET /api/bridges?node=<id>&limit=2000
+Los puentes con un extremo en `node` (un archivo, o una carpeta y todo lo que tiene debajo; sin `node`, todos), como mucho `limit`, y los extremos que quedaron sin el otro lado (`unmatched`). Sin capa de símbolos, listas vacías. Un `node` que no existe da 404.
+```json
+{
+  "generation": 3,
+  "total": 1,
+  "bridges": [ { "kind": "ipc", "subtype": "invoke", "key": "users:get",
+                 "src": "file:src/preload.ts", "src_line": 5, "src_symbol": "sym:src/preload.ts#getUser",
+                 "dst": "file:src/main.ts", "dst_line": 13, "dst_symbol": "sym:src/users.ts#getUser",
+                 "confidence": "resolved" } ],
+  "unmatched": [ { "kind": "ipc", "role": "consume", "key": "nope", "label": "ipcRenderer.invoke",
+                   "file": "file:src/preload.ts", "line": 19, "symbol": "sym:src/preload.ts#api.broken",
+                   "detail": "unmatched" } ]
+}
+```
 
 ## GET /api/packages
 `[{ "id": "pkg:package.json", "name": "my-app", "kind": "npm", "dir": "dir:" , "manifest": "file:package.json", "notes": "..." }]`
