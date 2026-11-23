@@ -101,6 +101,39 @@ pub struct WalkOutput {
     pub read_ms: u128,
 }
 
+impl WalkOutput {
+    /// Add the walk of a mount whose paths go under `prefix` (`""`: unchanged), with the
+    /// folders of the prefix itself. The caller sorts once every mount is in.
+    pub fn absorb(&mut self, mut other: WalkOutput, prefix: &str) {
+        if !prefix.is_empty() {
+            let under = |p: &mut String| *p = crate::paths::under(prefix, p);
+            for f in &mut other.files {
+                under(&mut f.path);
+                if let Some(m) = &mut f.manifest {
+                    under(&mut m.path);
+                }
+            }
+            other.dirs.iter_mut().for_each(under);
+            other.skipped.iter_mut().for_each(|s| under(&mut s.path));
+            let mut dir = prefix;
+            loop {
+                if !self.dirs.iter().any(|d| d == dir) {
+                    self.dirs.push(dir.to_string());
+                }
+                match dir.rsplit_once('/') {
+                    Some((up, _)) => dir = up,
+                    None => break,
+                }
+            }
+        }
+        self.files.append(&mut other.files);
+        self.dirs.append(&mut other.dirs);
+        self.skipped.append(&mut other.skipped);
+        self.walk_ms += other.walk_ms;
+        self.read_ms += other.read_ms;
+    }
+}
+
 /// A path the walk leaves out, with why when it is not one of the fixed names.
 type Excluded = (String, Option<String>);
 

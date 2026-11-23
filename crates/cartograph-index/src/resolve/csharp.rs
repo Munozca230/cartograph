@@ -35,10 +35,13 @@
 use super::{Index, Outcome, Target, parent};
 use crate::imports::Spec;
 use cartograph_core::Confidence;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Immutable C# resolver (shared across threads).
 pub struct Resolver {
+    /// Mount roots (`""` for a single repo): never a module of their own, since their Dir
+    /// node (if any) holds the whole mount.
+    mount_roots: HashSet<String>,
     /// Namespace → declaring files (sorted).
     namespaces: HashMap<String, Vec<String>>,
     /// Every prefix of a declared namespace (`A.B.C` → `A`, `A.B`, `A.B.C`).
@@ -137,6 +140,7 @@ impl Resolver {
                 .collect()
         };
         Resolver {
+            mount_roots: ix.mounts.iter().map(|(p, _)| p.to_string()).collect(),
             namespaces: collect(namespaces),
             namespace_prefixes,
             types: collect(types),
@@ -150,7 +154,7 @@ impl Resolver {
     fn namespace_targets(&self, files: &[String]) -> Vec<Target> {
         let dirs: BTreeSet<&str> = files.iter().map(|f| parent(f)).collect();
         if let [dir] = dirs.into_iter().collect::<Vec<_>>().as_slice()
-            && !dir.is_empty()
+            && !self.mount_roots.contains(*dir)
             && self.cs_per_dir.get(*dir) == Some(&files.len())
         {
             return vec![Target::Dir((*dir).to_string())];

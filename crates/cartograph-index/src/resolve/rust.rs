@@ -1215,7 +1215,7 @@ mod tests {
                 }
             }
             let ix = Index {
-                root: Path::new("."),
+                mounts: vec![("", Path::new("."))],
                 files: self.files.iter().map(|(p, _)| p.as_str()).collect(),
                 dirs,
                 skipped: HashMap::new(),

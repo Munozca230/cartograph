@@ -145,6 +145,9 @@ pub struct Loaded {
     pub cached: bool,
     /// A cache row to write (new or refreshed); `None` when the stored one is current.
     pub cache_row: Option<ScipCacheRow>,
+    /// Prefix of the mount whose files it describes (`""`: the repo root); its documents
+    /// are matched to the files of that mount only.
+    pub prefix: String,
 }
 
 /// Cache key of a SCIP file: its canonical path.
@@ -183,6 +186,7 @@ pub fn load(root: &Path, path: &Path, store: Option<&Store>) -> Loaded {
         data: Err(String::new()),
         cached: false,
         cache_row: None,
+        prefix: String::new(),
     };
     let meta = match meta {
         Ok(m) if m.is_file() => m,

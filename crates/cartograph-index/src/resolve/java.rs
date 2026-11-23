@@ -38,10 +38,13 @@
 use super::{Index, Outcome, Target, is_ancestor, parent};
 use crate::imports::Spec;
 use cartograph_core::Confidence;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Immutable Java resolver (shared across threads).
 pub struct Resolver {
+    /// Mount roots (`""` for a single repo): never a module of their own, since their Dir
+    /// node (if any) holds the whole mount.
+    mount_roots: HashSet<String>,
     /// Fully qualified type name → declaring files (sorted).
     types: HashMap<String, Vec<String>>,
     /// The same, only types a file declares (not the `<file stem>` fallback).
@@ -321,6 +324,7 @@ impl Resolver {
             v.dedup();
         }
         Resolver {
+            mount_roots: ix.mounts.iter().map(|(p, _)| p.to_string()).collect(),
             types: types
                 .into_iter()
                 .map(|(k, v)| (k, v.into_iter().collect()))
@@ -401,7 +405,7 @@ impl Resolver {
         }
         let mut out = Vec::new();
         for (dir, fs) in by_dir {
-            let whole_dir = !dir.is_empty()
+            let whole_dir = !self.mount_roots.contains(dir)
                 && self.dir_files.get(dir).is_some_and(|all| {
                     all.iter()
                         .all(|f| self.package_of.get(f).is_some_and(|p| p == pkg))

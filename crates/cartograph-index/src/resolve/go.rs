@@ -309,13 +309,14 @@ impl<'i, 'a> Resolver<'i, 'a> {
                 show(dir)
             )));
         }
-        if !dir.is_empty() {
+        if !self.ix.is_mount_root(dir) {
             return one(Outcome::Resolved {
                 target: Target::Dir(dir.to_string()),
                 confidence: Confidence::Resolved,
             });
         }
-        // The repo root has no Dir node: one edge per file of the root package.
+        // The repo root has no Dir node, and a mount's holds the whole mount: one edge per
+        // file of the root package.
         let files = if code.is_empty() { tests } else { code };
         files
             .iter()

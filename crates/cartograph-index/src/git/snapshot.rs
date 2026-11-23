@@ -331,8 +331,12 @@ fn snapshot_of(
             }
         };
         let src = Source {
-            walk_root: &tmp,
-            resolve_root: root,
+            mounts: vec![crate::SourceMount {
+                prefix: "",
+                walk_root: &tmp,
+                resolve_root: root,
+                meta: &serde_json::Value::Null,
+            }],
             name: crate::repo_name(root),
             symbols: false,
             scip: &[],

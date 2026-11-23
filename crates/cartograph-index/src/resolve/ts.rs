@@ -131,7 +131,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
             return Outcome::not_found("empty specifier");
         }
         if spec == "." || spec == ".." || spec.starts_with("./") || spec.starts_with("../") {
-            let Some(base) = join(dir, spec) else {
+            let Some(base) = self.ix.join(dir, spec) else {
                 return Outcome::not_found("relative path leaves the repo");
             };
             // `.`, `..` and `./dir/` name a directory: only its index can match.

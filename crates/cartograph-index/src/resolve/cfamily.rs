@@ -219,7 +219,8 @@ struct CompileDb {
 /// Immutable C/C++ resolver (shared across threads).
 pub struct Resolver<'i, 'a> {
     ix: &'i Index<'a>,
-    db: Option<CompileDb>,
+    /// The compilation database of each mount that has one, by mount prefix.
+    dbs: HashMap<String, CompileDb>,
     /// Every repo dir named `include`, sorted.
     include_dirs: Vec<&'a str>,
     /// Indexed files by file name.
@@ -229,31 +230,35 @@ pub struct Resolver<'i, 'a> {
 impl<'i, 'a> Resolver<'i, 'a> {
     pub fn new(ix: &'i Index<'a>) -> (Self, Vec<Diagnostic>) {
         let mut diagnostics = Vec::new();
-        let mut db = None;
-        for path in DATABASES {
-            let text = match ix.read_config(path) {
-                Some(t) => t,
-                None => match read_large(ix, path) {
-                    Ok(Some(t)) => t,
-                    Ok(None) => continue,
-                    Err(e) => {
-                        diagnostics.push(Diagnostic {
-                            path: path.to_string(),
-                            detail: format!("{e}; includes are resolved heuristically"),
-                        });
-                        continue;
+        // One database per mount, looked for at the mount's root.
+        let mut dbs = HashMap::new();
+        for (prefix, _) in &ix.mounts {
+            for path in DATABASES.map(|d| crate::paths::under(prefix, d)) {
+                let path = path.as_str();
+                let text = match ix.read_config(path) {
+                    Some(t) => t,
+                    None => match read_large(ix, path) {
+                        Ok(Some(t)) => t,
+                        Ok(None) => continue,
+                        Err(e) => {
+                            diagnostics.push(Diagnostic {
+                                path: path.to_string(),
+                                detail: format!("{e}; includes are resolved heuristically"),
+                            });
+                            continue;
+                        }
+                    },
+                };
+                match parse_db(ix, path, &text) {
+                    Ok(d) => {
+                        dbs.insert(prefix.to_string(), d);
+                        break;
                     }
-                },
-            };
-            match parse_db(ix, path, &text) {
-                Ok(d) => {
-                    db = Some(d);
-                    break;
+                    Err(e) => diagnostics.push(Diagnostic {
+                        path: path.to_string(),
+                        detail: format!("{e}; includes are resolved heuristically"),
+                    }),
                 }
-                Err(e) => diagnostics.push(Diagnostic {
-                    path: path.to_string(),
-                    detail: format!("{e}; includes are resolved heuristically"),
-                }),
             }
         }
         let mut include_dirs: Vec<&str> = ix
@@ -276,7 +281,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
         (
             Resolver {
                 ix,
-                db,
+                dbs,
                 include_dirs,
                 by_name,
             },
@@ -293,8 +298,10 @@ impl<'i, 'a> Resolver<'i, 'a> {
         if p.starts_with('/') || p.as_bytes().get(1) == Some(&b':') {
             return Outcome::not_found("absolute include path");
         }
-        let near = (!system).then(|| join(parent(importer), &p)).flatten();
-        match &self.db {
+        let near = (!system)
+            .then(|| self.ix.join(parent(importer), &p))
+            .flatten();
+        match self.dbs.get(self.ix.mount_root(importer)) {
             Some(db) => self.with_db(db, importer, &p, system, near.as_deref()),
             None => self.heuristic(importer, &p, system, near.as_deref()),
         }
@@ -454,10 +461,17 @@ fn parse_db(ix: &Index<'_>, path: &str, text: &str) -> Result<CompileDb, String>
     let entries = v
         .as_array()
         .ok_or_else(|| format!("{path} is not a JSON array"))?;
-    let roots = repo_roots(ix.root);
+    // Absolute paths map to the graph through the mount roots, the database's own first.
+    let (own, own_root) = ix.mount_of(path).unwrap_or(("", std::path::Path::new(".")));
+    let mut roots: Vec<(String, &str)> =
+        repo_roots(own_root).into_iter().map(|r| (r, own)).collect();
+    for (prefix, root) in ix.mounts.iter().filter(|(p, _)| *p != own) {
+        roots.extend(repo_roots(root).into_iter().map(|r| (r, *prefix)));
+    }
+    let rel_dir = crate::paths::strip_mount(own, parent(path)).unwrap_or_default();
     let db_dir = roots
         .first()
-        .map(|r| normalize(&format!("{r}/{}", parent(path))))
+        .map(|(r, _)| normalize(&format!("{r}/{rel_dir}")))
         .unwrap_or_default();
     let mut db = CompileDb {
         path: path.to_string(),
@@ -584,9 +598,10 @@ fn normalize(p: &str) -> String {
     format!("{prefix}{}", parts.join("/"))
 }
 
-/// Repo-relative form of a normalized absolute path (case-insensitive on Windows).
-fn to_repo(abs: &str, roots: &[String]) -> Option<String> {
-    roots.iter().find_map(|r| {
+/// Graph path of a normalized absolute path (case-insensitive on Windows): relative to the
+/// first of `roots` (absolute mount roots with their prefixes) it lies under.
+fn to_repo(abs: &str, roots: &[(String, &str)]) -> Option<String> {
+    roots.iter().find_map(|(r, prefix)| {
         let r = r.trim_end_matches('/');
         let (a, rb) = (abs.as_bytes(), r.as_bytes());
         let head = a.get(..rb.len())?;
@@ -599,8 +614,10 @@ fn to_repo(abs: &str, roots: &[String]) -> Option<String> {
             return None;
         }
         match a.get(rb.len()) {
-            None => Some(String::new()),
-            Some(b'/') => abs.get(rb.len() + 1..).map(str::to_string),
+            None => Some(crate::paths::under(prefix, "")),
+            Some(b'/') => abs
+                .get(rb.len() + 1..)
+                .map(|rel| crate::paths::under(prefix, rel)),
             Some(_) => None,
         }
     })
@@ -678,7 +695,7 @@ mod tests {
             "C:/Repo/include"
         );
         assert_eq!(normalize("/repo/./a//b/../c"), "/repo/a/c");
-        let roots = vec!["C:/Repo".to_string()];
+        let roots = vec![("C:/Repo".to_string(), "")];
         assert_eq!(
             to_repo("C:/Repo/include", &roots).as_deref(),
             Some("include")

@@ -40,7 +40,7 @@ use cartograph_core::{
 use manifest::Manifest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -281,8 +281,8 @@ fn data_dir_exclusions(root: &Path, dir: &Path) -> Vec<String> {
 /// Index `root` in memory (no extraction cache; SCIP indexes are decoded, not cached).
 pub fn index(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, IndexError> {
     let started = Instant::now();
-    let inputs = scip::inputs(root, &opts.scip, &[], opts.no_scip);
-    let loaded: Vec<scip::Loaded> = inputs.iter().map(|p| scip::load(root, p, None)).collect();
+    let mounts = [Mount::new("", root)];
+    let loaded = scip_loads(&mounts, &opts.scip, &[], opts.no_scip, None);
     let load_ms = started.elapsed().as_millis();
     let src = Source {
         scip: &loaded,
@@ -293,32 +293,137 @@ pub fn index(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, IndexError
     Ok(out)
 }
 
-/// What [`index_inner`] reads.
-struct Source<'a> {
+/// One folder of the indexed tree: a single repo is one mount with the empty prefix; a
+/// workspace has one per member, its paths under the member's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mount {
+    /// Folder of the graph the mount's paths go under (`""` = the repo root).
+    pub prefix: String,
+    /// The folder on disk.
+    pub root: PathBuf,
+    /// Merged into the `meta` of the mount's Dir node (`Null`: nothing).
+    pub meta: serde_json::Value,
+}
+
+impl Mount {
+    pub fn new(prefix: impl Into<String>, root: impl Into<PathBuf>) -> Mount {
+        Mount {
+            prefix: prefix.into(),
+            root: root.into(),
+            meta: serde_json::Value::Null,
+        }
+    }
+}
+
+/// One mount as [`index_inner`] reads it.
+struct SourceMount<'a> {
+    /// Folder of the graph its paths go under (`""` = the repo root).
+    prefix: &'a str,
     /// The tree to walk.
     walk_root: &'a Path,
     /// Where resolvers look on disk for files the walk did not index (a config in
     /// `node_modules`, an ignored file). For a git snapshot this is the working tree, so the
     /// base sees the untracked files a checkout of it in place would see.
     resolve_root: &'a Path,
+    /// Merged into the meta of the mount's Dir node.
+    meta: &'a serde_json::Value,
+}
+
+/// What [`index_inner`] reads.
+struct Source<'a> {
+    /// The folders to walk, by prefix (none is below another).
+    mounts: Vec<SourceMount<'a>>,
     /// Name of the repo node.
     name: String,
     /// Resolve calls and entry points (N2).
     symbols: bool,
-    /// SCIP indexes to merge (N3); used only with `symbols`.
+    /// SCIP indexes to merge (N3), with the prefix of the mount each belongs to; used only
+    /// with `symbols`.
     scip: &'a [scip::Loaded],
 }
 
 impl<'a> Source<'a> {
     fn of(root: &'a Path) -> Source<'a> {
         Source {
-            walk_root: root,
-            resolve_root: root,
+            mounts: vec![SourceMount {
+                prefix: "",
+                walk_root: root,
+                resolve_root: root,
+                meta: &serde_json::Value::Null,
+            }],
             name: repo_name(root),
             symbols: true,
             scip: &[],
         }
     }
+
+    fn of_mounts(name: &str, mounts: &'a [Mount]) -> Source<'a> {
+        Source {
+            mounts: mounts
+                .iter()
+                .map(|m| SourceMount {
+                    prefix: &m.prefix,
+                    walk_root: &m.root,
+                    resolve_root: &m.root,
+                    meta: &m.meta,
+                })
+                .collect(),
+            name: name.to_string(),
+            symbols: true,
+            scip: &[],
+        }
+    }
+}
+
+/// The SCIP indexes to import for `mounts`: per mount, its own `index.scip`, plus the
+/// `explicit` and `remembered` files that lie in it (with a single mount, all of them).
+fn scip_loads(
+    mounts: &[Mount],
+    explicit: &[PathBuf],
+    remembered: &[PathBuf],
+    no_scip: bool,
+    store: Option<&Store>,
+) -> Vec<scip::Loaded> {
+    let single = mounts.len() == 1;
+    let inside = |m: &Mount, p: &Path| single || scip::absolute(p).starts_with(&m.root);
+    let mut out = Vec::new();
+    for m in mounts {
+        let mine = |list: &[PathBuf]| -> Vec<PathBuf> {
+            list.iter().filter(|p| inside(m, p)).cloned().collect()
+        };
+        for p in scip::inputs(&m.root, &mine(explicit), &mine(remembered), no_scip) {
+            let mut l = scip::load(&m.root, &p, store);
+            l.prefix = m.prefix.clone();
+            out.push(l);
+        }
+    }
+    for p in explicit
+        .iter()
+        .filter(|p| !mounts.iter().any(|m| inside(m, p)))
+    {
+        tracing::warn!(path = %p.display(), "scip index outside every member: not imported");
+    }
+    out
+}
+
+/// Index the folders `mounts` as one repo named `name`, in memory (see [`index`]): each is
+/// walked from its own root and its paths go under its prefix. Each mount's own
+/// `index.scip` is imported.
+pub fn index_mounts(
+    name: &str,
+    mounts: &[Mount],
+    opts: &IndexOptions,
+) -> Result<IndexOutput, IndexError> {
+    let started = Instant::now();
+    let loaded = scip_loads(mounts, &opts.scip, &[], opts.no_scip, None);
+    let load_ms = started.elapsed().as_millis();
+    let src = Source {
+        scip: &loaded,
+        ..Source::of_mounts(name, mounts)
+    };
+    let (mut out, _) = index_inner(&src, opts, None)?;
+    out.timings.scip_ms += load_ms;
+    Ok(out)
 }
 
 /// What a run did with the extraction cache, and what it read besides the walked files.
@@ -328,8 +433,9 @@ struct CacheDelta {
     new: Vec<cartograph_core::CacheEntry>,
     /// Keys (see [`walk::cache_key`]) of every file with import support seen in this run.
     used: HashSet<String>,
-    /// Paths under [`Source::resolve_root`] the resolvers looked at on disk (see
-    /// [`resolve::Index::on_disk`]), sorted.
+    /// Paths of the graph the resolvers looked at on disk (see
+    /// [`resolve::Index::on_disk`]), sorted; each lies on disk below the resolve root of its
+    /// mount.
     disk_reads: Vec<String>,
 }
 
@@ -339,16 +445,12 @@ fn index_inner(
     cache: Option<&walk::ExtractCache>,
 ) -> Result<(IndexOutput, CacheDelta), IndexError> {
     let started = Instant::now();
-    let root = src.walk_root;
-    if !root.is_dir() {
-        return Err(IndexError::NotADirectory(root.to_path_buf()));
+    for m in &src.mounts {
+        if !m.walk_root.is_dir() {
+            return Err(IndexError::NotADirectory(m.walk_root.to_path_buf()));
+        }
     }
-    tracing::info!(root = %root.display(), "indexing");
-    let exclude: Vec<String> = opts
-        .data_dir
-        .as_deref()
-        .map(|d| data_dir_exclusions(root, d))
-        .unwrap_or_default();
+    tracing::info!(mounts = src.mounts.len(), name = %src.name, "indexing");
     if let Some(p) = &opts.progress {
         p.reset();
     }
@@ -360,9 +462,23 @@ fn index_inner(
     if cancelled() {
         return Err(IndexError::Cancelled);
     }
-    let mut walked = walk::walk(root, opts.max_file_bytes, &exclude, hooks);
-    if cancelled() {
-        return Err(IndexError::Cancelled);
+    let mut walked = walk::WalkOutput::default();
+    for m in &src.mounts {
+        let exclude: Vec<String> = opts
+            .data_dir
+            .as_deref()
+            .map(|d| data_dir_exclusions(m.walk_root, d))
+            .unwrap_or_default();
+        let w = walk::walk(m.walk_root, opts.max_file_bytes, &exclude, hooks);
+        walked.absorb(w, m.prefix);
+        if cancelled() {
+            return Err(IndexError::Cancelled);
+        }
+    }
+    if src.mounts.len() > 1 {
+        walked.files.sort_by(|a, b| a.path.cmp(&b.path));
+        walked.dirs.sort();
+        walked.skipped.sort();
     }
 
     let build_started = Instant::now();
@@ -403,13 +519,31 @@ fn index_inner(
             configs.push((f.path.clone(), text));
         }
     }
-    let (mut graph, manifests) = build_graph(&src.name, walked.files, walked.dirs, walked.skipped);
+    // A package at a mount's root without a name of its own is named after the mount's
+    // folder, as a package at the repo root is after the repo.
+    let folders: HashMap<&str, (String, &serde_json::Value)> = src
+        .mounts
+        .iter()
+        .filter(|m| !m.prefix.is_empty())
+        .map(|m| (m.prefix, (repo_name(m.resolve_root), m.meta)))
+        .collect();
+    let (mut graph, manifests) = build_graph(
+        &src.name,
+        &folders,
+        walked.files,
+        walked.dirs,
+        walked.skipped,
+    );
     let build_ms = build_started.elapsed().as_millis();
 
     let resolve_started = Instant::now();
     let res = {
         let ix = resolve::Index {
-            root: src.resolve_root,
+            mounts: src
+                .mounts
+                .iter()
+                .map(|m| (m.prefix, m.resolve_root))
+                .collect(),
             files: graph
                 .nodes_of(NodeKind::File)
                 .map(|n| n.path.as_str())
@@ -469,7 +603,12 @@ fn index_inner(
             .nodes_of(NodeKind::File)
             .map(|n| n.path.as_str())
             .collect();
-        Some(scip::apply::Prepared::new(src.scip, root, &files))
+        let mounts: Vec<(&str, &Path)> = src
+            .mounts
+            .iter()
+            .map(|m| (m.prefix, m.resolve_root))
+            .collect();
+        Some(scip::apply::Prepared::new(src.scip, &mounts, &files))
     } else {
         None
     };
@@ -671,11 +810,8 @@ pub fn index_to_store(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, I
     let explicit: Vec<PathBuf> = opts.scip.iter().map(|p| scip::absolute(p)).collect();
     let scip_started = Instant::now();
     let remembered = scip::remembered(&store);
-    let scip_inputs = scip::inputs(root, &explicit, &remembered, opts.no_scip);
-    let loaded: Vec<scip::Loaded> = scip_inputs
-        .iter()
-        .map(|p| scip::load(root, p, Some(&store)))
-        .collect();
+    let mounts = [Mount::new("", root)];
+    let loaded = scip_loads(&mounts, &explicit, &remembered, opts.no_scip, Some(&store));
     for l in &loaded {
         if let Err(e) = &l.data {
             tracing::warn!(path = %l.label, error = %e, "scip index not imported");
@@ -775,6 +911,7 @@ struct Totals {
 
 fn build_graph(
     repo_name: &str,
+    mount_folders: &HashMap<&str, (String, &serde_json::Value)>,
     files: Vec<walk::FileRecord>,
     dirs: Vec<String>,
     mut skipped: Vec<SkippedFile>,
@@ -839,6 +976,12 @@ fn build_graph(
             });
             continue;
         }
+        let mut meta = meta;
+        if let Some((_, extra)) = mount_folders.get(path.as_str())
+            && !extra.is_null()
+        {
+            merge_meta(&mut meta, (*extra).clone());
+        }
         edges.push(contains(container_id(path), node_id(NodeKind::Dir, path)));
         nodes.push(Node {
             id: node_id(NodeKind::Dir, path),
@@ -870,6 +1013,8 @@ fn build_graph(
         let name = m.name.clone().unwrap_or_else(|| {
             if dir.is_empty() {
                 repo_name.to_string()
+            } else if let Some((folder, _)) = mount_folders.get(dir) {
+                folder.clone()
             } else {
                 last_segment(dir).to_string()
             }

@@ -150,6 +150,8 @@ struct PDoc<'a> {
     path: String,
     /// The file changed after the SCIP file was written.
     stale: bool,
+    /// The file on disk.
+    disk: PathBuf,
 }
 
 /// SCIP indexes matched to the repo's files, ready for both passes.
@@ -159,19 +161,21 @@ pub struct Prepared<'a> {
     def_doc: HashMap<&'a str, usize>,
     /// Packages of the symbols the indexes define: the indexed project itself.
     own_packages: HashSet<(String, String)>,
-    /// The repo root, to read a covered file's text.
-    root: PathBuf,
     pub stats: ScipStats,
 }
 
 impl<'a> Prepared<'a> {
-    /// Match the documents of `loaded` to the indexed `files` under `root`.
-    pub fn new(loaded: &'a [Loaded], root: &Path, files: &HashSet<&str>) -> Prepared<'a> {
+    /// Match the documents of `loaded` to the indexed `files` (paths of the graph). Each
+    /// index describes the mount of its prefix: one of `mounts`, `(prefix, root on disk)`.
+    pub fn new(
+        loaded: &'a [Loaded],
+        mounts: &[(&str, &Path)],
+        files: &HashSet<&str>,
+    ) -> Prepared<'a> {
         let mut p = Prepared {
             docs: Vec::new(),
             def_doc: HashMap::new(),
             own_packages: HashSet::new(),
-            root: root.to_path_buf(),
             stats: ScipStats::default(),
         };
         let mut taken: HashSet<String> = HashSet::new();
@@ -189,7 +193,13 @@ impl<'a> Prepared<'a> {
                     continue;
                 }
             };
-            let map = infer_mapping(data, root, &l.path, &|f| files.contains(f));
+            let Some(&(prefix, root)) = mounts.iter().find(|(p, _)| *p == l.prefix) else {
+                st.error = Some(format!("no folder `{}` is indexed", l.prefix));
+                p.stats.indexes.push(st);
+                continue;
+            };
+            let in_mount = |f: &str| files.contains(crate::paths::under(prefix, f).as_str());
+            let map = infer_mapping(data, root, &l.path, &in_mount);
             st.tool = data.tool.clone();
             st.prefix = map.describe();
             st.documents = data.documents;
@@ -203,20 +213,22 @@ impl<'a> Prepared<'a> {
                         p.own_packages.insert(pkg);
                     }
                 }
-                let path = map.apply(&doc.path).filter(|f| files.contains(f.as_str()));
-                let Some(path) = path else {
+                let rel = map.apply(&doc.path).filter(|f| in_mount(f));
+                let Some(rel) = rel else {
                     st.unmatched += 1;
                     if st.unmatched_sample.len() < 5 {
                         st.unmatched_sample.push(doc.path.clone());
                     }
                     continue;
                 };
+                let path = crate::paths::under(prefix, &rel);
                 if !taken.insert(path.clone()) {
                     // A second document for the same file (two indexes overlap): the first wins.
                     continue;
                 }
                 st.matched += 1;
-                let stale = match (l.mtime, std::fs::metadata(root.join(&path))) {
+                let disk = root.join(&rel);
+                let stale = match (l.mtime, std::fs::metadata(&disk)) {
                     (Some(scip), Ok(m)) => m.modified().is_ok_and(|t| t > scip),
                     _ => false,
                 };
@@ -237,6 +249,7 @@ impl<'a> Prepared<'a> {
                     doc,
                     path,
                     stale,
+                    disk,
                 });
             }
             p.stats.indexes.push(st);
@@ -497,7 +510,7 @@ impl<'a> Prepared<'a> {
                     None if kind.is_callable()
                         && caller.is_some()
                         && source
-                            .get_or_insert_with(|| Source::read(&self.root.join(&d.path)))
+                            .get_or_insert_with(|| Source::read(&d.disk))
                             .as_ref()
                             .is_some_and(|t| t.called(line0, end, d.doc.encoding)) =>
                     {

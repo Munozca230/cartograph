@@ -41,27 +41,102 @@ use std::path::Path;
 
 /// Lookups shared by every resolver.
 pub struct Index<'a> {
-    /// Repo root on disk. Only used to read config files that are not indexed (a tsconfig
+    /// The mounts of the indexed tree: `(prefix, root on disk)`, one with prefix `""` for a
+    /// single repo. A mount root plays the part of the repo root for the files below it.
+    /// The roots are only used to read config files that are not indexed (a tsconfig
     /// `extends` into `node_modules`) and to explain `not_found` details.
-    pub root: &'a Path,
+    pub mounts: Vec<(&'a str, &'a Path)>,
     pub files: HashSet<&'a str>,
     pub dirs: HashSet<&'a str>,
     pub skipped: HashMap<&'a str, SkipReason>,
     /// Retained text of resolver config files, by path (see `walk::is_resolver_config`).
     pub configs: HashMap<&'a str, &'a str>,
-    /// Every path under `root` looked at on disk (see [`Index::on_disk`]).
+    /// Every path looked at on disk (see [`Index::on_disk`]).
     pub disk_reads: std::sync::Mutex<BTreeSet<String>>,
 }
 
 impl<'a> Index<'a> {
-    /// The file at `path` (relative to the root) on disk, recorded as read: whatever the
+    /// The index of a single repo at `root` (one mount, no prefix), with nothing in it yet.
+    pub fn single(root: &'a Path) -> Index<'a> {
+        Index {
+            mounts: vec![("", root)],
+            files: HashSet::new(),
+            dirs: HashSet::new(),
+            skipped: HashMap::new(),
+            configs: HashMap::new(),
+            disk_reads: Default::default(),
+        }
+    }
+
+    /// The mount `path` lies in (the one with the longest prefix that is an ancestor of
+    /// it): `(prefix, root on disk)`. `None` only for a path outside every mount.
+    pub fn mount_of(&self, path: &str) -> Option<(&'a str, &'a Path)> {
+        self.mounts
+            .iter()
+            .filter(|(p, _)| is_ancestor(p, path))
+            .max_by_key(|(p, _)| p.len())
+            .copied()
+    }
+
+    /// The folder of the graph that plays the repo root for `path`: the prefix of its mount
+    /// (`""` for a single repo).
+    pub fn mount_root(&self, path: &str) -> &'a str {
+        self.mount_of(path).map_or("", |(p, _)| p)
+    }
+
+    /// Whether `dir` is the root of a mount (`""` for a single repo).
+    pub fn is_mount_root(&self, dir: &str) -> bool {
+        self.mounts.iter().any(|(p, _)| *p == dir)
+    }
+
+    /// `dir/rel` for a relative reference written in a file of `dir` (see [`join`]). A
+    /// reference that climbs out of its mount goes through the disk: it lands in the mount
+    /// whose folder holds that place (a member may sit anywhere, under any name), or
+    /// nowhere (`None`, as for one that leaves a single repo).
+    pub fn join(&self, dir: &str, rel: &str) -> Option<String> {
+        let (prefix, root) = self.mount_of(dir)?;
+        if prefix.is_empty() {
+            return join(dir, rel);
+        }
+        let inner = crate::paths::strip_mount(prefix, dir)?;
+        if let Some(p) = join(inner, rel) {
+            return Some(crate::paths::under(prefix, &p));
+        }
+        // Out of the mount: from its folder on disk to another mount's.
+        let mut abs = root.join(inner);
+        for seg in rel.split('/') {
+            match seg {
+                "" | "." => {}
+                ".." => {
+                    if !abs.pop() {
+                        return None;
+                    }
+                }
+                s => abs.push(s),
+            }
+        }
+        self.mounts
+            .iter()
+            .filter(|(p, _)| *p != prefix)
+            .find_map(|(p, r)| {
+                let rest = crate::walk::relative(r, &abs)?;
+                Some(crate::paths::under(p, &rest))
+            })
+    }
+
+    /// The file at `path` (a path of the graph) on disk, recorded as read: whatever the
     /// resolvers learn from the disk rather than from the indexed files goes through here,
     /// so a cached result (a git base snapshot) knows what it depends on.
     pub fn on_disk(&self, path: &str) -> std::path::PathBuf {
         if let Ok(mut reads) = self.disk_reads.lock() {
             reads.insert(path.to_string());
         }
-        self.root.join(path)
+        match self.mount_of(path) {
+            Some((prefix, root)) => {
+                root.join(crate::paths::strip_mount(prefix, path).unwrap_or(path))
+            }
+            None => std::path::PathBuf::from(path),
+        }
     }
 
     /// The paths read through [`Index::on_disk`], sorted.
@@ -370,12 +445,13 @@ pub fn resolve_all(
         // Repo targets of this file → whether every import of it so far is type-only.
         let mut only_types: BTreeMap<String, bool> = BTreeMap::new();
         for (i, (line, specifier, outcome)) in outcomes.into_iter().enumerate() {
-            // Defensive: the repo root is never a module (it has no `dir:` node).
+            // Defensive: the repo root is never a module (it has no `dir:` node), nor is a
+            // mount's root (its `dir:` node holds the whole mount).
             let outcome = match outcome {
                 Outcome::Resolved {
                     target: Target::Dir(d),
                     ..
-                } if d.is_empty() => Outcome::not_found("the repo root is not a module"),
+                } if ix.is_mount_root(&d) => Outcome::not_found("the repo root is not a module"),
                 other => other,
             };
             match outcome {
@@ -438,7 +514,7 @@ pub fn resolve_all(
 /// Go: a `_test.go` file sees the other files of its package without an import, and
 /// `go test` runs a package's tests together. Each test file gets a `uses` edge to its
 /// package as an import of it would: to its Dir (non-test files), or, for a package at the
-/// repo root (no Dir node), to each non-test `.go` file there. An external test package
+/// repo root (no Dir node) or a mount's root, to each non-test `.go` file there. An external test package
 /// (`package x_test`) imports the package too; the edge adds nothing then.
 fn go_test_edges(ix: &Index<'_>) -> Vec<Edge> {
     let is_go = |f: &&&str| f.ends_with(".go");
@@ -460,7 +536,7 @@ fn go_test_edges(ix: &Index<'_>) -> Vec<Edge> {
             continue;
         };
         let src = node_id(NodeKind::File, t);
-        let dsts: Vec<String> = if dir.is_empty() {
+        let dsts: Vec<String> = if ix.is_mount_root(dir) {
             code.iter().map(|f| node_id(NodeKind::File, f)).collect()
         } else {
             vec![node_id(NodeKind::Dir, dir)]
@@ -540,6 +616,36 @@ mod tests {
         assert_eq!(join("a", "..").as_deref(), Some(""));
         assert_eq!(join("a", "../.."), None);
         assert_eq!(join("a", "b//c/").as_deref(), Some("a/b/c"));
+    }
+
+    #[test]
+    fn a_relative_path_out_of_a_mount_lands_in_the_mount_whose_folder_holds_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (api, lib) = (
+            tmp.path().join("backend-api"),
+            tmp.path().join("shared-lib"),
+        );
+        let ix = Index {
+            mounts: vec![("api", api.as_path()), ("lib", lib.as_path())],
+            ..Index::single(tmp.path())
+        };
+        assert_eq!(ix.join("api/src", "./a").as_deref(), Some("api/src/a"));
+        assert_eq!(ix.join("api/src", "..").as_deref(), Some("api"));
+        assert_eq!(
+            ix.join("api/src", "../../shared-lib/x/y").as_deref(),
+            Some("lib/x/y")
+        );
+        assert_eq!(
+            ix.join("api/src", "../../shared-lib").as_deref(),
+            Some("lib")
+        );
+        assert_eq!(ix.join("api/src", "../../elsewhere/x"), None);
+        assert_eq!(ix.join("api", "../../../x"), None);
+        assert_eq!(ix.mount_root("lib/x/y"), "lib");
+        assert!(ix.is_mount_root("api") && !ix.is_mount_root(""));
+        let single = Index::single(tmp.path());
+        assert_eq!(single.join("a/b", "../../c").as_deref(), Some("c"));
+        assert_eq!(single.join("a", "../../c"), None);
     }
 
     #[test]
