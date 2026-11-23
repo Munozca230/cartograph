@@ -264,6 +264,10 @@ fn http_bridges_cross_members_through_wrappers_instances_and_mounts() {
             format!(
                 "desktop/src/main/http/UsersApi.ts:19 POST /api/users -> {ctl}.create [resolved]"
             ),
+            // Through an untyped object, with the path in a constant: tied by name.
+            format!(
+                "desktop/src/main/http/UsersApi.ts:37 GET /api/users/me -> {ctl}.me [heuristic]"
+            ),
             format!("web/src/users.ts:13 GET /api/users/search -> {ctl}.search [resolved]"),
         ]
     );

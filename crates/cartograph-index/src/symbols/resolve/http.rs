@@ -1003,12 +1003,22 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                     continue;
                 }
                 for w in ws {
+                    // Tied by name: the URL argument must read as a path (a literal or a
+                    // constant holding one).
+                    let path_arg = |i: u8| {
+                        c.args
+                            .get(i as usize)
+                            .and_then(|a| a.as_ref())
+                            .is_some_and(|e| {
+                                expand(&cx.consts, fi, e, 0)
+                                    .parts
+                                    .iter()
+                                    .any(|x| matches!(x, RPart::Lit(l) if l.contains('/')))
+                            })
+                    };
                     if guessed
                         && !w.url.parts.iter().any(|p| match p {
-                            RPart::Param(i) => matches!(
-                                c.args.get(*i as usize),
-                                Some(Some(e)) if e.0.iter().any(|x| matches!(x, Part::Lit(l) if l.contains('/')))
-                            ),
+                            RPart::Param(i) => path_arg(*i),
                             _ => false,
                         })
                     {

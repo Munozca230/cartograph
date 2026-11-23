@@ -29,3 +29,10 @@ export class UsersApi {
 export async function download(next: () => string): Promise<Response> {
   return fetch(next());
 }
+
+const ME_PATH = '/api/users/me';
+
+// Through an untyped object: tied to the one wrapper of that name (heuristic).
+export function meThrough(deps: { client: { get(path: string): Promise<unknown> } }) {
+  return deps.client.get(ME_PATH);
+}
