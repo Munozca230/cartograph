@@ -13,7 +13,7 @@ use crate::overview::in_test_tree;
 use crate::{QueryError, Repo, Severity};
 use cartograph_core::{Confidence, EntryKind, EntryPoint, Symbol, SymbolKind, split_symbol_id};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Default depth of a flow (calls followed from the start).
 pub const DEFAULT_DEPTH: u32 = 4;
@@ -155,44 +155,7 @@ impl CallIndex {
         // Spring: a call to an interface method goes on to the methods of the beans that
         // implement it (a constructor's or a list's beans alike).
         if !t.spring.beans.is_empty() {
-            let mut targets: Vec<String> = ix
-                .out
-                .values()
-                .flatten()
-                .filter(|c| c.via.is_none())
-                .map(|c| c.target.clone())
-                .collect();
-            targets.sort();
-            targets.dedup();
-            for target in targets {
-                // A base class's method runs as it is when an override calls it
-                // (`super.save()`): only an interface's is always another's.
-                let interface = crate::spring::type_of_method(t, &target)
-                    .and_then(|ty| t.symbol(&ty))
-                    .is_some_and(|s| s.kind == SymbolKind::Interface);
-                if !interface {
-                    continue;
-                }
-                let impls = crate::spring::dispatch(t, &target);
-                if impls.is_empty() {
-                    continue;
-                }
-                let target_id = target.clone();
-                let list = ix.out.entry(target).or_default();
-                for (m, _) in impls {
-                    if list.iter().any(|c| c.target == m) || m == target_id {
-                        continue;
-                    }
-                    let line = t.symbol(&m).map_or(0, |s| s.line);
-                    list.push(Callee {
-                        target: m,
-                        line,
-                        confidence: Confidence::Resolved,
-                        calls: 1,
-                        via: Some(SPRING_VIA.to_string()),
-                    });
-                }
-            }
+            ix.spring_edges(repo);
         }
         for f in repo.findings() {
             if f.severity == Severity::Info {
@@ -222,6 +185,62 @@ impl CallIndex {
         ix.packages = packages;
         ix.roots = t.entries.iter().map(|e| ix.entry_root(repo, e)).collect();
         ix
+    }
+
+    /// Calls that go on to the methods of Spring beans: from an interface's method, and
+    /// for a class's from each caller but those below it (`super.save()` runs the class's
+    /// own), since that method may also run as it is.
+    fn spring_edges(&mut self, repo: &Repo) {
+        let t = &repo.symbols;
+        // Target → its callers, with the line of the call.
+        let mut targets: BTreeMap<String, Vec<(String, u32)>> = BTreeMap::new();
+        for (caller, list) in &self.out {
+            for c in list.iter().filter(|c| c.via.is_none()) {
+                targets
+                    .entry(c.target.clone())
+                    .or_default()
+                    .push((caller.clone(), c.line));
+            }
+        }
+        for (target, mut callers) in targets {
+            let impls = crate::spring::dispatch(t, &target);
+            let Some(ty) = crate::spring::type_of_method(t, &target).filter(|_| !impls.is_empty())
+            else {
+                continue;
+            };
+            let interface = t
+                .symbol(&ty)
+                .is_some_and(|s| s.kind == SymbolKind::Interface);
+            let from: Vec<(String, Option<u32>)> = if interface {
+                vec![(target.clone(), None)]
+            } else {
+                callers.sort();
+                callers
+                    .into_iter()
+                    .filter(|(c, _)| {
+                        crate::spring::type_of_method(t, c)
+                            .is_none_or(|own| !crate::spring::is_subtype(t, &own, &ty))
+                    })
+                    .map(|(c, line)| (c, Some(line)))
+                    .collect()
+            };
+            for (src, at) in from {
+                let list = self.out.entry(src).or_default();
+                for (m, _) in &impls {
+                    if *m == target || list.iter().any(|c| c.target == *m) {
+                        continue;
+                    }
+                    let line = at.unwrap_or_else(|| t.symbol(m).map_or(0, |s| s.line));
+                    list.push(Callee {
+                        target: m.clone(),
+                        line,
+                        confidence: Confidence::Resolved,
+                        calls: 1,
+                        via: Some(SPRING_VIA.to_string()),
+                    });
+                }
+            }
+        }
     }
 
     /// Where entry `i` of `repo.symbols.entries` starts its flow.
