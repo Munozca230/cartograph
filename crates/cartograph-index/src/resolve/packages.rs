@@ -99,24 +99,29 @@ fn line_at(text: &str, offset: usize) -> u32 {
         + 1
 }
 
-/// `text` with every `<tag>…</tag>` block blanked (newlines kept, so offsets hold).
-fn blank_blocks(text: &str, tag: &str) -> String {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let mut out = text.to_string();
+/// `text` with every span from `open` to the next `close` (both included) blanked, byte
+/// by byte, newlines kept: offsets and lines hold, whatever the text holds.
+fn blank_spans(text: &str, open: &str, close: &str) -> String {
+    let mut bytes = text.as_bytes().to_vec();
     let mut from = 0;
-    while let Some(s) = out[from..].find(&open).map(|i| i + from) {
-        let Some(e) = out[s..].find(&close).map(|i| i + s + close.len()) else {
+    while let Some(s) = text[from..].find(open).map(|i| i + from) {
+        let Some(e) = text[s..].find(close).map(|i| i + s + close.len()) else {
             break;
         };
-        let blank: String = out[s..e]
-            .chars()
-            .map(|c| if c == '\n' { '\n' } else { ' ' })
-            .collect();
-        out.replace_range(s..e, &blank);
-        from = s + blank.len();
+        for b in &mut bytes[s..e] {
+            if *b != b'\n' {
+                *b = b' ';
+            }
+        }
+        from = e;
     }
-    out
+    // Whole characters were replaced by ASCII spaces: still UTF-8.
+    String::from_utf8(bytes).unwrap_or_else(|_| text.to_string())
+}
+
+/// `text` with every `<tag>…</tag>` block blanked (see [`blank_spans`]).
+fn blank_blocks(text: &str, tag: &str) -> String {
+    blank_spans(text, &format!("<{tag}>"), &format!("</{tag}>"))
 }
 
 /// Every `<tag>…</tag>` block: `(offset of the block, its inner text)`.
@@ -145,6 +150,8 @@ fn first_tag(text: &str, tag: &str) -> Option<String> {
 
 /// `pom.xml`: what it builds and what it depends on.
 pub fn maven(text: &str) -> ManifestCoords {
+    // A commented-out dependency or coordinate is none.
+    let text = &blank_spans(text, "<!--", "-->");
     let parent = blocks(text, "parent").first().map(|(_, b)| *b);
     let pg = parent.and_then(|b| first_tag(b, "groupId"));
     let pv = parent.and_then(|b| first_tag(b, "version"));
@@ -341,6 +348,12 @@ pub fn npm(text: &str) -> ManifestCoords {
         text.find(&format!("\"{needle}\""))
             .map_or(1, |at| line_at(text, at))
     };
+    // A dependency's line: its key inside its own section.
+    let dep_line = |section: &str, name: &str| {
+        object_span(text, section)
+            .and_then(|(s, e)| text[s..e].find(&format!("\"{name}\"")).map(|i| i + s))
+            .map_or_else(|| line_of(name), |at| line_at(text, at))
+    };
     let produces = v.get("name").and_then(Value::as_str).map(|n| Coord {
         eco: "npm",
         name: n.to_string(),
@@ -359,11 +372,49 @@ pub fn npm(text: &str) -> ManifestCoords {
                 eco: "npm",
                 name: name.clone(),
                 version: ver.as_str().map(str::to_string),
-                line: line_of(name),
+                line: dep_line(k, name),
             });
         }
     }
     ManifestCoords { produces, deps }
+}
+
+/// The byte span of the object under the top-level-looking key `"key": {…}` of a JSON
+/// text (braces inside strings skipped).
+fn object_span(text: &str, key: &str) -> Option<(usize, usize)> {
+    let at = text.find(&format!("\"{key}\""))?;
+    let rest = &text[at + key.len() + 2..];
+    let colon = rest.find(':')?;
+    let after = &rest[colon + 1..];
+    let brace = after.find(|c: char| !c.is_whitespace())?;
+    if !after[brace..].starts_with('{') {
+        return None;
+    }
+    let start = at + key.len() + 2 + colon + 1 + brace;
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    for (i, c) in text[start..].char_indices() {
+        if in_str {
+            match c {
+                _ if esc => esc = false,
+                '\\' => esc = true,
+                '"' => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((start, start + i + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether `wanted` (as a dependency writes it) does not take `have` (the producer's
@@ -707,5 +758,35 @@ mod tests {
         assert!(!skewed("npm", "workspace:*", "2.1.1"));
         assert!(!skewed("npm", "file:../core", "2.1.1"));
         assert!(skewed("npm", "^0.3.0", "0.4.0"));
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    #[test]
+    fn maven_comments_count_for_nothing_and_lines_hold_after_non_ascii() {
+        let pom = "<project>\n  <!-- Configuración del módulo: <groupId>old.group</groupId> -->\n  <groupId>com.acme</groupId>\n  <artifactId>api</artifactId>\n  <version>2.0</version>\n  <dependencies>\n    <!--\n    <dependency>\n      <groupId>com.acme</groupId>\n      <artifactId>legacy</artifactId>\n    </dependency>\n    -->\n    <dependency>\n      <groupId>com.acme</groupId>\n      <artifactId>lib</artifactId>\n      <version>1.0</version>\n    </dependency>\n  </dependencies>\n</project>\n";
+        let c = maven(pom);
+        let p = c.produces.unwrap();
+        assert_eq!((p.name.as_str(), p.line), ("com.acme:api", 4));
+        let deps: Vec<(&str, u32)> = c.deps.iter().map(|d| (d.name.as_str(), d.line)).collect();
+        assert_eq!(deps, vec![("com.acme:lib", 13)]);
+    }
+
+    #[test]
+    fn npm_dependency_lines_are_read_in_their_own_section() {
+        let n = npm(r#"{
+  "name": "app",
+  "peerDependencies": { "react": "18" },
+  "overrides": { "lodash": "4" },
+  "dependencies": {
+    "lodash": "^4.0.0",
+    "react": "^18.0.0"
+  }
+}"#);
+        let deps: Vec<(&str, u32)> = n.deps.iter().map(|d| (d.name.as_str(), d.line)).collect();
+        assert_eq!(deps, vec![("lodash", 6), ("react", 7), ("react", 3)]);
     }
 }
