@@ -56,7 +56,8 @@ subtracted. A call names the method its receiver's type has or inherits. `super.
 - what the beans of the receiver's type and below have or inherit under that name (with
   one of its numbers of parameters; a class's method before an interface's default): first
   the beans Spring injects where the call is made, then the others, marked as such
-  ("another Spring bean"). A slice follows those only once the rest is walked.
+  ("another Spring bean"). A slice follows those only once the rest is walked,
+  and marks the data only they reach (`audit (Mongo, another bean)`).
 
 A flow that gets to a method without a body other than by a call (it starts there, or a
 route is declared on it) goes on to its beans.
