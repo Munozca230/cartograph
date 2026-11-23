@@ -255,6 +255,13 @@ fn diff_and_check_against_each_members_base() {
     let (code, out, err) = cartograph(&["check", &root, "--data-dir", &d, "--base", "main"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("layer_violation:lib->api"), "{out}");
+    // A revision for all that no member has is a mistake, not a comparison with itself.
+    let (code, _, err) = cartograph(&["check", &root, "--data-dir", &d, "--base", "mian"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("no member's repository has revision \"mian\""),
+        "{err}"
+    );
     // A revision named for one member must exist there; one for all may be missing.
     let (code, _, err) = cartograph(&["check", &root, "--data-dir", &d, "--base", "api=nope"]);
     assert_eq!(code, 2, "{err}");
