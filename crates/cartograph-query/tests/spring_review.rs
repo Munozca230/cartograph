@@ -1007,3 +1007,144 @@ fn a_bean_injected_by_its_supertype_is_injected_somewhere() {
         "{t}"
     );
 }
+
+// Third review -----------------------------------------------------------------------
+
+#[test]
+fn a_named_resource_keeps_its_name_in_a_holder_and_type_is_not_a_name() {
+    let r = gateways(&[(
+        "api/Till.java",
+        "@Service public class Till {
+    @jakarta.annotation.Resource(name = \"wire\") private ObjectProvider<Gateway> held;
+    @jakarta.annotation.Resource(name = \"wires\") private List<Gateway> many;
+    @jakarta.annotation.Resource(type = Gateway.class) private Gateway wire;
+    @jakarta.annotation.Resource(type = Gateway.class, name = \"wire\") private Gateway both;
+    void one() { held.getObject().charge(); }
+    void all() { many.forEach(g -> g.charge()); }
+    void typed() { wire.charge(); }
+    void named() { both.charge(); }
+}
+",
+    )]);
+    let t = callers(&r, "Wire.charge");
+    for m in ["one", "all", "typed", "named"] {
+        assert!(t.contains(&format!("Till.{m}()")), "{m}: {t}");
+    }
+    let t = callers(&r, "Card.charge");
+    for m in ["one", "typed", "named"] {
+        assert!(!t.contains(&format!("Till.{m}()")), "{m}: {t}");
+    }
+    assert!(t.contains("Till.all()"), "{t}");
+    let t = callers(&r, "Gateway.charge");
+    assert!(
+        t.contains("ObjectProvider<Gateway> @Resource(name = \"wire\")) api/Till.java:3: Wire (by name, of 2)"),
+        "{t}"
+    );
+    assert!(
+        t.contains(
+            "List<Gateway> @Resource(name = ?)) api/Till.java:4: named by what is not known, 2 fit"
+        ),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_service_without_subtypes_shows_where_its_supertype_is_injected() {
+    let r = repo(&[
+        (
+            "api/Printer.java",
+            "public interface Printer { void print(); }",
+        ),
+        (
+            "api/Laser.java",
+            "@Service public class Laser implements Printer { @Override public void print() { } public void warm() { } }",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired private Printer printer;
+    void a() { printer.print(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Laser.warm");
+    assert!(t.contains("Spring: the Laser bean"), "{t}");
+    assert!(
+        t.contains(
+            "injected into Desk (field printer, Printer) api/Desk.java:3: Laser (the only bean)"
+        ),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_field_set_again_after_delegating_is_not_narrowed() {
+    let r = gateways(&[(
+        "api/Till.java",
+        "@Service public class Till {
+    private Gateway main;
+    private Gateway kept;
+    @Autowired public Till(Gateway gateway, Gateway second) {
+        this(gateway, second, 3);
+        this.main = other();
+    }
+    Till(Gateway a, Gateway b, int tries) { this.main = a; this.kept = b; }
+    void pay() { main.charge(); }
+    void keep() { kept.charge(); }
+    static Gateway other() { return null; }
+}
+",
+    )]);
+    let t = callers(&r, "Wire.charge");
+    assert!(t.contains("Till.pay()"), "{t}");
+    assert!(!t.contains("Till.keep()"), "{t}");
+}
+
+#[test]
+fn a_repository_without_an_annotated_entity_takes_its_stores_default() {
+    let r = repo(&[
+        ("api/OrderLine.java", "public class OrderLine { }"),
+        (
+            "api/Lines.java",
+            "import org.springframework.data.r2dbc.repository.R2dbcRepository;
+public interface Lines extends R2dbcRepository<OrderLine, Long> { }
+",
+        ),
+        (
+            "api/Rows.java",
+            "import org.springframework.data.cassandra.repository.CassandraRepository;
+public interface Rows extends CassandraRepository<OrderLine, Long> { }
+",
+        ),
+        (
+            "api/Docs.java",
+            "public interface Docs extends MongoRepository<OrderLine, Long> { }",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired private Lines lines;
+    @Autowired private Rows rows;
+    @Autowired private Docs docs;
+    void a(OrderLine x) { lines.save(x); rows.save(x); docs.save(x); }
+}
+",
+        ),
+    ]);
+    let mut got: Vec<String> = r
+        .symbols
+        .spring
+        .sinks_of("sym:api/Desk.java#Desk.a")
+        .map(|d| format!("{} {} {}", d.store, d.name, d.via))
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            "cassandra orderline Rows.save",
+            "jdbc order_line Lines.save",
+            "mongo orderLine Docs.save",
+        ]
+    );
+}

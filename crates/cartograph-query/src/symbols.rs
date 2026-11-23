@@ -1358,7 +1358,10 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
     };
     // Direct calls, then calls to the method as a supertype declares it.
     let decls = if def.kind == SymbolKind::Method {
-        super_decls(t, &id)
+        let mut v = super_decls(t, &id);
+        // Java: an overload, a private or a static method overrides nothing.
+        v.retain(|(d, _)| t.spring.overrides(d, &id));
+        v
     } else {
         Vec::new()
     };
@@ -1375,13 +1378,14 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
     // Spring: a call through a supertype's declaration made on an injected field or
     // parameter reaches the beans Spring gives it, and no other implementation.
     let own_ty = crate::spring::type_of_method(t, &id);
+    let dispatch = crate::dispatch::Dispatcher::new(t);
     let mut other_beans: Vec<(String, usize)> = Vec::new();
     for (d, name) in &decls {
         let before = calls.len();
         let decl_ty = crate::spring::type_of_method(t, d);
         // Only a method some bean runs can be passed over by Spring: a class that is no
         // bean (a test's fake, one built with `new`) is reached whatever Spring injects.
-        let of_a_bean = crate::spring::dispatch(t, d).iter().any(|(m, _)| *m == id);
+        let of_a_bean = dispatch.of_a_bean(d, &id);
         let mut others = 0;
         for &i in t.callers_of(d) {
             let c = &t.calls[i];
@@ -1390,19 +1394,28 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                     .as_deref()
                     .is_some_and(|x| x.starts_with(o.as_str()))
             });
-            if mine {
+            // `super.m()` runs the method it names; a receiver of a class this one is not
+            // of never holds it.
+            let elsewhere = match (&own_ty, &decl_ty) {
+                (Some(own), Some(dt)) => {
+                    dispatch.as_named(c)
+                        || dispatch
+                            .receivers(c, dt)
+                            .iter()
+                            .all(|r| r != dt && r != own && !crate::spring::is_subtype(t, own, r))
+                }
+                _ => false,
+            };
+            if mine || elsewhere {
                 continue;
             }
-            let spring = decl_ty.as_deref().and_then(|dt| {
-                crate::spring::reaching(t, c.caller.as_deref(), &c.file, c.line, dt)
-            });
+            let beans = decl_ty.as_deref().and_then(|dt| dispatch.injected(c, dt));
             // What each bean runs there; a bean whose class is not known, or no bean of
             // the repo (one from a jar), says nothing: the plain hop stays.
-            let ran: Option<Vec<String>> = match (&spring, decl_ty.as_deref()) {
-                (Some(beans), Some(dt)) if !beans.is_empty() => beans
-                    .iter()
-                    .map(|b| crate::spring::runs(t, b, dt, d))
-                    .collect(),
+            let ran: Option<Vec<String>> = match &beans {
+                Some(beans) if !beans.is_empty() => {
+                    beans.iter().map(|b| dispatch.ran(b, d)).collect()
+                }
                 _ => None,
             };
             match ran {
@@ -1698,7 +1711,7 @@ fn spring_callers(
     decls: &[(String, String)],
     calls: &[Site<'_>],
 ) -> Option<SpringCallers> {
-    use crate::spring::{Why, bean_label, beans_for, beans_of, declared, leaf, pick};
+    use crate::spring::{Why, bean_label, beans_for, beans_of, declared, leaf, receives};
     let ty = ty?;
     if t.spring.is_empty() {
         return None;
@@ -1716,7 +1729,7 @@ fn spring_callers(
                 continue;
             };
             for i in t.spring.injections_of(&dt) {
-                if pick(i, &beans_for(t, i)).0.iter().any(|b| b.ty == ty) {
+                if receives(i, &beans_for(t, i)).0.iter().any(|b| b.ty == ty) {
                     points.push((i, dt.clone()));
                 }
             }
@@ -1743,9 +1756,6 @@ fn spring_callers(
         .copied()
         .filter(|b| b.ty != ty || b.factory.is_some())
         .collect();
-    if points.is_empty() && implementors.is_empty() {
-        return None;
-    }
     // A bean nobody injects by its own type may be injected by one of its supertypes.
     if points.is_empty() && is_bean {
         points = crate::spring::points_above(t, ty)
@@ -1754,12 +1764,15 @@ fn spring_callers(
             .collect();
         points.sort_by_key(|a| key(a.0));
     }
+    if points.is_empty() && implementors.is_empty() {
+        return None;
+    }
     let mut last: Option<Vec<String>> = None;
     let rows: Vec<SpringPoint> = points
         .iter()
         .map(|(i, _)| {
             let all = beans_for(t, i);
-            let (got, why) = pick(i, &all);
+            let (got, why) = receives(i, &all);
             let names: Vec<String> = got.iter().map(|b| bean_label(b)).collect();
             let same = last.as_ref() == Some(&names) && names.len() > 1;
             last = Some(names.clone());

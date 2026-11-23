@@ -7,13 +7,15 @@
 //! and row counts instead ([`FlowOptions`], the `MAX_*` constants), because a screen, not a
 //! context window, receives them.
 
+use crate::dispatch::Dispatcher;
 use crate::graph::{FileIx, ROOT};
 use crate::kind::FileKind;
 use crate::overview::in_test_tree;
+use crate::symbols::SymbolTable;
 use crate::{QueryError, Repo, Severity};
 use cartograph_core::{Confidence, EntryKind, EntryPoint, Symbol, SymbolKind, split_symbol_id};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// Default depth of a flow (calls followed from the start).
 pub const DEFAULT_DEPTH: u32 = 4;
@@ -42,8 +44,8 @@ const THROUGH_BUDGET: usize = 4000;
 /// Folders whose subfolders are better lanes than themselves (`src/core`, not `src`).
 const SOURCE_ROOTS: &[&str] = &["src", "lib", "app", "source", "pkg", "internal", "packages"];
 
-/// The `via` of a flow edge from an interface method to a bean's method that implements
-/// it (Spring runs the bean's).
+/// The `via` of a flow edge to the method a Spring bean runs for the one a call names (an
+/// interface's, a base class's).
 pub const SPRING_VIA: &str = "Spring bean";
 
 /// Calls of one caller to one target, merged.
@@ -65,6 +67,9 @@ pub struct CallIndex {
     /// Caller id (`sym:…`, or `file:…` for module-level calls) → its callees, in the order
     /// of their first call.
     out: HashMap<String, Vec<Callee>>,
+    /// Methods without a body → what the beans below them run (see
+    /// [`CallIndex::declared_edges`]).
+    declared: HashMap<String, Vec<Callee>>,
     /// Symbol id → index in `repo.symbols.symbols` (the first definition when ids repeat).
     sym: HashMap<String, usize>,
     /// Callable symbols by file path, in line order.
@@ -95,6 +100,7 @@ impl CallIndex {
     pub fn build(repo: &Repo) -> CallIndex {
         let t = &repo.symbols;
         let mut ix = CallIndex::default();
+        let dispatch = Dispatcher::new(t);
         for (i, s) in t.symbols.iter().enumerate() {
             ix.sym.entry(s.id()).or_insert(i);
             if s.kind.is_callable() {
@@ -110,24 +116,37 @@ impl CallIndex {
                 .caller
                 .clone()
                 .unwrap_or_else(|| format!("file:{}", c.file));
+            // Spring: what the beans a call is made on run, in place of the method it names.
+            let reach = dispatch.reach(c);
+            let plain = [(c.target.as_str(), false)];
+            let to: Vec<(&str, bool)> = match &reach {
+                Some(r) => r.edges(&c.target).collect(),
+                None => plain.to_vec(),
+            };
             let list = ix.out.entry(caller.clone()).or_default();
-            match pos.get(&(caller.clone(), c.target.clone())) {
-                Some(&k) => {
-                    let e = &mut list[k];
-                    e.calls += 1;
-                    if rank(c.confidence) < rank(e.confidence) {
-                        e.confidence = c.confidence;
+            for (target, spring) in to {
+                match pos.get(&(caller.clone(), target.to_string())) {
+                    Some(&k) => {
+                        let e = &mut list[k];
+                        e.calls += 1;
+                        if rank(c.confidence) < rank(e.confidence) {
+                            e.confidence = c.confidence;
+                        }
+                        // A plain call too.
+                        if !spring {
+                            e.via = None;
+                        }
                     }
-                }
-                None => {
-                    pos.insert((caller, c.target.clone()), list.len());
-                    list.push(Callee {
-                        target: c.target.clone(),
-                        line: c.line,
-                        confidence: c.confidence,
-                        calls: 1,
-                        via: None,
-                    });
+                    None => {
+                        pos.insert((caller.clone(), target.to_string()), list.len());
+                        list.push(Callee {
+                            target: target.to_string(),
+                            line: c.line,
+                            confidence: c.confidence,
+                            calls: 1,
+                            via: spring.then(|| SPRING_VIA.to_string()),
+                        });
+                    }
                 }
             }
         }
@@ -152,11 +171,7 @@ impl CallIndex {
                 via: Some(crate::bridges::step_label(b)),
             });
         }
-        // Spring: a call to an interface method goes on to the methods of the beans that
-        // implement it (a constructor's or a list's beans alike).
-        if !t.spring.beans.is_empty() {
-            ix.spring_edges(repo);
-        }
+        ix.declared_edges(repo, &dispatch);
         for f in repo.findings() {
             if f.severity == Severity::Info {
                 continue;
@@ -187,59 +202,35 @@ impl CallIndex {
         ix
     }
 
-    /// Calls that go on to the methods of Spring beans: from an interface's method, and
-    /// for a class's from each caller but those below it (`super.save()` runs the class's
-    /// own), since that method may also run as it is.
-    fn spring_edges(&mut self, repo: &Repo) {
+    /// What the methods without a body that some bean runs go on to, for a flow that starts
+    /// at one (its callers go on to the beans directly).
+    fn declared_edges(&mut self, repo: &Repo, dispatch: &Dispatcher<'_, SymbolTable>) {
         let t = &repo.symbols;
-        // Target → its callers, with the line of the call.
-        let mut targets: BTreeMap<String, Vec<(String, u32)>> = BTreeMap::new();
-        for (caller, list) in &self.out {
-            for c in list.iter().filter(|c| c.via.is_none()) {
-                targets
-                    .entry(c.target.clone())
-                    .or_default()
-                    .push((caller.clone(), c.line));
-            }
-        }
-        for (target, mut callers) in targets {
-            let impls = crate::spring::dispatch(t, &target);
-            let Some(ty) = crate::spring::type_of_method(t, &target).filter(|_| !impls.is_empty())
-            else {
+        for s in t.symbols.iter().filter(|s| s.kind.is_callable()) {
+            let id = s.id();
+            let Some(r) = dispatch.declared(&id) else {
                 continue;
             };
-            let interface = t
-                .symbol(&ty)
-                .is_some_and(|s| s.kind == SymbolKind::Interface);
-            let from: Vec<(String, Option<u32>)> = if interface {
-                vec![(target.clone(), None)]
-            } else {
-                callers.sort();
-                callers
-                    .into_iter()
-                    .filter(|(c, _)| {
-                        crate::spring::type_of_method(t, c)
-                            .is_none_or(|own| !crate::spring::is_subtype(t, &own, &ty))
-                    })
-                    .map(|(c, line)| (c, Some(line)))
-                    .collect()
-            };
-            for (src, at) in from {
-                let list = self.out.entry(src).or_default();
-                for (m, _) in &impls {
-                    if *m == target || list.iter().any(|c| c.target == *m) {
-                        continue;
-                    }
-                    let line = at.unwrap_or_else(|| t.symbol(m).map_or(0, |s| s.line));
-                    list.push(Callee {
-                        target: m.clone(),
-                        line,
-                        confidence: Confidence::Resolved,
-                        calls: 1,
-                        via: Some(SPRING_VIA.to_string()),
-                    });
-                }
-            }
+            let list = r
+                .runs
+                .iter()
+                .map(|(m, _)| Callee {
+                    target: m.clone(),
+                    line: t.symbol(m).map_or(0, |s| s.line),
+                    confidence: Confidence::Resolved,
+                    calls: 1,
+                    via: Some(SPRING_VIA.to_string()),
+                })
+                .collect();
+            self.declared.insert(id, list);
+        }
+    }
+
+    /// The callees of the function a flow starts at.
+    fn start(&self, id: &str) -> &[Callee] {
+        match self.callees(id) {
+            [] => self.declared.get(id).map_or(&[], Vec::as_slice),
+            v => v,
         }
     }
 
@@ -656,6 +647,14 @@ pub fn flow(
 
     let mut nodes: Vec<FlowNode> = Vec::new();
     let mut at: HashMap<String, usize> = HashMap::new();
+    let start = root.clone();
+    let kids = |id: &str| {
+        if id == start {
+            ix.start(id)
+        } else {
+            ix.callees(id)
+        }
+    };
     let make = |id: &str, d: u32| -> FlowNode {
         let s = ix.symbol(repo, id);
         let file = file_of(id, s);
@@ -667,7 +666,7 @@ pub fn flow(
             end_line: s.map_or(1, |s| s.end_line),
             callers: t.callers_of(id).len(),
             depth: d,
-            callees: ix.callees(id).iter().filter(|c| c.target != id).count(),
+            callees: kids(id).iter().filter(|c| c.target != id).count(),
             more: 0,
             open: false,
             finding: ix.mark(&file),
@@ -686,7 +685,7 @@ pub fn flow(
         let id = nodes[n].id.clone();
         let d = nodes[n].depth;
         let mut added = Vec::new();
-        for c in ix.callees(&id) {
+        for c in kids(&id) {
             if c.target == id || at.contains_key(&c.target) {
                 continue;
             }
@@ -747,7 +746,7 @@ pub fn flow(
     for node in &mut nodes {
         let id = node.id.as_str();
         let mut more = 0;
-        for c in ix.callees(id) {
+        for c in kids(id) {
             if c.target == id {
                 continue;
             }
@@ -1001,7 +1000,7 @@ pub fn symbol_card(repo: &Repo, ix: &CallIndex, id: &str) -> Result<SymbolCard, 
     let production_total = prod.len();
     prod.truncate(MAX_CALLERS);
 
-    let all: Vec<&Callee> = ix.callees(&id).iter().filter(|c| c.target != id).collect();
+    let all: Vec<&Callee> = ix.start(&id).iter().filter(|c| c.target != id).collect();
     let callee_lanes: HashSet<String> = all
         .iter()
         .map(|c| ix.lane_of(&file_of(&c.target, ix.symbol(repo, &c.target))))

@@ -184,7 +184,7 @@ fn flows_go_on_from_an_interface_method_to_its_beans() {
         .iter()
         .find(|e| e.dst.ends_with("OrderServiceImpl.create"))
         .unwrap_or_else(|| panic!("{:?}", g.edges));
-    assert!(edge.src.ends_with("OrderService.create"), "{edge:?}");
+    assert!(edge.src.ends_with("OrderController.create"), "{edge:?}");
     assert_eq!(edge.via.as_deref(), Some(SPRING_VIA));
     // On down to the store of the other member.
     assert!(

@@ -27,6 +27,7 @@ pub mod check;
 pub mod config;
 pub mod deps;
 pub mod diff;
+pub mod dispatch;
 pub mod explain;
 pub mod find;
 pub mod findings;

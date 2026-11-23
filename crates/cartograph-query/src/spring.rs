@@ -4,7 +4,9 @@
 //! the bean methods a call to an interface method may run, and the collections or tables a
 //! method reads or writes.
 
-use cartograph_core::{DataSink, SpringBean, SpringInjection, Symbols, split_symbol_id};
+use cartograph_core::{
+    DataSink, JavaSite, SpringBean, SpringInjection, SymbolCall, Symbols, split_symbol_id,
+};
 use std::collections::{HashMap, HashSet};
 
 /// Hops of supertypes walked from a bean's type (as `hierarchy`).
@@ -38,9 +40,40 @@ pub struct SpringTable {
     sinks_of: HashMap<String, Vec<usize>>,
     /// Each bean's type and its supertypes (see [`SpringTable::link`]).
     ancestors: Vec<HashSet<String>>,
+    /// Type → the beans of it and below (tests' too).
+    below: HashMap<String, Vec<usize>>,
+    /// `sym:path#Leaf`, as method ids name it → the type, for the types some bean is below.
+    declarers: HashMap<String, String>,
+    /// Method → what is known of it (its overloads together).
+    methods: HashMap<String, Method>,
+    /// File → line → calls whose receiver says more than their target.
+    sites: HashMap<String, HashMap<u32, Vec<JavaSite>>>,
+    /// File → line → injection points whose beans a call there is made on, and whether it
+    /// reads every element.
+    uses: HashMap<String, HashMap<u32, Vec<(usize, bool)>>>,
     /// Files of beans and injection points that lie in a test, fixture or example tree:
     /// their beans are injected only into the injection points of such files.
     tests: HashSet<String>,
+}
+
+/// A Java method, its overloads together.
+#[derive(Debug, Default)]
+pub struct Method {
+    /// Every overload is.
+    pub private: bool,
+    pub is_static: bool,
+    pub is_abstract: bool,
+    /// The numbers of parameters (-1: any).
+    arities: Vec<i32>,
+}
+
+impl Method {
+    /// One may override the other.
+    fn overlaps(&self, o: &Method) -> bool {
+        self.arities.contains(&-1)
+            || o.arities.contains(&-1)
+            || self.arities.iter().any(|a| o.arities.contains(a))
+    }
 }
 
 impl SpringTable {
@@ -51,7 +84,35 @@ impl SpringTable {
             sinks: s.sinks.clone(),
             ..SpringTable::default()
         };
+        for m in &s.java_methods {
+            let e = t.methods.entry(m.id.clone()).or_insert_with(|| Method {
+                private: true,
+                is_static: true,
+                is_abstract: true,
+                arities: Vec::new(),
+            });
+            e.private &= m.private;
+            e.is_static &= m.is_static;
+            e.is_abstract &= m.is_abstract;
+            e.arities.push(m.arity);
+        }
+        for c in &s.java_sites {
+            t.sites
+                .entry(c.file.clone())
+                .or_default()
+                .entry(c.line)
+                .or_default()
+                .push(c.clone());
+        }
         for (i, x) in t.injections.iter().enumerate() {
+            for u in &x.uses {
+                t.uses
+                    .entry(x.file.clone())
+                    .or_default()
+                    .entry(u.line)
+                    .or_default()
+                    .push((i, u.each));
+            }
             t.by_ty.entry(x.ty.clone()).or_default().push(i);
             t.by_owner.entry(x.owner.clone()).or_default().push(i);
         }
@@ -90,6 +151,77 @@ impl SpringTable {
     /// Set what [`SpringTable::link`] read.
     pub fn set_links(&mut self, links: (Vec<HashSet<String>>, HashSet<String>)) {
         (self.ancestors, self.tests) = links;
+        for (i, types) in self.ancestors.iter().enumerate() {
+            for ty in types {
+                let v = self.below.entry(ty.clone()).or_default();
+                if v.is_empty()
+                    && let Some((p, _)) = split_symbol_id(ty)
+                {
+                    self.declarers
+                        .insert(format!("sym:{p}#{}", leaf(ty)), ty.clone());
+                }
+                v.push(i);
+            }
+        }
+    }
+
+    /// The type that declares method `id`, when some bean is of it or below.
+    pub fn declarer(&self, id: &str) -> Option<&str> {
+        let (ty, _) = id.rsplit_once('.')?;
+        self.declarers.get(ty).map(String::as_str)
+    }
+
+    /// The application's beans of type `ty` and below.
+    pub fn beans_below(&self, ty: &str) -> impl Iterator<Item = &SpringBean> {
+        self.below
+            .get(ty)
+            .into_iter()
+            .flatten()
+            .map(|&i| &self.beans[i])
+            .filter(|b| !self.tests.contains(&b.file))
+    }
+
+    /// Method `a` may override method `b` (or the other way): neither is known to be
+    /// private or static, and they share a number of parameters.
+    pub fn overrides(&self, a: &str, b: &str) -> bool {
+        match (self.method(a), self.method(b)) {
+            (Some(x), Some(y)) => {
+                !x.private && !y.private && !x.is_static && !y.is_static && x.overlaps(y)
+            }
+            _ => true,
+        }
+    }
+
+    /// What is known of a Java method.
+    pub fn method(&self, id: &str) -> Option<&Method> {
+        self.methods.get(id)
+    }
+
+    /// The calls to a call's target on its line, when they say more than it.
+    pub fn sites(&self, c: &SymbolCall) -> Option<Vec<&JavaSite>> {
+        let v: Vec<&JavaSite> = self
+            .sites
+            .get(&c.file)?
+            .get(&c.line)?
+            .iter()
+            .filter(|s| s.target == c.target)
+            .collect();
+        (!v.is_empty()).then_some(v)
+    }
+
+    /// The injection points whose beans a call at `file:line` is made on, each with whether
+    /// it reads every element.
+    pub fn injected_at(
+        &self,
+        file: &str,
+        line: u32,
+    ) -> impl Iterator<Item = (&SpringInjection, bool)> {
+        self.uses
+            .get(file)
+            .and_then(|m| m.get(&line))
+            .into_iter()
+            .flatten()
+            .map(|&(i, each)| (&self.injections[i], each))
     }
 
     /// Whether a bean's or injection point's file lies in a test tree.
@@ -175,7 +307,7 @@ pub fn points_above<'t, T: Types>(t: &'t T, ty: &str) -> Vec<&'t SpringInjection
     above
         .iter()
         .flat_map(|a| t.spring().injections_of(a))
-        .filter(|i| pick(i, &beans_for(t, i)).0.iter().any(|b| b.ty == ty))
+        .filter(|i| receives(i, &beans_for(t, i)).0.iter().any(|b| b.ty == ty))
         .collect()
 }
 
@@ -198,20 +330,21 @@ pub fn beans_for<'t, T: Types>(t: &'t T, inj: &SpringInjection) -> Vec<&'t Sprin
 
 fn beans_where<'t, T: Types>(t: &'t T, ty: &str, tests: bool) -> Vec<&'t SpringBean> {
     let sp = t.spring();
-    let mut v: Vec<&SpringBean> = sp
-        .beans
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| tests || !sp.tests.contains(&b.file))
-        .filter(|(i, b)| {
-            b.ty == ty
-                || match sp.ancestors.get(*i) {
-                    Some(a) => a.contains(ty),
-                    None => ancestors(t, &b.ty).contains(ty),
-                }
-        })
-        .map(|(_, b)| b)
-        .collect();
+    let mut v: Vec<&SpringBean> = if sp.ancestors.len() == sp.beans.len() {
+        sp.below
+            .get(ty)
+            .into_iter()
+            .flatten()
+            .map(|&i| &sp.beans[i])
+            .collect()
+    } else {
+        // Not linked (a table built by hand).
+        sp.beans
+            .iter()
+            .filter(|b| ancestors(t, &b.ty).contains(ty))
+            .collect()
+    };
+    v.retain(|b| tests || !sp.tests.contains(&b.file));
     v.sort_by_key(|b| (bean_label(b), b.file.clone(), b.line));
     // Two names not known are not one.
     v.dedup_by(|a, b| a.ty == b.ty && a.name == b.name && !a.name.is_empty());
@@ -248,8 +381,19 @@ fn named(b: &SpringBean) -> bool {
     !b.name.is_empty() && b.aliases.iter().all(|a| !a.is_empty())
 }
 
-/// The beans an injection point receives (`all`: the beans of its type).
-pub fn pick<'b>(inj: &SpringInjection, all: &[&'b SpringBean]) -> (Vec<&'b SpringBean>, Why) {
+/// The beans an injection point receives (`all`: the beans of its type), as one list: see
+/// [`pick`].
+pub fn receives<'b>(inj: &SpringInjection, all: &[&'b SpringBean]) -> (Vec<&'b SpringBean>, Why) {
+    pick(inj, all, inj.uses.iter().any(|u| u.each))
+}
+
+/// The beans a call on what an injection point receives may be made on: `each`, when it
+/// reads every element (an `ObjectProvider` gives one bean, or all of them streamed).
+pub fn pick<'b>(
+    inj: &SpringInjection,
+    all: &[&'b SpringBean],
+    each: bool,
+) -> (Vec<&'b SpringBean>, Why) {
     let mut v: Vec<&SpringBean> = all.to_vec();
     let mut why = Why::All;
     // `@Resource`: by name first; the default name falls back to the type.
@@ -293,7 +437,11 @@ pub fn pick<'b>(inj: &SpringInjection, all: &[&'b SpringBean]) -> (Vec<&'b Sprin
     if v.is_empty() {
         return (v, Why::None);
     }
-    if inj.takes_all() {
+    let all_of_them = match inj.wrapper.as_str() {
+        "ObjectProvider" => each,
+        _ => inj.takes_all(),
+    };
+    if all_of_them {
         return (v, why);
     }
     if v.len() == 1 {
@@ -333,12 +481,17 @@ pub fn type_of_method<T: Types>(t: &T, id: &str) -> Option<String> {
         .map(|(_, id)| id)
 }
 
-/// Method `m` as type `ty` has it: its own, else the nearest supertype's, a class before
-/// an interface (a class's method wins over an interface's default).
-fn method_on<T: Types>(t: &T, ty: &str, m: &str) -> Option<String> {
+/// What a bean of class `ty` runs for method `target`: the method its class has or
+/// inherits under that name and one of its numbers of parameters, a class's before an
+/// interface's default. `None` when it is not known: only a method without a body is
+/// found, or one of a class outside the repo.
+pub fn method_on<T: Types>(t: &T, ty: &str, target: &str) -> Option<String> {
+    let sp = t.spring();
+    let m = split_symbol_id(target)?.1.rsplit('.').next()?;
+    let asked = sp.method(target);
     let mut level = vec![ty.to_string()];
     let mut seen: HashSet<String> = HashSet::new();
-    let mut declared: Option<String> = None;
+    let mut default: Option<String> = None;
     for _ in 0..=SUPER_HOPS {
         let mut next = Vec::new();
         for cur in &level {
@@ -347,11 +500,20 @@ fn method_on<T: Types>(t: &T, ty: &str, m: &str) -> Option<String> {
             }
             if let Some((p, _)) = split_symbol_id(cur) {
                 let id = format!("sym:{p}#{}.{m}", leaf(cur));
-                if t.exists(&id) {
+                let known = sp.method(&id);
+                let runs = t.exists(&id)
+                    && known.is_none_or(|x| {
+                        id == target
+                            || !x.private
+                                && !x.is_static
+                                && asked.is_none_or(|asked| asked.overlaps(x))
+                    });
+                let body = known.map_or(!t.is_interface(cur), |x| !x.is_abstract);
+                if runs && body {
                     if !t.is_interface(cur) {
                         return Some(id);
                     }
-                    declared.get_or_insert(id);
+                    default.get_or_insert(id);
                 }
             }
             next.extend(t.supertypes(cur));
@@ -361,92 +523,7 @@ fn method_on<T: Types>(t: &T, ty: &str, m: &str) -> Option<String> {
         }
         level = next;
     }
-    declared
-}
-
-/// What a call to method `decl` (declared by type `decl_ty`) runs on bean `b`: the method
-/// its class has, or inherits. `None` when that is not known: the bean is known only by
-/// the declaring type (a `@Bean` method that returns the interface, a generated mapper),
-/// or the method is only declared (a default method, or one from outside the repo).
-pub fn runs<T: Types>(t: &T, b: &SpringBean, decl_ty: &str, decl: &str) -> Option<String> {
-    if b.ty == decl_ty {
-        return None;
-    }
-    let m = split_symbol_id(decl)?.1.rsplit('.').next()?;
-    method_on(t, &b.ty, m).filter(|x| type_of_method(t, x).is_none_or(|ty| !t.is_interface(&ty)))
-}
-
-/// A method, with the beans that run it.
-pub type Runs<'t> = (String, Vec<&'t SpringBean>);
-
-/// What a call to method `id` (an interface or base class method) may run through Spring:
-/// each method the beans of its type have or inherit (`id` itself among them), with the
-/// beans that run it. Empty when no bean has one of its own.
-pub fn dispatch<'t, T: Types>(t: &'t T, id: &str) -> Vec<Runs<'t>> {
-    let Some(ty) = type_of_method(t, id) else {
-        return Vec::new();
-    };
-    let Some((_, q)) = split_symbol_id(id) else {
-        return Vec::new();
-    };
-    let m = q.rsplit('.').next().unwrap_or(q);
-    let mut out: Vec<Runs<'t>> = Vec::new();
-    for b in beans_of(t, &ty) {
-        // A bean known by the declaring type may run the declared method.
-        let Some(x) = method_on(t, &b.ty, m) else {
-            continue;
-        };
-        match out.iter_mut().find(|(y, _)| *y == x) {
-            Some((_, beans)) => beans.push(b),
-            None => out.push((x, vec![b])),
-        }
-    }
-    if out.iter().all(|(x, _)| x == id) {
-        return Vec::new();
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
-/// The beans a call at `line` (from `caller`, a method id or `None` outside any method) to
-/// a method of type `ty` may reach, when it is made on what Spring injects into the calling
-/// class: the field or parameter itself, a field that holds it, the variable of a loop or
-/// lambda over it. `None` otherwise (another receiver, or one not known).
-pub fn reaching<'t, T: Types>(
-    t: &'t T,
-    caller: Option<&str>,
-    file: &str,
-    line: u32,
-    ty: &str,
-) -> Option<Vec<&'t SpringBean>> {
-    let mut out: Vec<&SpringBean> = Vec::new();
-    let mut injected = false;
-    for c in caller_classes(t, caller, file) {
-        for p in t.spring().injections_into(&c).filter(|i| i.ty == ty) {
-            // Of several uses on the line, one that reads every element narrows least.
-            let Some(u) = p.uses.iter().filter(|u| u.line == line).max() else {
-                continue;
-            };
-            injected = true;
-            let all = beans_for(t, p);
-            // A provider gives one bean, or all of them when it is read one by one.
-            let got = if p.wrapper == "ObjectProvider" {
-                let one = SpringInjection {
-                    uses: vec![*u],
-                    ..p.clone()
-                };
-                pick(&one, &all).0
-            } else {
-                pick(p, &all).0
-            };
-            for b in got {
-                if !out.iter().any(|x| std::ptr::eq(*x, b)) {
-                    out.push(b);
-                }
-            }
-        }
-    }
-    injected.then_some(out)
+    default
 }
 
 /// The class around a caller id: `sym:p#C` of `sym:p#C.m`; for a call outside any method
@@ -513,25 +590,25 @@ mod tests {
         );
         let all = [&a, &b, &c];
         let names = |v: Vec<&SpringBean>| v.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
-        let (v, why) = pick(&point("List", "xs", None), &all);
+        let (v, why) = receives(&point("List", "xs", None), &all);
         assert_eq!(
             (names(v), why),
             (vec!["a".into(), "wire".into(), "c".into()], Why::All)
         );
-        let (v, why) = pick(&point("", "x", None), &all);
+        let (v, why) = receives(&point("", "x", None), &all);
         assert_eq!((names(v), why), (vec!["wire".to_string()], Why::Primary));
-        let (v, why) = pick(&point("", "x", Some("c")), &all);
+        let (v, why) = receives(&point("", "x", Some("c")), &all);
         assert_eq!((names(v), why), (vec!["c".to_string()], Why::Qualifier));
-        let (v, why) = pick(&point("", "c", None), &[&a, &c]);
+        let (v, why) = receives(&point("", "c", None), &[&a, &c]);
         assert_eq!((names(v), why), (vec!["c".to_string()], Why::Name));
-        let (v, why) = pick(&point("", "x", None), &[&a, &c]);
+        let (v, why) = receives(&point("", "x", None), &[&a, &c]);
         assert_eq!((v.len(), why), (2, Why::Ambiguous));
-        let (v, why) = pick(&point("", "x", None), &[&a]);
+        let (v, why) = receives(&point("", "x", None), &[&a]);
         assert_eq!((v.len(), why), (1, Why::Only));
-        let (v, why) = pick(&point("", "x", Some("nope")), &all);
+        let (v, why) = receives(&point("", "x", Some("nope")), &all);
         assert_eq!((v.len(), why), (0, Why::None));
         // A qualifier whose value is not known narrows nothing, not even to the primary.
-        let (v, why) = pick(&point("", "x", Some("")), &all);
+        let (v, why) = receives(&point("", "x", Some("")), &all);
         assert_eq!((v.len(), why), (3, Why::Unknown));
         // `@Resource`: its name before the primary; only a default name falls back.
         let asks = |name: &str, default| SpringInjection {
@@ -541,21 +618,21 @@ mod tests {
             }),
             ..point("", "x", None)
         };
-        let (v, why) = pick(&asks("c", true), &all);
+        let (v, why) = receives(&asks("c", true), &all);
         assert_eq!((names(v), why), (vec!["c".to_string()], Why::Name));
-        let (v, why) = pick(&asks("x", true), &all);
+        let (v, why) = receives(&asks("x", true), &all);
         assert_eq!((names(v), why), (vec!["wire".to_string()], Why::Primary));
-        let (v, why) = pick(&asks("x", false), &all);
+        let (v, why) = receives(&asks("x", false), &all);
         assert_eq!((v.len(), why), (0, Why::NoName));
-        let (v, why) = pick(&asks("", false), &all);
+        let (v, why) = receives(&asks("", false), &all);
         assert_eq!((v.len(), why), (3, Why::UnknownName));
         // An alias, and a bean whose own name is not known.
         let mut d = bean("D", "", false);
-        let (v, why) = pick(&point("", "x", Some("nope")), &[&a, &d]);
+        let (v, why) = receives(&point("", "x", Some("nope")), &[&a, &d]);
         assert_eq!((names(v), why), (vec![String::new()], Why::Unknown));
         d.name = "d".into();
         d.aliases = vec!["nope".into()];
-        let (v, why) = pick(&point("", "x", Some("nope")), &[&a, &d]);
+        let (v, why) = receives(&point("", "x", Some("nope")), &[&a, &d]);
         assert_eq!((names(v), why), (vec!["d".to_string()], Why::Qualifier));
     }
 }

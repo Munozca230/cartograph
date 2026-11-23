@@ -19,13 +19,11 @@
 //!
 //! Everything is bounded: walk depths, visited functions, chains and sinks listed.
 
-use crate::spring::{dispatch, reaching};
+use crate::dispatch::Dispatcher;
 use crate::symbols::SymbolTable;
-use cartograph_core::{Bridge, BridgeKind, DataSink, SymbolCall, SymbolKind, split_symbol_id};
+use cartograph_core::{Bridge, BridgeKind, DataSink, SymbolCall, split_symbol_id};
 use serde::Serialize;
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::rc::Rc;
 
 /// Deepest chain from `from` to `to`.
 const REACH_DEPTH: usize = 10;
@@ -150,11 +148,8 @@ struct Graph<'t> {
     bridges_out: HashMap<&'t str, Vec<&'t Bridge>>,
     /// Destination symbol → the lines bridges land on it.
     landings: HashMap<&'t str, Vec<u32>>,
-    /// Interface method → the bean methods Spring may run for it (see [`dispatch`]).
-    impls: RefCell<HashMap<String, Rc<Impls<'t>>>>,
+    dispatch: Dispatcher<'t, SymbolTable>,
 }
-
-type Impls<'t> = Vec<crate::spring::Runs<'t>>;
 
 impl<'t> Graph<'t> {
     fn build(t: &'t SymbolTable) -> Graph<'t> {
@@ -188,7 +183,7 @@ impl<'t> Graph<'t> {
             out,
             bridges_out,
             landings,
-            impls: RefCell::new(HashMap::new()),
+            dispatch: Dispatcher::new(t),
         }
     }
 
@@ -223,14 +218,16 @@ impl<'t> Graph<'t> {
                 continue;
             }
             if spring {
-                // An interface or base class method: the beans Spring gives the caller.
-                let impls = self.dispatch(&c.target);
-                if !impls.is_empty() {
-                    let kept = self.bean_edges(&impls, n, c);
-                    if !kept.is_empty() {
-                        out.extend(kept);
-                        continue;
-                    }
+                // An interface or base class method: what the beans there run.
+                if let Some(r) = self.dispatch.reach(c) {
+                    let label = crate::spring::type_of_method(self.t, &c.target)
+                        .map(|x| format!("Spring bean of {}", crate::spring::leaf(&x)));
+                    out.extend(r.edges(&c.target).map(|(m, spring)| Edge {
+                        to: Node::whole(m),
+                        line: c.line,
+                        via: label.clone().filter(|_| spring),
+                    }));
+                    continue;
                 }
             }
             out.push(Edge {
@@ -252,56 +249,6 @@ impl<'t> Graph<'t> {
             }
         }
         out
-    }
-
-    /// The edges of a call to a method `impls` run for, through Spring; empty for a call
-    /// that runs the method it names: a base class's, from a class below it
-    /// (`super.save()`, an inherited `save()`), or one no bean serves. An implementation
-    /// that calls its interface calls another one (a decorator).
-    fn bean_edges(&self, impls: &Impls<'t>, n: &Node, c: &SymbolCall) -> Vec<Edge> {
-        let ty = crate::spring::type_of_method(self.t, &c.target);
-        let picked = ty
-            .as_deref()
-            .and_then(|ty| reaching(self.t, Some(&n.id), &c.file, c.line, ty));
-        if picked.is_none()
-            && let (Some(ty), Some(own)) =
-                (ty.as_deref(), crate::spring::type_of_method(self.t, &n.id))
-            && !self
-                .t
-                .symbol(ty)
-                .is_some_and(|s| s.kind == SymbolKind::Interface)
-            && crate::spring::is_subtype(self.t, &own, ty)
-        {
-            return Vec::new();
-        }
-        let label = ty
-            .as_deref()
-            .map(|x| format!("Spring bean of {}", crate::spring::leaf(x)));
-        impls
-            .iter()
-            .filter(|(_, beans)| {
-                picked
-                    .as_ref()
-                    .is_none_or(|p| beans.iter().any(|b| p.iter().any(|x| std::ptr::eq(*x, *b))))
-            })
-            .map(|(m, _)| Edge {
-                to: Node::whole(m),
-                line: c.line,
-                via: label.clone(),
-            })
-            .collect()
-    }
-
-    /// [`dispatch`], once per method.
-    fn dispatch(&self, id: &str) -> Rc<Impls<'t>> {
-        if let Some(v) = self.impls.borrow().get(id) {
-            return Rc::clone(v);
-        }
-        let v = Rc::new(dispatch(self.t, id));
-        self.impls
-            .borrow_mut()
-            .insert(id.to_string(), Rc::clone(&v));
-        v
     }
 
     fn label(&self, id: &str) -> String {
