@@ -44,8 +44,14 @@ impl CompilerPaths {
     }
 
     /// The best-matching `paths` pattern for `spec` and its substitutions as repo-relative
-    /// paths, in order.
-    pub fn candidates(&self, spec: &str) -> Option<(&str, Vec<String>)> {
+    /// paths, in order. `join` places a substitution relative to `paths_base` (see
+    /// [`super::Index::join`]: one that leaves a workspace member lands in the member whose
+    /// folder holds it).
+    pub fn candidates(
+        &self,
+        spec: &str,
+        join: impl Fn(&str, &str) -> Option<String>,
+    ) -> Option<(&str, Vec<String>)> {
         let mut best: Option<(&PathMapping, &str, usize)> = None;
         for m in &self.paths {
             let Some(capture) = match_pattern(&m.pattern, spec) else {
@@ -160,7 +166,7 @@ impl<'i, 'a> Loader<'i, 'a> {
             .find(|c| !c.is_empty() && self.exists(c))
         };
         if spec.starts_with('.') {
-            return with_variants(join(dir, spec)?);
+            return with_variants(self.ix.join(dir, spec)?);
         }
         // A package: look in node_modules of this dir and every ancestor (on disk; the
         // walker never indexes node_modules).
@@ -170,7 +176,8 @@ impl<'i, 'a> Loader<'i, 'a> {
             {
                 return Some(found);
             }
-            d = (!cur.is_empty()).then(|| parent(cur));
+            // Up to the repo's root (a workspace member's, in a workspace).
+            d = (!self.ix.is_mount_root(cur) && !cur.is_empty()).then(|| parent(cur));
         }
         None
     }
@@ -226,7 +233,7 @@ impl<'i, 'a> Loader<'i, 'a> {
 
         let opts = v.get("compilerOptions");
         if let Some(b) = opts.and_then(|o| o.get("baseUrl")).and_then(Value::as_str) {
-            match join(&dir, b) {
+            match self.ix.join(&dir, b) {
                 Some(p) => raw.base_url = Some(p),
                 None => self.diag(path, format!("baseUrl {b:?} leaves the repo")),
             }
@@ -253,7 +260,9 @@ impl<'i, 'a> Loader<'i, 'a> {
                 let Some(p) = r.get("path").and_then(Value::as_str) else {
                     continue;
                 };
-                let Some(p) = join(&dir, p) else { continue };
+                let Some(p) = self.ix.join(&dir, p) else {
+                    continue;
+                };
                 let file = if p.ends_with(".json") {
                     p
                 } else {
@@ -295,11 +304,11 @@ mod tests {
             ],
             paths_base: "web".into(),
         };
-        let (pattern, paths) = cfg.candidates("@app/x").unwrap();
+        let (pattern, paths) = cfg.candidates("@app/x", super::join).unwrap();
         assert_eq!(pattern, "@app/*");
         assert_eq!(paths, vec!["web/src/app/x", "web/gen/x"]);
         assert_eq!(
-            cfg.candidates("lodash").unwrap().1,
+            cfg.candidates("lodash", super::join).unwrap().1,
             vec!["web/vendor/lodash"]
         );
     }

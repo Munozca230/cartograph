@@ -236,7 +236,10 @@ impl<'i, 'a> Resolver<'i, 'a> {
                     || new == ".."
                     || new.starts_with('/');
                 let to = if local {
-                    match join(&dir, &new).filter(|d| !new.starts_with('/') && ix.is_dir(d)) {
+                    match ix
+                        .join(&dir, &new)
+                        .filter(|d| !new.starts_with('/') && ix.is_dir(d))
+                    {
                         Some(d) => ReplaceTo::Local(Ok(d)),
                         None => {
                             diagnostics.push(Diagnostic {

@@ -57,14 +57,15 @@ impl Members {
         };
         let rest = rest.replace('\\', "/");
         let rest = rest.strip_prefix("./").unwrap_or(&rest);
-        // An external id (`npm:react`) or a drive letter is no member path.
-        if rest.contains(':') {
-            return Ok(t.to_string());
-        }
         let (path, frag) = match (kind, rest.find('#')) {
             ("sym:" | "", Some(i)) => rest.split_at(i),
             _ => (rest, ""),
         };
+        // An external id (`npm:react`) or a drive letter is no member path; a name after
+        // `#` may hold colons (`ns::f`).
+        if path.contains(':') {
+            return Ok(t.to_string());
+        }
         let p = path.trim_end_matches('/');
         if p.is_empty() || p == "." || exists(p) || self.member_of(p).is_some() {
             return Ok(t.to_string());
@@ -127,6 +128,11 @@ mod tests {
         assert_eq!(c("src/tools.ts").unwrap(), "mcp/src/tools.ts");
         assert_eq!(c("file:src/tools.ts").unwrap(), "file:mcp/src/tools.ts");
         assert_eq!(c("src/tools.ts#lookup").unwrap(), "mcp/src/tools.ts#lookup");
+        assert_eq!(c("src/tools.ts#ns::f").unwrap(), "mcp/src/tools.ts#ns::f");
+        assert_eq!(
+            c("sym:src/tools.ts#A::b").unwrap(),
+            "sym:mcp/src/tools.ts#A::b"
+        );
         assert_eq!(c("dir:src/ui/").unwrap(), "dir:desktop/src/ui/");
         assert_eq!(c("api/src/main.ts").unwrap(), "api/src/main.ts");
         assert_eq!(c("npm:react").unwrap(), "npm:react");

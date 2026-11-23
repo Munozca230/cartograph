@@ -135,7 +135,9 @@ impl<'a> Index<'a> {
             Some((prefix, root)) => {
                 root.join(crate::paths::strip_mount(prefix, path).unwrap_or(path))
             }
-            None => std::path::PathBuf::from(path),
+            // Outside every mount (the top of a workspace, which holds nothing but members):
+            // nothing there, and never a path relative to the process's directory.
+            None => std::path::PathBuf::new(),
         }
     }
 
@@ -642,6 +644,12 @@ mod tests {
         assert_eq!(ix.join("api/src", "../../elsewhere/x"), None);
         assert_eq!(ix.join("api", "../../../x"), None);
         assert_eq!(ix.mount_root("lib/x/y"), "lib");
+        // Above the members there is nothing, and never the process's directory.
+        assert_eq!(
+            ix.on_disk("node_modules/x/tsconfig.json"),
+            std::path::PathBuf::new()
+        );
+        assert!(ix.read_config("tsconfig.json").is_none());
         assert!(ix.is_mount_root("api") && !ix.is_mount_root(""));
         let single = Index::single(tmp.path());
         assert_eq!(single.join("a/b", "../../c").as_deref(), Some("c"));

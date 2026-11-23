@@ -287,7 +287,7 @@ fn data_dir_exclusions(root: &Path, dir: &Path) -> Vec<String> {
 pub fn index(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, IndexError> {
     let layout = Layout::of(root)?;
     if layout.workspace.is_some() {
-        return index_mounts(&layout.name, &layout.mounts, opts);
+        return index_layout(&layout, opts);
     }
     let started = Instant::now();
     let loaded = scip_loads(&layout, &opts.scip, &[], opts.no_scip, None);
@@ -442,7 +442,9 @@ fn scip_loads(
     no_scip: bool,
     store: Option<&Store>,
 ) -> Vec<scip::Loaded> {
-    let single = layout.mounts.len() == 1;
+    // One repo: every explicit file is its own. A workspace (of any size): only the files
+    // inside a member are, the others are reported.
+    let single = layout.workspace.is_none() && layout.mounts.len() == 1;
     let inside = |m: &Mount, p: &Path| {
         let p = cartograph_core::workspace::clean(&scip::absolute(p));
         single || p.starts_with(cartograph_core::workspace::clean(&m.root))
@@ -475,17 +477,22 @@ pub fn index_mounts(
     mounts: &[Mount],
     opts: &IndexOptions,
 ) -> Result<IndexOutput, IndexError> {
-    let started = Instant::now();
     let layout = Layout {
         name: name.to_string(),
         mounts: mounts.to_vec(),
         workspace: None,
     };
-    let loaded = scip_loads(&layout, &opts.scip, &[], opts.no_scip, None);
+    index_layout(&layout, opts)
+}
+
+/// [`index_mounts`] of a [`Layout`].
+fn index_layout(layout: &Layout, opts: &IndexOptions) -> Result<IndexOutput, IndexError> {
+    let started = Instant::now();
+    let loaded = scip_loads(layout, &opts.scip, &[], opts.no_scip, None);
     let load_ms = started.elapsed().as_millis();
     let src = Source {
         scip: &loaded,
-        ..Source::of_mounts(name, mounts)
+        ..Source::of_mounts(&layout.name, &layout.mounts)
     };
     let (mut out, _) = index_inner(&src, opts, None)?;
     out.timings.scip_ms += load_ms;

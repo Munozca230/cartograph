@@ -241,7 +241,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
             let lib_root = lib
                 .and_then(|l| l.get("path"))
                 .and_then(|p| p.as_str())
-                .and_then(|p| join(dir, &p.replace('\\', "/")))
+                .and_then(|p| self.ix.join(dir, &p.replace('\\', "/")))
                 .or_else(|| join(dir, "src/lib.rs"))
                 .filter(|p| self.ix.is_file(p));
             let mut roots: Vec<String> = Vec::new();
@@ -261,7 +261,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
                     .map(|a| {
                         a.iter()
                             .filter_map(|b| b.get("path").and_then(|p| p.as_str()))
-                            .map(|p| join(dir, &p.replace('\\', "/")))
+                            .map(|p| self.ix.join(dir, &p.replace('\\', "/")))
                             .collect()
                     })
                     .unwrap_or_default()
@@ -371,7 +371,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
                         .to_string();
                     let renamed = spec.get("package").is_some();
                     let dep = match spec.get("path").and_then(|p| p.as_str()) {
-                        Some(p) => match join(&base, &p.replace('\\', "/")) {
+                        Some(p) => match self.ix.join(&base, &p.replace('\\', "/")) {
                             Some(d) if self.pkg_by_dir.contains_key(&d) => Dep::Local(d),
                             Some(d) => Dep::Missing(format!(
                                 "path dependency `{key}` points at {}, which has no indexed \
@@ -571,7 +571,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
             } else {
                 scoped(&base)
             };
-            let Some(target) = join(&from, &attr.replace('\\', "/")) else {
+            let Some(target) = self.ix.join(&from, &attr.replace('\\', "/")) else {
                 return Err(Outcome::not_found("#[path] leaves the repo"));
             };
             return if self.ix.is_file(&target) {

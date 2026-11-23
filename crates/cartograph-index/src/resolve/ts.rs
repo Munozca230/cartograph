@@ -160,7 +160,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
         }
 
         if let Some(cfg) = self.config_for(dir) {
-            if let Some((pattern, candidates)) = cfg.candidates(spec) {
+            if let Some((pattern, candidates)) = cfg.candidates(spec, |d, r| self.ix.join(d, r)) {
                 for c in &candidates {
                     if let Some(p) = self.probe(c, ts_importer) {
                         return Outcome::file(p, Confidence::Resolved);
@@ -174,7 +174,10 @@ impl<'i, 'a> Resolver<'i, 'a> {
                 }
             }
             if let Some(base_url) = &cfg.base_url
-                && let Some(p) = join(base_url, spec).and_then(|b| self.probe(&b, ts_importer))
+                && let Some(p) = self
+                    .ix
+                    .join(base_url, spec)
+                    .and_then(|b| self.probe(&b, ts_importer))
             {
                 return Outcome::file(p, Confidence::Resolved);
             }
