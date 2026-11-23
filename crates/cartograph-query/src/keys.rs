@@ -7,7 +7,8 @@
 //! The query is a key as written (`READ-FILE`) or the name of a constant that defines one
 //! (`READ_FILE`, `Action.READ_FILE`). Keys that differ only in case or separators
 //! (`READ_FILE`, `readFile`) are named apart, as lower-confidence matches; when no key is
-//! the query as written, the closest such variant is traced and labelled so.
+//! the query as written, the closest such variant is traced and labelled so (`find` lists
+//! the symbols that hold the query first, when there are some).
 //!
 //! Missing: a container (an enum, a registry, a switch, a catalog) that holds the key's
 //! siblings but not the key. Only for a key something defines (an enum or string
@@ -211,6 +212,9 @@ pub struct Trace {
     /// Files whose comments name the key.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
+    /// Files with comments that name the key, left out.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub comments_more: usize,
     /// Other spellings with a definition, runner or catalog of their own (lower
     /// confidence), with their structural sites.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -485,6 +489,7 @@ pub fn trace(repo: &crate::Repo, query: &str) -> Option<Trace> {
         uses_files,
         uses_tests,
         comments: comments.into_iter().map(str::to_string).collect(),
+        comments_more: 0,
         also,
     })
 }
@@ -611,12 +616,13 @@ pub fn render(r: &Trace) -> String {
         }
     }
     if !r.comments.is_empty() {
-        let v: Vec<String> = r.comments.iter().take(4).map(|f| short(f)).collect();
+        let total = r.comments.len() + r.comments_more;
+        let v: Vec<String> = r.comments.iter().map(|f| short(f)).collect();
         s.push_str(&format!(
             "named in comments of {}: {}{}\n",
-            crate::text::files(r.comments.len()),
+            crate::text::files(total),
             clip(&v.join(", "), 400),
-            crate::budget::more(r.comments.len().saturating_sub(4))
+            crate::budget::more(r.comments_more)
         ));
     }
     if !r.also.is_empty() {
@@ -642,11 +648,21 @@ fn limited(t: &Trace, limit: usize) -> Trace {
     out.defined.truncate(cap);
     out.runs.truncate(cap);
     out.lists.truncate(cap);
+    out.comments_more = out.comments.len().saturating_sub(4);
+    out.comments.truncate(4);
     out
 }
 
 fn is_zero(n: &usize) -> bool {
     *n == 0
+}
+
+/// Whether a query is written like a key: with a separator (`READ-FILE`, `users:get`,
+/// `READ_FILE`), or in upper case (`EXPORT`).
+pub fn looks_like_key(query: &str) -> bool {
+    let q = query.trim().trim_matches(|c| matches!(c, '"' | '\'' | '`'));
+    q.contains(['-', '_', ':', '.', '/'])
+        || (q.chars().any(|c| c.is_uppercase()) && !q.chars().any(|c| c.is_lowercase()))
 }
 
 /// Whether `query` names a key as written (or as its constant), not only once case and

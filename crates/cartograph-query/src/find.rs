@@ -387,11 +387,14 @@ pub fn find(
                 },
             });
         }
-        // A key that only differs in case or separators gives way to the symbols that
-        // hold the query the same way (a method `readFile` for `READ-FILE`): they are
-        // listed, and the key named after them.
+        // The trace comes unasked for a query written like a key (`READ-FILE`,
+        // `users:get`, `READ_FILE`) that is one. A word (`width1`) or a key that only
+        // differs in case or separators gives way to the symbols that hold the query
+        // (a method `readFile` for `READ-FILE`): they are listed, and the key named after
+        // them.
         None if !substring => {
-            if crate::keys::is_exact(repo, query) || loose_symbols(repo, query).is_empty() {
+            let keyish = crate::keys::is_exact(repo, query) && crate::keys::looks_like_key(query);
+            if keyish || loose_symbols(repo, query).is_empty() {
                 if let Some(a) = crate::keys::answer(repo, query) {
                     return Ok(traced(a));
                 }

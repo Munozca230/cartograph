@@ -122,9 +122,12 @@ missing from (holds its siblings, not it; it may be left out on purpose):
   and scripts. At most 3, each with its evidence; a key can still be left out on purpose.
 
 Exact keys first. Keys that differ only in case or separators (`READ_FILE`, `readFile`)
-are named apart as lower-confidence matches; when no key is the query as written, the
-closest variant is traced and labelled so. A query that some path holds keeps the path
-answer, with a line saying it is a key too (`kind: "key"` traces it). Key sites (TS/JS,
+are named apart as lower-confidence matches. The trace comes unasked for a query written
+like a key (a separator or upper case: `READ-FILE`, `users:get`, `EXPORT`) that the index
+knows. A word (`width1`) or a variant gives way to the symbols that hold it, and a line
+after them names the key; with no such symbol, the key (or its closest variant, labelled
+so) is traced. A query that some path holds keeps the path answer, with that line too.
+`kind: "key"` always traces. Key sites (TS/JS,
 Java, Python) are stored with the symbol layer (`key_sites`, schema v13).
 
 ### Tests to run
@@ -197,7 +200,7 @@ URL with a one-line description of what it shows.
 |---|---|
 | unknown id | `isError: true`, "did you mean: a, b, c?" from fuzzy matches, or a pointer to `find` |
 | ambiguous symbol name | `isError: true` with the candidate ids |
-| `find` with no path holding the query | the symbols whose name holds it (case and separators ignored: `READ-FILE` finds `ACTION_READ_FILE`) after a line saying so; with none, the letter-by-letter matches after "no exact or substring match; closest …" |
+| `find` with no path holding the query | the trace of the string key it is written as (see [String keys](#string-keys)); else the symbols whose name holds it (case and separators ignored: `READ-FILE` finds `ACTION_READ_FILE`) after a line saying so; with none, the letter-by-letter matches after "no exact or substring match; closest …" |
 | `callers` of a name no symbol has | the symbols whose name starts with it (else contains it, 3 characters at least): one is answered for, with a first line that says so (no `formatAction`; showing `formatActionCommand`); several are the ambiguous error above; none is the unknown-id error |
 | bad enum value (`dir: "up"`) | `isError: true` with the accepted values |
 | wrong type, missing field | `isError: true`, "failed to deserialize parameters: missing field `node`" |
@@ -473,7 +476,7 @@ tool        calls errors  p50 ms  p95 ms  avg tok  max tok budget   over  trunc
 callers         9      3       3      19      395      473   1000      0    50%
 explain         9      6       4      23      256      256   1000      0   100%
 deps            6      3       1       2      122      124   1500      0     0%
-find            6      0       9      46      172      303    800      0    50%
+find            6      0       9      46      172      303   1500      0    50%
 impact          6      0       3       4      522      616   1500      0     0%
 overview        4      0       3     323      561      601   1500      0   100%
 check           3      0       1       1       54       57   1000      0     0%

@@ -160,6 +160,58 @@ fn variants_are_lower_confidence_and_paths_still_win() {
     assert!(t.starts_with("no string key \"NOPE-NOPE\""), "{t}");
 }
 
+/// A word or a variant that symbols hold gives the symbols, and names the key after them.
+#[test]
+fn symbols_win_over_a_word_or_a_variant() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("r");
+    let files = [
+        (
+            "src/fields.ts",
+            "export const FIELDS = [\"width1\", \"width2\", \"width3\"];\nexport const ACTIONS = [\"PRINT-PAGE\", \"SAVE-PAGE\", \"OPEN-PAGE\"];\n",
+        ),
+        (
+            "src/view.ts",
+            "export function labelWidth1() {}\nexport function printPage() {}\n",
+        ),
+    ];
+    for (rel, text) in files {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let out = cartograph_index::index(&root, &cartograph_index::IndexOptions::default()).unwrap();
+    let r = Repo::with_symbols(
+        &out.graph,
+        &out.symbols,
+        cartograph_query::Config::default(),
+    );
+    // A plain word: the symbols, then the key.
+    let a = find(&r, "width1", None).unwrap();
+    assert!(a.data.trace.is_none(), "{}", a.text);
+    assert!(a.text.contains("labelWidth1"), "{}", a.text);
+    assert!(
+        a.text.contains("it is also a string key: \"width1\""),
+        "{}",
+        a.text
+    );
+    // A variant of a key: the symbols, then the key it is a variant of.
+    let a = find(&r, "printPage", None).unwrap();
+    assert!(a.data.trace.is_none(), "{}", a.text);
+    assert!(
+        a.text
+            .contains("a string key differs from it only in case or separators: \"PRINT-PAGE\""),
+        "{}",
+        a.text
+    );
+    // Written like a key: the trace.
+    let a = find(&r, "PRINT-PAGE", None).unwrap();
+    assert!(a.data.trace.is_some(), "{}", a.text);
+    // Asked for: the trace of a word too.
+    let a = find(&r, "width1", Some(FindKind::Key)).unwrap();
+    assert!(a.text.starts_with("key \"width1\""), "{}", a.text);
+}
+
 /// A single repo (Python): an enum defines the keys, a dispatch table holds every one but
 /// one, and a list offers them all.
 #[test]
