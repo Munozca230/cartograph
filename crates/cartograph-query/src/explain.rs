@@ -206,6 +206,13 @@ pub fn explain_with(
             crate::bridges::left(&repo.symbols.bridges, &paths)
         }
     };
+    let left_n = |limit: usize| left.len().min(limit.min(4));
+    let links_n = |limit: usize| {
+        limit
+            .min(6)
+            .saturating_sub(left_n(limit))
+            .max(links.len().min(2))
+    };
     let findings: Vec<FindingRef> = repo
         .findings()
         .iter()
@@ -334,10 +341,11 @@ pub fn explain_with(
             git: git_of(repo, n, limit),
             git_note: git_note(repo, n),
             annotation: annotation.clone(),
-            bridges: links.iter().take(limit.min(6)).cloned().collect(),
-            bridges_more: links.len().saturating_sub(limit.min(6)),
-            bridges_left: left.iter().take(limit.min(4)).cloned().collect(),
-            bridges_left_more: left.len().saturating_sub(limit.min(4)),
+            // At most six lines of bridges, what is left without its other side first.
+            bridges: links.iter().take(links_n(limit)).cloned().collect(),
+            bridges_more: links.len().saturating_sub(links_n(limit)),
+            bridges_left: left.iter().take(left_n(limit)).cloned().collect(),
+            bridges_left_more: left.len().saturating_sub(left_n(limit)),
         },
         render,
     ))

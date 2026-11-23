@@ -70,7 +70,7 @@ Grafo agregado al nivel visible en pantalla.
   - `depth` es `all` (sin distinguir mayúsculas) o solo dígitos ASCII que valgan al menos 1: sin signo (`+5` da 400), sin espacios ni decimales. Un número mayor que el nivel más profundo abre todo. Cualquier otro valor da 400 `bad_request`.
 - **Aristas**: cada arista de import archivo→archivo se eleva al ancestro de origen y al de destino que estén en la frontera. Las que quedan dentro del mismo nodo de la frontera se descartan, y las demás se suman por par.
 - **Invariante, con test**: la suma de `weight` es igual al número de aristas archivo→archivo que cruzan entre nodos distintos de la frontera.
-- **Puentes**: `bridges` (`[{ src, dst, weight, confidence }]`, con la misma forma que `edges`) eleva igual los puentes entre archivos (un canal IPC, una función que expone el preload; ver [bridges.md](bridges.md)); `weight` cuenta los sitios. Van aparte: nunca suman en `edges` ni en `fan_in`/`fan_out`.
+- **Puentes**: `bridges` (`[{ src, dst, weight, confidence }]`, con la misma forma que `edges`) eleva igual los puentes entre archivos (un canal IPC, una función que expone el preload, una llamada HTTP a una ruta; ver [bridges.md](bridges.md)); `weight` cuenta los sitios. Van aparte: nunca suman en `edges` ni en `fan_in`/`fan_out`.
 ```json
 {
   "generation": 3,

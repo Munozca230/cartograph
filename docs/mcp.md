@@ -29,7 +29,7 @@ the model, *instead of* the text, which reads worse and costs about twice the to
 | `symbols` | reading a file for its outline (a line per definition; when that does not fit, the uncalled members of the biggest objects and classes by name, `api (150, pub): save, load, +148 more`, then the other symbols that do not fit) | `node` | 1k |
 | `callers` | grepping a function name before changing it | `symbol` | 1k |
 | `hierarchy` | grepping `extends` / `implements` / `impl … for` | `symbol` (a type, or a method of one) | 0.8k |
-| `bridges` | grepping IPC channel names, `exposeInMainWorld`, manifests | `node`, `kind` ipc/http/package, `member`, `unmatched` (false: the bridges; true: what has no other side) | 1k |
+| `bridges` | grepping IPC channel names, `exposeInMainWorld`, manifests, API paths and route annotations | `node`, `kind` ipc/http/package, `member`, `unmatched` (false: the bridges; true: what has no other side) | 1k |
 | `entries` | searching for main, routes, commands, IPC handlers | `kind`, `within` | 1k |
 | `findings` | reviewing structure by eye | `kind` (list), `severity`, `within`, `violations` | 1.5k |
 | `check` | — (rules of `cartograph.toml`) | `base` (none): a git revision; then only violations the change introduces fail | 1k |
@@ -252,8 +252,11 @@ the map instead of from grep:
    it lists; confirm the `heuristic` ones by reading them.
 5. **Dependencies**: `deps(node, dir: "in" | "out")`; `path(from, to)` explains why A
    depends on B (each step with its import line). What reaches code without an import
-   (an Electron IPC channel, a workspace member's package) is a bridge: `bridges(node)`
-   lists them, and `callers`, `deps`, `impact` and `path` show them apart from imports.
+   (an Electron IPC channel, an HTTP call to a route, a workspace member's package) is a
+   bridge: `bridges(node)` lists them, and `callers`, `deps`, `impact` and `path` show
+   them apart from imports. `callers` of a controller method lists the client sites that
+   reach it over HTTP; `bridges(kind: "http", unmatched: true)` lists calls no route
+   serves.
 6. **Before finishing**: `check` (the rules of `cartograph.toml`; with `base: "main"`
    only what the change introduces fails) and `findings(within: <folder you changed>)` for
    new cycles or violations. `diff` shows what the change does to the architecture.
@@ -494,7 +497,10 @@ top-level folders, the `member:path` alias, member-relative and ambiguous paths,
 across members, and each member's own rules) and for bridges (`br-*` on
 `tests/fixtures/workspace-bridges`: callers over IPC back to the renderer, IPC findings,
 a path through the preload, what is left unmatched, a class two members declare, an
-undeclared member and a version skew, impact over IPC, a member's npm package).
+undeclared member and a version skew, impact over IPC, a member's npm package; over HTTP
+the callers of a Spring route through a fetch wrapper and an axios instance, the HTTP
+findings, a call no route serves in `explain`, and a path from a client to the
+controller).
 
 The first run (2026-11-21, 34 cases) is kept below for its defects. Two cases on the `inherit-ts` fixture cover inheritance:
 `callers` of a base method lists the calls made through subclasses that inherit it (and

@@ -56,8 +56,10 @@ why in a comment. It prints the file; `--write` writes it (`--force` to overwrit
 Member names cannot be id kinds or ecosystems (`file`, `dir`, `sym`, `npm`, `maven`,
 `go`…), so `name:` never reads as anything else. Two members cannot share or nest folders.
 `[bridges]` turns kinds of bridges on or off (every kind is on in a workspace; see
-[bridges.md](bridges.md)). Tables for later features (`[member.http]`, `produces`) are
-accepted and ignored for now.
+[bridges.md](bridges.md)). `[member.http]` says how a member serves HTTP: `hosts` that
+reach it, its `context_path` (else its Spring `server.servlet.context-path`) and whether
+it is `public` (see [bridges.md](bridges.md#http)). `produces` is accepted and ignored for
+now.
 
 ## Bridges between members
 
