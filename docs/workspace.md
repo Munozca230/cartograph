@@ -117,6 +117,12 @@ cartograph check ~/src/system --base main,api=feat-x
 cartograph mcp ~/src/system
 ```
 
+`infer` on a workspace prints layers in the workspace's grammar (paths start with a
+member) for `cartograph-workspace.toml`; it never rewrites that file (`--write` refuses).
+Run `infer --write` on a member's folder for that member's own `cartograph.toml`.
+`--config` takes a `cartograph-workspace.toml` too (members and rules), or a plain
+`cartograph.toml` (rules only, over the workspace's paths).
+
 `diff` and `check --base` take one base per member, from each member's own repository:
 a revision for all (each member resolves it; the default is each member's own merge-base
 with its default branch), `member=rev` for one member, or both (`main,api=feat-x`). A

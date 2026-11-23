@@ -483,9 +483,14 @@ The suite is not part of `cargo test` (only the runner is, in
 a finding to fix, and it stays visible instead of being weakened to keep the build green.
 CI runs it in a job that may fail without failing the workflow.
 
-### Results (2026-11-21, 34 cases: 34 pass)
+### Results (2026-11-23, 45 cases: 45 pass)
 
-Every answer is within its budget. Two cases on the `inherit-ts` fixture cover inheritance:
+Every answer is within its budget. Since the first run below, cases were added for dense
+symbol listings and for workspaces (`ws-*` on `tests/fixtures/workspace-basic`: members as
+top-level folders, the `member:path` alias, member-relative and ambiguous paths, impact
+across members, and each member's own rules).
+
+The first run (2026-11-21, 34 cases) is kept below for its defects. Two cases on the `inherit-ts` fixture cover inheritance:
 `callers` of a base method lists the calls made through subclasses that inherit it (and
 not those of a class whose base is a library), and `hierarchy` lists a class's supertype
 chain and subtypes. The first run (26 pass, 6 fail) found the defects below;
