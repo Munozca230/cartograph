@@ -160,6 +160,32 @@ fn variants_are_lower_confidence_and_paths_still_win() {
     assert!(t.starts_with("no string key \"NOPE-NOPE\""), "{t}");
 }
 
+/// A registration alone in its container is a use, and reads as one.
+#[test]
+fn a_lone_registration_is_a_use() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("r");
+    let p = root.join("src/a.ts");
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(
+        &p,
+        "export const ONE = \"one-key\";\nexport function f() {\n  register(\"one-key\", () => 1);\n}\n",
+    )
+    .unwrap();
+    let out = cartograph_index::index(&root, &cartograph_index::IndexOptions::default()).unwrap();
+    let r = Repo::with_symbols(
+        &out.graph,
+        &out.symbols,
+        cartograph_query::Config::default(),
+    );
+    let a = find(&r, "one-key", None).unwrap();
+    let t = &a.text;
+    assert_eq!(section(t, "used"), ["src/a.ts:3 in f"], "{t}");
+    let tr = a.data.trace.as_ref().unwrap();
+    assert!(tr.runs.is_empty(), "{t}");
+    assert_eq!(tr.uses[0].form, "use", "{t}");
+}
+
 /// A word or a variant that symbols hold gives the symbols, and names the key after them.
 #[test]
 fn symbols_win_over_a_word_or_a_variant() {

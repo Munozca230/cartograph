@@ -233,7 +233,12 @@ fn npm_test_runners(v: &Value) -> Vec<String> {
         })
         .map(|(name, _)| name.to_string())
         .collect();
-    if v.get("scripts").and_then(|s| s.get("test")).is_some() {
+    // `npm test` runs tests unless it is the placeholder `npm init` writes.
+    if v.get("scripts")
+        .and_then(|s| s.get("test"))
+        .and_then(Value::as_str)
+        .is_some_and(|t| !t.contains("no test specified"))
+    {
         out.push("npm".to_string());
     }
     out.sort();
@@ -719,6 +724,12 @@ mod tests {
         assert_eq!(m.details["test_runners"], json!(["jest", "npm"]));
         let m = p("package.json", r#"{"scripts":{"test":"node --test"}}"#);
         assert_eq!(m.details["test_runners"], json!(["npm"]));
+        // The placeholder `npm init` writes runs no test.
+        let m = p(
+            "package.json",
+            r#"{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}"#,
+        );
+        assert!(m.details.get("test_runners").is_none());
         let m = p(
             "package.json",
             r#"{"devDependencies":{"ts-jest":"29","cypress":"13","mocha":"10"}}"#,

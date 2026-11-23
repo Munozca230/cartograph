@@ -22,7 +22,25 @@ const NAME_PROPS: &[&str] = &[
 ];
 
 /// Calls that build a list or a set of their arguments.
-const LIST_CALLS: &[&str] = &["of", "asList", "copyOf", "listOf", "setOf", "ofEntries"];
+const LIST_CALLS: &[&str] = &["of", "asList", "copyOf", "ofEntries"];
+
+/// Receivers of [`LIST_CALLS`] that are collections (`List.of`, `ImmutableMap.of`,
+/// `Arrays.asList`): `Path.of`, `Stream.of`, `EnumSet.of` and RxJS's `of` build none.
+const COLLECTIONS: &[&str] = &[
+    "List",
+    "Set",
+    "Map",
+    "Arrays",
+    "ImmutableList",
+    "ImmutableSet",
+    "ImmutableMap",
+    "ImmutableSortedSet",
+    "ImmutableSortedMap",
+    "SortedSet",
+    "SortedMap",
+    "NavigableSet",
+    "NavigableMap",
+];
 
 /// Annotations whose string argument names the class they are on.
 const NAMING_ANNOTATIONS: &[&str] = &[
@@ -901,7 +919,7 @@ impl Walk<'_> {
         }
         // A list built of its arguments, a map of keys to values.
         let entries: Vec<usize> = match short {
-            s if LIST_CALLS.contains(&s) && callee != "of" || s == "of" => {
+            s if LIST_CALLS.contains(&s) && self.on_collection(n) => {
                 if short == "of" && args.len() >= 2 && self.is_map_of(n) {
                     (0..args.len()).step_by(2).collect()
                 } else {
@@ -932,6 +950,20 @@ impl Walk<'_> {
     }
 
     /// `Map.of(k, v, …)` (not `List.of`): the receiver is named `Map`.
+    /// The receiver of a call is a collection type (see [`COLLECTIONS`]).
+    fn on_collection(&self, n: Node<'_>) -> bool {
+        let recv = match n.kind() {
+            "call_expression" => n
+                .child_by_field_name("function")
+                .and_then(|f| f.child_by_field_name("object")),
+            _ => n.child_by_field_name("object"),
+        };
+        recv.is_some_and(|o| {
+            let t = self.text(o);
+            COLLECTIONS.contains(&t.rsplit('.').next().unwrap_or(&t))
+        })
+    }
+
     fn is_map_of(&self, n: Node<'_>) -> bool {
         n.child_by_field_name("object")
             .is_some_and(|o| self.text(o).ends_with("Map"))
@@ -1223,6 +1255,45 @@ class Registry {
         let mut want_sorted: Vec<String> = want.iter().map(|s| s.to_string()).collect();
         want_sorted.sort();
         assert_eq!(got_sorted, want_sorted, "{got:#?}");
+    }
+
+    /// `of` builds a catalog only on a collection: `List.of`, `Set.of`, `Map.of`,
+    /// `ImmutableList.of`, `Arrays.asList`; never `Path.of`, `Stream.of`, `EnumSet.of` or
+    /// RxJS's `of`.
+    #[test]
+    fn only_collections_build_catalogs() {
+        let src = r#"class C {
+    void f() {
+        var p = Path.of("a-b", "c-d", "e-f");
+        var s = Stream.of("A1", "B2", "C3");
+        var e = EnumSet.of("K1", "K2", "K3");
+        var l = List.of("L1", "L2", "L3");
+        var g = ImmutableSet.of("G1", "G2", "G3");
+        var a = Arrays.asList("R1", "R2", "R3");
+    }
+}
+"#;
+        let got = sites("java", src);
+        for k in ["a-b", "A1", "K1"] {
+            assert!(
+                got.iter()
+                    .filter(|g| g.contains(&format!("\"{k}\"")))
+                    .all(|g| g.starts_with("Use")),
+                "{k}: {got:#?}"
+            );
+        }
+        for k in ["L1", "G1", "R1"] {
+            assert!(
+                got.iter()
+                    .any(|g| g.starts_with("Entry") && g.contains(&format!("\"{k}\""))),
+                "{k}: {got:#?}"
+            );
+        }
+        let got = sites(
+            "typescript",
+            "import { of } from 'rxjs';\nexport const s = of('X1', 'X2', 'X3');\n",
+        );
+        assert!(!got.iter().any(|g| g.starts_with("Entry")), "{got:#?}");
     }
 
     #[test]

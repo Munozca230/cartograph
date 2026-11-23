@@ -336,6 +336,7 @@ pub(super) fn run(
                 .is_some_and(|k| k.len() < MIN_CONTAINER)
         {
             s.role = KeyRole::Use;
+            s.form = "use".to_string();
         }
     }
     // Uses only of keys something defines, provides or lists.
