@@ -1,7 +1,8 @@
 //! File-system walk: respects `.gitignore` (including nested ones), always skips a fixed
-//! set of directories and the checkouts of other repositories (a folder below the root
-//! holding a `.git` file: a submodule, a linked worktree), reads files in parallel (parsing
-//! imports on the same rayon threads), and records every path it does not index.
+//! set of directories, the checkouts of other repositories (a folder below the root
+//! holding a `.git` file: a submodule, a linked worktree; a `<repo>-worktrees` folder next
+//! to `<repo>`), reads files in parallel (parsing imports on the same rayon threads), and
+//! records every path it does not index.
 
 use crate::imports::{self, RawImport};
 use crate::lang;
@@ -109,7 +110,7 @@ pub fn walk(
     hooks: WalkHooks<'_>,
 ) -> WalkOutput {
     let started = std::time::Instant::now();
-    let excluded: Arc<Mutex<Vec<String>>> = Arc::default();
+    let excluded: Arc<Mutex<Vec<(String, Option<String>)>>> = Arc::default();
     let excluded_sink = Arc::clone(&excluded);
     let filter_root = root.to_path_buf();
     let extra: Vec<String> = extra_excluded.to_vec();
@@ -130,14 +131,15 @@ pub fn walk(
             if entry.depth() == 0 || (!is_dir && !git_file && extra.is_empty()) {
                 return true;
             }
-            // A folder (below the root) holding a `.git` file is the checkout of another
-            // repository: an initialized submodule (one gitlink entry in this repository's
-            // tree, never its files) or a linked worktree. Its files are not this repo's.
-            let checkout = is_dir && !excluded_name && entry.path().join(".git").is_file();
             let rel = relative_escaped(&filter_root, entry.path());
-            if (is_dir && (excluded_name || checkout)) || git_file || extra.contains(&rel) {
+            let detail = if is_dir && !excluded_name {
+                copy_of_repo(entry.path(), name)
+            } else {
+                None
+            };
+            if (is_dir && excluded_name) || git_file || detail.is_some() || extra.contains(&rel) {
                 if let Ok(mut v) = excluded_sink.lock() {
-                    v.push(rel);
+                    v.push((rel, detail));
                 }
                 return false;
             }
@@ -210,11 +212,12 @@ pub fn walk(
         }
     }
     if let Ok(mut v) = excluded.lock() {
-        out.skipped.extend(v.drain(..).map(|path| SkippedFile {
-            path,
-            reason: SkipReason::ExcludedDir,
-            detail: None,
-        }));
+        out.skipped
+            .extend(v.drain(..).map(|(path, detail)| SkippedFile {
+                path,
+                reason: SkipReason::ExcludedDir,
+                detail,
+            }));
     }
     out.walk_ms = started.elapsed().as_millis();
 
@@ -252,6 +255,31 @@ pub fn walk(
     out.dirs.sort();
     out.skipped.sort();
     out
+}
+
+/// Why the folder `dir` (below the root) is a copy of a repository, if it is one:
+/// - it holds a `.git` file: the checkout of another repository, an initialized submodule
+///   (one gitlink entry in this repository's tree, never its files) or a linked worktree;
+/// - it is named `<repo>-worktrees` or `<repo>-worktree-<name>` next to a `<repo>` folder
+///   that is a git repository: the conventional home of that repository's linked worktrees
+///   (and of copies left over by them), seen when the folder above both is indexed.
+fn copy_of_repo(dir: &Path, name: Option<&str>) -> Option<String> {
+    if dir.join(".git").is_file() {
+        return Some(
+            "checkout of another repository (`.git` is a file: a linked worktree or a submodule)"
+                .into(),
+        );
+    }
+    let name = name?;
+    let repo = name
+        .strip_suffix("-worktrees")
+        .or_else(|| name.split_once("-worktree-").map(|(r, _)| r))
+        .filter(|r| !r.is_empty())?;
+    let sibling = dir.parent()?.join(repo);
+    sibling
+        .join(".git")
+        .exists()
+        .then(|| format!("worktrees of the sibling repository `{repo}` (copies of it)"))
 }
 
 fn read_file(
@@ -446,5 +474,44 @@ mod tests {
             relative(root, &p).as_deref(),
             Some("src/módulo extra/útil.py")
         );
+    }
+
+    #[test]
+    fn copies_of_a_repository_are_skipped_with_a_reason() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let write = |rel: &str, text: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        // A folder of repositories: `app` and the home of its linked worktrees.
+        std::fs::create_dir_all(root.join("app/.git")).unwrap();
+        write("app/src/a.ts", "export const a = 1;\n");
+        write(
+            "app-worktrees/feat/.git",
+            "gitdir: ../../app/.git/worktrees/feat\n",
+        );
+        write("app-worktrees/feat/src/a.ts", "export const a = 2;\n");
+        write("app-worktrees/left-over.log", "x\n");
+        write("app-worktree-old/src/a.ts", "export const a = 3;\n");
+        // A nested linked worktree inside a repo.
+        write("app/wt/.git", "gitdir: x\n");
+        write("app/wt/b.ts", "export const b = 1;\n");
+        // No `lib` repository next to it: an ordinary folder.
+        write("lib-worktrees/c.ts", "export const c = 1;\n");
+        let out = walk(root, DEFAULT_MAX_FILE_BYTES, &[], WalkHooks::default());
+        let files: Vec<&str> = out.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(files, vec!["app/src/a.ts", "lib-worktrees/c.ts"]);
+        let reason = |p: &str| {
+            out.skipped
+                .iter()
+                .find(|s| s.path == p)
+                .and_then(|s| s.detail.clone())
+                .unwrap_or_default()
+        };
+        assert!(reason("app-worktrees").contains("worktrees of the sibling repository `app`"));
+        assert!(reason("app-worktree-old").contains("`app`"));
+        assert!(reason("app/wt").contains("checkout of another repository"));
     }
 }
