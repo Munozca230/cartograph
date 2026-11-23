@@ -165,6 +165,9 @@ pub struct RawInjection {
     /// The field or parameter name.
     #[serde(rename = "m")]
     pub member: String,
+    /// It is a parameter that keeps what it is given (not a field, as Lombok's are).
+    #[serde(rename = "p", default, skip_serializing_if = "std::ops::Not::not")]
+    pub param: bool,
     /// What holds the beans: `List`, `Set`, `Map`, `Collection`, `ObjectProvider`,
     /// `Optional`, `[]`…; empty for one bean.
     #[serde(rename = "w", default, skip_serializing_if = "String::is_empty")]
@@ -866,8 +869,10 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// receiver comes from ([`Call::recv_decl`]), bean names and qualifiers as expressions,
 /// fields an injected parameter is assigned to, raw generic injections, Spring Data
 /// repositories as beans, entities by the package of their annotation; 28: the name a
-/// `@Resource` asks for, the bean names of nested classes and generated mappers.
-pub const REVISION: u32 = 28;
+/// `@Resource` asks for, the bean names of nested classes and generated mappers; 29:
+/// parameters given another value, names of repository interfaces, Cassandra and R2DBC
+/// repositories.
+pub const REVISION: u32 = 29;
 
 /// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
 /// `orderService`; `URLMaker`, two capitals first, stays as it is).

@@ -44,6 +44,10 @@ const REPOS: &[(&str, &str)] = &[
     ("PagingAndSortingRepository", ""),
     ("ListPagingAndSortingRepository", ""),
     ("ReactiveCrudRepository", ""),
+    ("CassandraRepository", "cassandra"),
+    ("ReactiveCassandraRepository", "cassandra"),
+    ("MapIdCassandraRepository", "cassandra"),
+    ("R2dbcRepository", "jdbc"),
     ("Repository", ""),
 ];
 /// Receiver types whose calls name a Mongo collection or entity.
@@ -164,6 +168,13 @@ const ORIGINS: &[(&str, &[&str])] = &[
     ("MongoRepository", &["org.springframework.data."]),
     ("ReactiveMongoRepository", &["org.springframework.data."]),
     ("JpaRepository", &["org.springframework.data."]),
+    ("CassandraRepository", &["org.springframework.data."]),
+    (
+        "ReactiveCassandraRepository",
+        &["org.springframework.data."],
+    ),
+    ("MapIdCassandraRepository", &["org.springframework.data."]),
+    ("R2dbcRepository", &["org.springframework.data."]),
     ("CrudRepository", &["org.springframework.data."]),
     ("ListCrudRepository", &["org.springframework.data."]),
     ("PagingAndSortingRepository", &["org.springframework.data."]),
@@ -426,6 +437,8 @@ struct Fields {
     sets: Vec<(String, usize, bool, Option<String>)>,
     /// The constructors' parameters, by node id.
     ctors: HashMap<usize, Vec<String>>,
+    /// Parameters given another value: `(method or constructor, name)`.
+    changed: Vec<(usize, String)>,
     /// `this(a, b)`: the constructor that delegates, and the variables it passes.
     delegates: Vec<(usize, Vec<Option<String>>)>,
 }
@@ -490,6 +503,16 @@ impl Fields {
                 if n.kind() != "assignment_expression" {
                     continue;
                 }
+                let right = n.child_by_field_name("right").and_then(|r| passed(r, src));
+                if let Some(l) = n
+                    .child_by_field_name("left")
+                    .filter(|l| l.kind() == "identifier")
+                    .map(|l| text(l, src))
+                    .filter(|l| params.contains(l) && right.as_ref() != Some(l))
+                {
+                    out.changed.push((m.id(), l));
+                    continue;
+                }
                 let field = n.child_by_field_name("left").and_then(|l| match l.kind() {
                     "identifier" => Some(text(l, src)).filter(|x| !params.contains(x)),
                     "field_access" => l
@@ -502,10 +525,7 @@ impl Fields {
                 let Some(field) = field.filter(|f| out.decls.contains_key(f)) else {
                     continue;
                 };
-                let given = n
-                    .child_by_field_name("right")
-                    .and_then(|r| passed(r, src))
-                    .filter(|x| params.contains(x));
+                let given = right.filter(|x| params.contains(x));
                 out.sets.push((field, m.id(), method, given));
             }
         }
@@ -516,6 +536,9 @@ impl Fields {
     /// from it there, or in the constructor `m` hands it to (`this(param, …)`), of its
     /// type, and assigned in no other method.
     fn holding(&self, m: usize, param: &str, ty: &str) -> Vec<(String, u32)> {
+        if self.changes(m, param) {
+            return Vec::new();
+        }
         for (_, args) in self.delegates.iter().filter(|(from, _)| *from == m) {
             let to: Vec<(&usize, &Vec<String>)> = self
                 .ctors
@@ -535,13 +558,23 @@ impl Fields {
             .filter(|(_, at, _, given)| *at == m && given.as_deref() == Some(param))
             .filter_map(|(f, ..)| {
                 let (l, t) = self.decls.get(f)?;
-                let same = t.as_ref().is_some_and(|(_, t)| t == ty);
+                // Set from something else there too: what it ends with is not known.
+                let again = self
+                    .sets
+                    .iter()
+                    .any(|(x, at, _, g)| x == f && *at == m && g.as_deref() != Some(param));
+                let same = !again && t.as_ref().is_some_and(|(_, t)| t == ty);
                 (same && !self.set_elsewhere(f, m)).then(|| (f.clone(), *l))
             })
             .collect();
         out.sort();
         out.dedup();
         out
+    }
+
+    /// `param` of `m` is given another value there.
+    fn changes(&self, m: usize, param: &str) -> bool {
+        self.changed.iter().any(|(at, p)| *at == m && p == param)
     }
 
     /// Some method (not a constructor) other than `m` assigns field `f`.
@@ -613,6 +646,7 @@ fn params_of(
             class: class.to_string(),
             how: how.to_string(),
             fields: fields.holding(m.id(), &text(name, src), &t),
+            param: !fields.changes(m.id(), &text(name, src)),
             member: text(name, src),
             wrapper,
             ty: t,
@@ -706,7 +740,12 @@ fn repo(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                 ty: name.clone(),
                 stereotype: base.clone(),
                 default_name: crate::symbols::decapitalize(&name),
-                names: Vec::new(),
+                names: annots
+                    .iter()
+                    .find(|a| STEREOTYPES.contains(&a.name.as_str()))
+                    .and_then(|a| a.arg(&["value"]))
+                    .map(|v| strings(v, src))
+                    .unwrap_or_default(),
                 factory: None,
                 primary: annots.iter().any(|a| a.name == "Primary"),
                 qualifiers: qualifiers(&annots, src),
@@ -878,6 +917,7 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                     };
                     out.injections.push(RawInjection {
                         fields: holds,
+                        param: false,
                         line: line(d),
                         class: name.clone(),
                         how: if injected { "field" } else { "constructor" }.to_string(),
@@ -1366,6 +1406,37 @@ class Desk {
             ents("import jakarta.persistence.*; @Entity @Table(name = \"orders\") class O {}"),
             ["O jpa orders"]
         );
+    }
+
+    #[test]
+    fn repositories_of_every_documented_store() {
+        let c = code(
+            r#"import org.springframework.data.cassandra.repository.*; import org.springframework.data.r2dbc.repository.R2dbcRepository;
+interface A extends CassandraRepository<Order, String> {}
+interface B extends ReactiveCassandraRepository<Order, String> {}
+interface C extends MapIdCassandraRepository<Order> {}
+interface D extends R2dbcRepository<Order, Long> {}
+"#,
+        );
+        let repos: Vec<String> = c
+            .repos
+            .iter()
+            .map(|r| format!("{} {} {}", r.class, r.base, r.entity))
+            .collect();
+        assert_eq!(
+            repos,
+            [
+                "A CassandraRepository Order",
+                "B ReactiveCassandraRepository Order",
+                "C MapIdCassandraRepository Order",
+                "D R2dbcRepository Order",
+            ]
+        );
+        // A namesake of another package is none.
+        let c = code(
+            "import com.other.CassandraRepository; interface A extends CassandraRepository<Order, String> {}",
+        );
+        assert!(c.repos.is_empty());
     }
 
     #[test]

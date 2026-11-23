@@ -193,7 +193,6 @@ pub(super) fn run(
             // Calls on what is injected here: the declaration their receiver comes from
             // is this parameter, or a field that holds it.
             let od = &f.code.defs[(owner - f.first) as usize];
-            let param = i.how != "field";
             let mut uses: Vec<InjectedUse> = f
                 .code
                 .calls
@@ -202,7 +201,7 @@ pub(super) fn run(
                 .filter_map(|c| {
                     let each = match (&c.recv_decl, &c.field) {
                         (Some(d), _) => {
-                            let own = param && d.name == i.member && d.line == i.line;
+                            let own = i.param && d.name == i.member && d.line == i.line;
                             let held = i.fields.iter().any(|(n, l)| *n == d.name && *l == d.line);
                             (own || held).then_some(d.each)?
                         }
