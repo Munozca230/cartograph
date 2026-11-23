@@ -353,22 +353,7 @@ fn copy_of_repo(dir: &Path, name: Option<&str>) -> Option<String> {
                 .into(),
         );
     }
-    sibling_worktrees(dir, name)
-}
-
-/// The second rule of [`copy_of_repo`]: `dir` is `<repo>-worktrees` or
-/// `<repo>-worktree-<name>` next to a `<repo>` folder that is a git repository.
-pub fn sibling_worktrees(dir: &Path, name: Option<&str>) -> Option<String> {
-    let name = name?;
-    let repo = name
-        .strip_suffix("-worktrees")
-        .or_else(|| name.split_once("-worktree-").map(|(r, _)| r))
-        .filter(|r| !r.is_empty())?;
-    let sibling = dir.parent()?.join(repo);
-    sibling
-        .join(".git")
-        .exists()
-        .then(|| format!("worktrees of the sibling repository `{repo}` (copies of it)"))
+    crate::noise::sibling_worktrees(dir, name)
 }
 
 fn read_file(

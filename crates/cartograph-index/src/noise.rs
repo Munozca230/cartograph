@@ -294,7 +294,7 @@ pub fn watch_ignores(root: &Path, rel: &str) -> bool {
         dir.push(d);
         let lower = d.to_ascii_lowercase();
         if (lower.ends_with("-worktrees") || lower.contains("-worktree-"))
-            && crate::walk::sibling_worktrees(&dir, Some(d)).is_some()
+            && sibling_worktrees(&dir, Some(d)).is_some()
         {
             return true;
         }
@@ -303,6 +303,21 @@ pub fn watch_ignores(root: &Path, rel: &str) -> bool {
         }
     }
     false
+}
+
+/// The second rule of `walk::copy_of_repo`: `dir` is `<repo>-worktrees` or
+/// `<repo>-worktree-<name>` next to a `<repo>` folder that is a git repository.
+pub fn sibling_worktrees(dir: &Path, name: Option<&str>) -> Option<String> {
+    let name = name?;
+    let repo = name
+        .strip_suffix("-worktrees")
+        .or_else(|| name.split_once("-worktree-").map(|(r, _)| r))
+        .filter(|r| !r.is_empty())?;
+    let sibling = dir.parent()?.join(repo);
+    sibling
+        .join(".git")
+        .exists()
+        .then(|| format!("worktrees of the sibling repository `{repo}` (copies of it)"))
 }
 
 #[cfg(test)]
