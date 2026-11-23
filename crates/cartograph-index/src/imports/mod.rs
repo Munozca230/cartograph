@@ -77,8 +77,9 @@ const CS_QUERY: &str = include_str!("queries/csharp.scm");
 /// Bump when the extraction code changes what it returns for the same input. Part of
 /// [`extractor_version`], the extraction-cache key. 2: TypeScript type-only import marks;
 /// 3: the payload is an [`Extract`] (imports and symbols); 4: only whole-statement type
-/// imports are type-only; 5: Rust paths in code ([`rust::RustSpec::Path`]).
-pub const EXTRACTOR_REVISION: u32 = 5;
+/// imports are type-only; 5: Rust paths in code ([`rust::RustSpec::Path`]); 6: Java type
+/// names used without an import ([`Spec::TypeRef`]).
+pub const EXTRACTOR_REVISION: u32 = 6;
 
 /// Resolved `name@version` of every tree-sitter crate, from `Cargo.lock` (see `build.rs`).
 pub const GRAMMAR_VERSIONS: &str = env!("CARTOGRAPH_GRAMMAR_VERSIONS");
@@ -432,6 +433,10 @@ fn extract_with(
         }
     }
 
+    if family == Family::Java {
+        let refs = dotted::java_type_refs(tree.root_node(), src, &out);
+        out.extend(refs);
+    }
     if tree.root_node().has_error() {
         let covered: Vec<std::ops::Range<usize>> =
             groups.values().map(|g| g.stmt.byte_range()).collect();

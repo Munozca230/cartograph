@@ -52,6 +52,12 @@ pub enum Spec {
     Declares(String),
     /// Not an import: a top-level type the file declares, fully qualified (Java, C#).
     DeclaresType(String),
+    /// Not an import: a simple type name a Java file uses without importing it (a field,
+    /// parameter or local type, `new X()`, `X.m()`, `extends`/`implements`, an
+    /// annotation…), once per name, at its first line. A top-level type of the file's own
+    /// package needs no import: the resolver links the file to the file that declares it
+    /// (a `uses` edge, not an import site). Any other name yields nothing.
+    TypeRef(String),
     /// A GDScript, scene, resource or `project.godot` reference or declaration (see
     /// [`crate::godot`]).
     Godot(Ref),

@@ -43,7 +43,7 @@ fn golden_view(g: &Graph) -> Value {
         .filter(|e| {
             matches!(
                 e.kind,
-                EdgeKind::Import | EdgeKind::ImportExternal | EdgeKind::DependsOn
+                EdgeKind::Import | EdgeKind::ImportExternal | EdgeKind::DependsOn | EdgeKind::Uses
             ) || (e.kind == EdgeKind::Contains && e.src.starts_with("package:"))
         })
         .map(|e| json!([e.src, e.dst, e.kind, e.confidence, e.weight]))
@@ -426,6 +426,107 @@ fn java_imports_golden() {
         g.unresolved
     );
     check_golden("java-imports", &g);
+}
+
+/// `Uses` edge `src -> dst` (files), with its confidence.
+fn uses(g: &Graph, src: &str, dst: &str) -> Option<Confidence> {
+    g.edges
+        .iter()
+        .find(|e| {
+            e.kind == EdgeKind::Uses
+                && e.src == format!("file:{src}")
+                && e.dst == format!("file:{dst}")
+        })
+        .map(|e| e.confidence)
+}
+
+#[test]
+fn java_same_package_golden() {
+    let g = index_fixture("spring-java");
+    let main = "src/main/java/com/acme/shop/order";
+    let test = "src/test/java/com/acme/shop";
+    let r = Some(Confidence::Resolved);
+    // A test in the package of the class it tests, under another source root: no import.
+    let impl_test = format!("{test}/order/service/impl/OrderServiceImplTest.java");
+    for dst in ["OrderServiceImpl.java", "OrderValidator.java"] {
+        assert_eq!(
+            uses(&g, &impl_test, &format!("{main}/service/impl/{dst}")),
+            r,
+            "{dst}"
+        );
+    }
+    // A test helper of the same package and folder.
+    assert_eq!(
+        uses(
+            &g,
+            &impl_test,
+            &format!("{test}/order/service/impl/OrderFixtures.java")
+        ),
+        r
+    );
+    assert_eq!(
+        uses(
+            &g,
+            &format!("{test}/order/dto/CreateOrderDtoValidationTest.java"),
+            &format!("{main}/dto/CreateOrderDto.java")
+        ),
+        r
+    );
+    // Field, annotation, generic argument and record component types of the same folder.
+    for (src, dst) in [
+        (
+            "controller/AdminController.java",
+            "controller/OrderReport.java",
+        ),
+        (
+            "controller/OrderController.java",
+            "controller/OrderReport.java",
+        ),
+        (
+            "service/impl/OrderServiceImpl.java",
+            "service/impl/OrderValidator.java",
+        ),
+        (
+            "service/impl/OrderServiceImpl.java",
+            "service/impl/Audited.java",
+        ),
+        (
+            "repository/OrderRepository.java",
+            "repository/OrderDocument.java",
+        ),
+        ("dto/CreateOrderDto.java", "dto/OrderLine.java"),
+    ] {
+        assert_eq!(
+            uses(&g, &format!("{main}/{src}"), &format!("{main}/{dst}")),
+            r,
+            "{src} -> {dst}"
+        );
+    }
+    // Another package naming the class without an import gets nothing; imported names are
+    // import edges, not `uses`; main code never uses test sources.
+    assert!(
+        !g.edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::Uses && e.src.contains("/other/")),
+        "{:?}",
+        g.edges
+    );
+    assert_eq!(
+        uses(
+            &g,
+            &format!("{main}/controller/OrderController.java"),
+            &format!("{main}/service/OrderService.java")
+        ),
+        None
+    );
+    assert!(
+        !g.edges.iter().any(|e| e.kind == EdgeKind::Uses
+            && e.src.contains("/main/")
+            && e.dst.contains("/test/"))
+    );
+    // No import sites for them.
+    assert!(g.imports.iter().all(|s| s.specifier.contains('.')));
+    check_golden("spring-java-imports", &g);
 }
 
 #[test]

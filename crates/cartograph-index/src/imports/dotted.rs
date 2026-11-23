@@ -3,7 +3,8 @@
 //!
 //! - Go `import_spec` → [`Spec::Go`] with the path without quotes or backticks.
 //! - Java `import_declaration` → [`Spec::Java`]; `package_declaration` →
-//!   [`Spec::Declares`]; a top-level type → [`Spec::DeclaresType`] (`package.Name`).
+//!   [`Spec::Declares`]; a top-level type → [`Spec::DeclaresType`] (`package.Name`); the
+//!   type names the file uses without an import → [`Spec::TypeRef`] ([`java_type_refs`]).
 //! - C# `using_directive` → [`Spec::CSharp`]; a namespace declaration →
 //!   [`Spec::Declares`] with its full name (enclosing blocks and a file-scoped namespace
 //!   included); a type declared directly in a namespace or at top level →
@@ -13,7 +14,8 @@
 //! [`Spec::ParseError`], never nothing. The one exception is a C# 12 alias of a type that
 //! is not a name (`using Point = (int, int);`): it imports no namespace and yields nothing.
 
-use super::{Spec, compact, snippet};
+use super::{RawImport, Spec, compact, snippet};
+use std::collections::HashSet;
 use tree_sitter::Node;
 
 /// Specs of one `@import` node (empty for nodes this module does not know).
@@ -104,6 +106,91 @@ fn java_file_package(node: Node<'_>, src: &[u8]) -> String {
         .named_children(&mut cursor)
         .find(|c| c.kind() == "package_declaration");
     pkg.and_then(|p| java_package(p, src)).unwrap_or_default()
+}
+
+/// Simple type names a Java file uses (see [`Spec::TypeRef`]), each once at its first line:
+/// type identifiers (the first segment of `A.B`), annotation names, and capitalised
+/// receivers of `X.m()`, `X.f` and `X::m`. Names starting with a lowercase letter are left
+/// out (packages, variables, `var`), as are the file's own types (nested ones included),
+/// its type parameters and the names its single-type and static imports bind.
+pub(super) fn java_type_refs(root: Node<'_>, src: &[u8], imports: &[RawImport]) -> Vec<RawImport> {
+    let mut skip: HashSet<String> = imports
+        .iter()
+        .filter_map(|r| match &r.spec {
+            Spec::Java {
+                name,
+                wildcard: false,
+                ..
+            } => name.rsplit('.').next().map(str::to_string),
+            _ => None,
+        })
+        .collect();
+    let mut used: Vec<(Node<'_>, String)> = Vec::new();
+    let mut inner: HashSet<usize> = HashSet::new();
+    // Every node in document order (one cursor: files are walked whole).
+    let mut cursor = root.walk();
+    loop {
+        let n = cursor.node();
+        let name = match n.kind() {
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration" => {
+                if let Some(id) = n.child_by_field_name("name") {
+                    skip.insert(super::text(id, src));
+                }
+                None
+            }
+            "type_parameter" => {
+                let mut c = n.walk();
+                if let Some(id) = n
+                    .named_children(&mut c)
+                    .find(|x| x.kind() == "type_identifier")
+                {
+                    skip.insert(super::text(id, src));
+                }
+                None
+            }
+            // Not `b` or `C` of `a.b.C`: only the first segment is looked up in scope.
+            "scoped_type_identifier" => {
+                let mut c = n.walk();
+                inner.extend(n.named_children(&mut c).skip(1).map(|x| x.id()));
+                None
+            }
+            "type_identifier" if !inner.contains(&n.id()) => Some(n),
+            "marker_annotation" | "annotation" => n
+                .child_by_field_name("name")
+                .filter(|x| x.kind() == "identifier"),
+            "method_invocation" | "field_access" => n
+                .child_by_field_name("object")
+                .filter(|x| x.kind() == "identifier"),
+            "method_reference" => n.named_child(0).filter(|x| x.kind() == "identifier"),
+            _ => None,
+        };
+        if let Some(id) = name {
+            let t = super::text(id, src);
+            if t.starts_with(|c: char| c.is_uppercase()) {
+                used.push((id, t));
+            }
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                let mut seen = HashSet::new();
+                return used
+                    .into_iter()
+                    .filter(|(_, t)| !skip.contains(t) && seen.insert(t.clone()))
+                    .map(|(n, t)| RawImport {
+                        line: super::line_of(n),
+                        spec: Spec::TypeRef(t),
+                    })
+                    .collect();
+            }
+        }
+    }
 }
 
 /// Java or C# type declaration → its fully qualified name.
@@ -273,6 +360,49 @@ mod tests {
                 (2, Spec::DeclaresType("Main".into())),
             ]
         );
+    }
+
+    #[test]
+    fn java_type_names_used_without_an_import() {
+        let src = "package a.b;\n\
+            import x.y.Imported;\n\
+            import static x.y.Util.Nested;\n\
+            @Marker\n\
+            class A<T extends Bound> extends Base implements Api {\n\
+            \x20   private final Service service;\n\
+            \x20   Outer.Inner inner;\n\
+            \x20   java.util.List<Item> items;\n\
+            \x20   T t; Imported i; Nested n; A self; Own own;\n\
+            \x20   void f() {\n\
+            \x20       var v = new Made(); Helper.run(); int x = Limits.MAX; Fn m = Mapper::map;\n\
+            \x20   }\n\
+            \x20   class Own {}\n\
+            }\n";
+        let refs: Vec<(u32, String)> = specs_of("java", src)
+            .into_iter()
+            .filter_map(|(l, s)| match s {
+                Spec::TypeRef(n) => Some((l, n)),
+                _ => None,
+            })
+            .collect();
+        let want: Vec<(u32, String)> = [
+            (4, "Marker"),
+            (5, "Bound"),
+            (5, "Base"),
+            (5, "Api"),
+            (6, "Service"),
+            (7, "Outer"),
+            (8, "Item"),
+            (11, "Made"),
+            (11, "Helper"),
+            (11, "Limits"),
+            (11, "Fn"),
+            (11, "Mapper"),
+        ]
+        .iter()
+        .map(|(l, n)| (*l, n.to_string()))
+        .collect();
+        assert_eq!(refs, want);
     }
 
     #[test]

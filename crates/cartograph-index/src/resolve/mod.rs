@@ -208,14 +208,20 @@ pub fn resolve_all(
     diagnostics.append(&mut go_diags);
     let gd = godot::Resolver::new(ix, files);
 
-    // Per file: (line, specifier, outcome), and the indexes of the type-only ones.
-    type Outcomes = (Vec<(u32, String, Outcome)>, HashSet<usize>);
+    // Per file: (line, specifier, outcome), the indexes of the type-only ones, and the
+    // files of the same Java package it uses without an import.
+    type Outcomes = (
+        Vec<(u32, String, Outcome)>,
+        HashSet<usize>,
+        BTreeSet<String>,
+    );
     let per_file: Vec<Outcomes> = files
         .par_iter()
         .map(|f| {
             let family = Family::of_lang(f.lang);
             let mut out = Vec::new();
             let mut types = HashSet::new();
+            let mut uses = BTreeSet::new();
             // Rust paths in code, kept below for the targets no import reaches.
             let mut code_paths: Vec<(u32, String, Outcome)> = Vec::new();
             for raw in f.imports {
@@ -297,6 +303,10 @@ pub fn resolve_all(
                     }
                     // Declarations feed the resolvers' indexes; they are not imports.
                     (Spec::Declares(_) | Spec::DeclaresType(_), _) => {}
+                    (Spec::TypeRef(name), Some(Family::Java)) => {
+                        uses.extend(java.same_package(f.path, name));
+                    }
+                    (Spec::TypeRef(_), _) => {}
                     (Spec::ParseError(text), _) => out.push((
                         raw.line,
                         text.clone(),
@@ -323,7 +333,7 @@ pub fn resolve_all(
                     }
                 }
             }
-            (out, types)
+            (out, types, uses)
         })
         .collect();
 
@@ -335,8 +345,17 @@ pub fn resolve_all(
         ..Resolution::default()
     };
     let mut externals: BTreeMap<String, Node> = BTreeMap::new();
-    for (f, (outcomes, types)) in files.iter().zip(per_file) {
+    for (f, (outcomes, types, uses)) in files.iter().zip(per_file) {
         let src = node_id(NodeKind::File, f.path);
+        // A type of the file's own package: no import, still a dependency.
+        for u in uses {
+            res.edges.push(Edge::new(
+                src.clone(),
+                node_id(NodeKind::File, &u),
+                EdgeKind::Uses,
+                Confidence::Resolved,
+            ));
+        }
         // Repo targets of this file → whether every import of it so far is type-only.
         let mut only_types: BTreeMap<String, bool> = BTreeMap::new();
         for (i, (line, specifier, outcome)) in outcomes.into_iter().enumerate() {

@@ -31,6 +31,9 @@ fixture = "../tests/fixtures/inherit-ts"
 [repos.godot]
 fixture = "../tests/fixtures/godot-basic"
 
+[repos.spring-java]
+fixture = "../tests/fixtures/spring-java"
+
 # A layered app. main: an old cycle and an old ui -> db violation. Branch feature: a new
 # cycle (model <-> service) and a new core -> ui import. Uncommitted: an unresolved import.
 [repos.layered]
@@ -347,6 +350,23 @@ question = "Which tests do I run after changing src/core/model.ts?"
 tool = "impact"
 args = { nodes = ["src/core/model.ts"] }
 contains = ["src/core/service.test.ts", "src/ui/app.spec.ts", "tests/e2e.test.ts", "scripts/seed.ts"]
+
+[[case]]
+id = "impact-java-same-package-tests"
+repo = "spring-java"
+question = "I changed OrderServiceImpl: which tests do I run? (they sit in its package, without an import)"
+tool = "impact"
+args = { nodes = ["src/main/java/com/acme/shop/order/service/impl/OrderServiceImpl.java"] }
+contains = ["src/test/java/com/acme/shop/order/service/impl/OrderServiceImplTest.java"]
+not_contains = ["UnrelatedTest"]
+
+[[case]]
+id = "impact-java-dto-validation-test"
+repo = "spring-java"
+question = "I will make a field of CreateOrderDto required: which tests do I run?"
+tool = "impact"
+args = { nodes = ["src/main/java/com/acme/shop/order/dto/CreateOrderDto.java"] }
+contains = ["CreateOrderDtoValidationTest.java", "OrderServiceImplTest.java"]
 
 # ---------------------------------------------------------------- find
 

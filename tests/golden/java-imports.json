@@ -142,6 +142,13 @@
       1
     ],
     [
+      "file:core/src/test/java/com/acme/core/Fixtures.java",
+      "file:core/src/main/java/com/acme/core/Model.java",
+      "uses",
+      "resolved",
+      1
+    ],
+    [
       "file:core/src/test/java/com/acme/core/ModelTest.java",
       "dir:core/src/main/java/com/acme/core/util",
       "import",

@@ -44,6 +44,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub struct Resolver {
     /// Fully qualified type name → declaring files (sorted).
     types: HashMap<String, Vec<String>>,
+    /// The same, only types a file declares (not the `<file stem>` fallback).
+    declared: HashMap<String, Vec<String>>,
     /// Package → files declaring it (sorted).
     packages: HashMap<String, Vec<String>>,
     /// File → declared package.
@@ -235,6 +237,7 @@ fn gradle_groups(text: &str) -> (Vec<String>, Option<String>) {
 impl Resolver {
     pub fn new(ix: &Index<'_>, files: &[super::FileImports<'_>]) -> Self {
         let mut types: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut declared: HashMap<String, Vec<String>> = HashMap::new();
         let mut packages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut package_of = HashMap::new();
         let mut declared_somewhere: BTreeSet<&str> = BTreeSet::new();
@@ -254,6 +257,10 @@ impl Resolver {
                         .entry(t.clone())
                         .or_default()
                         .insert(f.path.to_string());
+                    declared
+                        .entry(t.clone())
+                        .or_default()
+                        .push(f.path.to_string());
                 }
             }
             add_file(&mut types, &mut packages, &mut package_of, f.path, pkg);
@@ -309,11 +316,16 @@ impl Resolver {
         );
         let mut dep_groups: Vec<String> = dep_groups.into_iter().collect();
         dep_groups.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        for v in declared.values_mut() {
+            v.sort_unstable();
+            v.dedup();
+        }
         Resolver {
             types: types
                 .into_iter()
                 .map(|(k, v)| (k, v.into_iter().collect()))
                 .collect(),
+            declared,
             packages: packages
                 .into_iter()
                 .map(|(k, v)| (k, v.into_iter().collect()))
@@ -401,6 +413,31 @@ impl Resolver {
             }
         }
         out
+    }
+
+    /// The file that declares `name` as a top-level type of `user`'s own package, for a
+    /// name `user` uses without an import ([`Spec::TypeRef`]): the one candidate left in
+    /// `user`'s module, then its source set (as for an import). Main code never sees test
+    /// sources; the default package counts only within `user`'s dir. `None` when no type
+    /// or several fit.
+    pub fn same_package(&self, user: &str, name: &str) -> Option<String> {
+        let pkg = self.package_of.get(user)?;
+        let fqn = if pkg.is_empty() {
+            name.to_string()
+        } else {
+            format!("{pkg}.{name}")
+        };
+        let cands: Vec<String> = self
+            .declared
+            .get(&fqn)?
+            .iter()
+            .filter(|c| c.as_str() != user && (!pkg.is_empty() || parent(c) == parent(user)))
+            .cloned()
+            .collect();
+        match self.prefer(user, &cands).as_slice() {
+            [one] if is_test_path(user) || !is_test_path(one) => Some((*one).clone()),
+            _ => None,
+        }
     }
 
     /// Resolve one import. Returns `(specifier, outcome)` per target.
