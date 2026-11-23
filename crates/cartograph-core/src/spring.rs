@@ -118,6 +118,34 @@ impl SpringInjection {
     }
 }
 
+/// A Java method as dispatch needs it (overloads share an id).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct JavaMethod {
+    /// `sym:…`.
+    pub id: String,
+    /// Parameters; -1 with a variable number.
+    pub arity: i32,
+    /// It has no body (an abstract or interface method).
+    pub is_abstract: bool,
+    pub is_static: bool,
+    pub private: bool,
+}
+
+/// A Java call whose receiver says more than its target: `super.m()`, or a receiver of
+/// another type than the one that declares the method (every call to that target on the
+/// line has a row then).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct JavaSite {
+    pub file: String,
+    pub line: u32,
+    /// The call's target.
+    pub target: String,
+    /// The receiver's type (`sym:…`), when known.
+    pub recv: Option<String>,
+    /// `super.m()`.
+    pub sup: bool,
+}
+
 /// Where code reads or writes a store: a collection (Mongo) or a table (JPA).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DataSink {

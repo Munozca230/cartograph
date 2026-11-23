@@ -217,6 +217,9 @@ pub struct RawRepo {
     /// The entity type as written.
     #[serde(rename = "e")]
     pub entity: String,
+    /// The store the interface implies; empty: the entity's.
+    #[serde(rename = "k", default, skip_serializing_if = "String::is_empty")]
+    pub store: String,
 }
 
 /// A call that reads or writes a store directly.
@@ -619,6 +622,24 @@ pub struct Def {
     /// their `svc.m()` calls ambiguous.
     #[serde(rename = "j", default, skip_serializing_if = "std::ops::Not::not")]
     pub object: bool,
+    /// A Java method's modifiers and number of parameters.
+    #[serde(rename = "v", default, skip_serializing_if = "Option::is_none")]
+    pub java: Option<JavaMods>,
+}
+
+/// What dispatch needs of a Java method.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JavaMods {
+    /// Parameters; -1 with a variable number.
+    #[serde(rename = "n")]
+    pub arity: i32,
+    /// No body.
+    #[serde(rename = "a", default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_abstract: bool,
+    #[serde(rename = "s", default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_static: bool,
+    #[serde(rename = "p", default, skip_serializing_if = "std::ops::Not::not")]
+    pub private: bool,
 }
 
 impl Def {
@@ -689,6 +710,9 @@ pub struct Call {
     /// `var`, a lambda parameter of anything else) or not at all: the other rules decide.
     #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
     pub recv_type: Option<String>,
+    /// Java `super.f()` and `Type.super.f()`.
+    #[serde(rename = "w", default, skip_serializing_if = "std::ops::Not::not")]
+    pub sup: bool,
     /// Java `x.f()`: the variable the receiver is, or comes from (the collection a loop or
     /// lambda variable reads, `x` of `x.get(0).f()`), as it is declared.
     #[serde(rename = "d", default, skip_serializing_if = "Option::is_none")]
@@ -871,8 +895,9 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// repositories as beans, entities by the package of their annotation; 28: the name a
 /// `@Resource` asks for, the bean names of nested classes and generated mappers; 29:
 /// parameters given another value, names of repository interfaces, Cassandra and R2DBC
-/// repositories.
-pub const REVISION: u32 = 29;
+/// repositories; 30: modifiers and parameters of Java methods, `super`
+/// calls.
+pub const REVISION: u32 = 30;
 
 /// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
 /// `orderService`; `URLMaker`, two capitals first, stays as it is).

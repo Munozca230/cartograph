@@ -580,6 +580,11 @@ pub struct Symbols {
     /// Where code reads or writes a collection or table.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sinks: Vec<crate::spring::DataSink>,
+    /// The Java methods and the call receivers Spring dispatch needs (with beans only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub java_methods: Vec<crate::spring::JavaMethod>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub java_sites: Vec<crate::spring::JavaSite>,
 }
 
 impl Symbols {
@@ -615,6 +620,10 @@ impl Symbols {
         self.injections.dedup();
         self.sinks.sort();
         self.sinks.dedup();
+        self.java_methods.sort();
+        self.java_methods.dedup();
+        self.java_sites.sort();
+        self.java_sites.dedup();
     }
 }
 

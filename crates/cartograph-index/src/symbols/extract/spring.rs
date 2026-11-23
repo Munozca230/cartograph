@@ -364,10 +364,10 @@ fn value_expr(v: Node<'_>, src: &[u8]) -> Option<StrExpr> {
 }
 
 /// The bean name a `@Resource` field or setter asks for, and whether it is the default
-/// one (`member`): `@Resource(name = "x")`, a JNDI lookup or another type (not known).
+/// one (`member`): `@Resource(name = "x")`, a JNDI lookup (not known).
 fn resource(annots: &[Annot<'_>], member: &str, src: &[u8]) -> Option<(StrExpr, bool)> {
     let a = annots.iter().find(|a| a.name == "Resource")?;
-    if let Some(v) = a.arg(&["lookup", "type"]) {
+    if let Some(v) = a.arg(&["lookup"]) {
         return Some((StrExpr::hole(&text(v, src)), false));
     }
     let given = a
@@ -377,6 +377,21 @@ fn resource(annots: &[Annot<'_>], member: &str, src: &[u8]) -> Option<(StrExpr, 
         Some(e) => (e, false),
         None => (StrExpr::lit(member), true),
     })
+}
+
+/// The name a `@Resource` asks for where what is injected holds beans: a collection of
+/// that name is a bean whose elements are not known; a default name is the holder's.
+fn in_wrapper(r: Option<(StrExpr, bool)>, wrapper: &str) -> Option<(StrExpr, bool)> {
+    let (name, default) = r?;
+    let many = wrapper == "[]"
+        || cartograph_core::spring::COLLECTIONS.contains(&wrapper)
+        || cartograph_core::spring::MAPS.contains(&wrapper);
+    match (wrapper.is_empty(), default) {
+        (true, _) => Some((name, default)),
+        (false, true) => None,
+        (false, false) if many => Some((StrExpr::hole("elements"), false)),
+        (false, false) => Some((name, false)),
+    }
 }
 
 /// The qualifier of a field or parameter: `@Qualifier("x")`, `@Named("x")`.
@@ -549,7 +564,16 @@ impl Fields {
             if let ([(id, ps)], Some(at)) = (to.as_slice(), at)
                 && !self.delegates.iter().any(|(from, _)| from == *id)
             {
-                return self.holding(**id, &ps[at], ty);
+                // What `m` itself sets from something else is no longer that.
+                return self
+                    .holding(**id, &ps[at], ty)
+                    .into_iter()
+                    .filter(|(f, _)| {
+                        !self.sets.iter().any(|(x, at, _, given)| {
+                            x == f && *at == m && given.as_deref() != Some(param)
+                        })
+                    })
+                    .collect();
             }
         }
         let mut out: Vec<(String, u32)> = self
@@ -750,9 +774,14 @@ fn repo(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                 primary: annots.iter().any(|a| a.name == "Primary"),
                 qualifiers: qualifiers(&annots, src),
             });
+            let store = REPOS
+                .iter()
+                .find(|(r, _)| *r == base)
+                .map_or("", |(_, store)| *store);
             out.repos.push(RawRepo {
                 line: line(n),
                 class: name.clone(),
+                store: store.to_string(),
                 base,
                 entity: text(entity, src),
             });
@@ -925,10 +954,7 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                         wrapper: wrapper.clone(),
                         ty: t.clone(),
                         qualifier: qualifier(&fa, src),
-                        resource: wrapper
-                            .is_empty()
-                            .then(|| resource(&fa, &name_of_field, src))
-                            .flatten(),
+                        resource: in_wrapper(resource(&fa, &name_of_field, src), &wrapper),
                     });
                 }
             }
@@ -983,9 +1009,7 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                         if i.qualifier.is_none() {
                             i.qualifier = q.clone();
                         }
-                        if i.wrapper.is_empty() {
-                            i.resource = r.clone();
-                        }
+                        i.resource = in_wrapper(r.clone(), &i.wrapper);
                     }
                 }
             }

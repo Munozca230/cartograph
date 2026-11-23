@@ -709,6 +709,12 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
         .collect();
     for c in &call_list {
         if let Some(mut call) = call_of(lang, c, src) {
+            // `super.m()`, `Type.super.m()`.
+            if lang == Lang::Java {
+                let mut cur = c.node.walk();
+                call.sup = call.form == Form::Super
+                    || c.node.children(&mut cur).any(|k| k.kind() == "super");
+            }
             // `x.m()`, and `x.get(i).m()` on what a collection or holder gives out.
             if call.form == Form::Member {
                 let r = receivers.get(&c.node.id());
@@ -1040,7 +1046,37 @@ fn definition(
         supers,
         class_name: d.cap == "def.class_name",
         object: object_exported.is_some(),
+        java: (lang == Lang::Java && kind == SymbolKind::Method).then(|| java_mods(node)),
     })
+}
+
+/// The modifiers and parameters of a Java method.
+fn java_mods(n: Node<'_>) -> super::JavaMods {
+    let mut c = n.walk();
+    let kinds: Vec<&str> = n
+        .children(&mut c)
+        .filter(|m| m.kind() == "modifiers")
+        .flat_map(|m| {
+            let mut c2 = m.walk();
+            m.children(&mut c2).map(|k| k.kind()).collect::<Vec<_>>()
+        })
+        .collect();
+    let arity = n.child_by_field_name("parameters").map_or(0, |ps| {
+        let mut c = ps.walk();
+        let of: Vec<&str> = ps.named_children(&mut c).map(|p| p.kind()).collect();
+        if of.contains(&"spread_parameter") {
+            -1
+        } else {
+            let n = of.iter().filter(|k| **k == "formal_parameter").count();
+            i32::try_from(n).unwrap_or(-1)
+        }
+    });
+    super::JavaMods {
+        arity,
+        is_abstract: n.child_by_field_name("body").is_none() && !kinds.contains(&"native"),
+        is_static: kinds.contains(&"static"),
+        private: kinds.contains(&"private"),
+    }
 }
 
 /// A supertype as written: whitespace and generic arguments removed (`Base<T>` -> `Base`,
@@ -1449,6 +1485,7 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         field,
         recv_type: None,
         recv_decl: None,
+        sup: false,
         args: Vec::new(),
         handler: None,
         opts: Vec::new(),
@@ -2180,6 +2217,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             field: None,
             recv_type: None,
             recv_decl: None,
+            sup: false,
             args: Vec::new(),
             handler: None,
             opts: Vec::new(),
@@ -2225,6 +2263,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 field: obj.and_then(|o| self_field(lang, o, src)),
                 recv_type: None,
                 recv_decl: None,
+                sup: false,
                 args: Vec::new(),
                 handler: None,
                 opts: Vec::new(),
@@ -2248,6 +2287,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 field: None,
                 recv_type: None,
                 recv_decl: None,
+                sup: false,
                 args: Vec::new(),
                 handler: None,
                 opts: Vec::new(),

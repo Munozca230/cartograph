@@ -62,8 +62,8 @@ pub use http::HttpServers;
 use super::RustCallPaths;
 use super::{BindKind, Call, Code, Def, Form};
 use cartograph_core::{
-    CallStats, Confidence, EdgeKind, EntryKind, EntryPoint, Graph, NodeKind, Symbol, SymbolCall,
-    SymbolKind, Symbols, symbol_id,
+    CallStats, Confidence, EdgeKind, EntryKind, EntryPoint, Graph, JavaSite, NodeKind, Symbol,
+    SymbolCall, SymbolKind, Symbols, symbol_id,
 };
 use hier::{Hier, TKey, caller_key, inherited, inherited_of_one, rust_impls};
 use rayon::prelude::*;
@@ -847,6 +847,8 @@ struct FileResult {
     calls: Vec<SymbolCall>,
     stats: CallStats,
     entries: Vec<EntryPoint>,
+    /// Java calls whose receiver says more than their target.
+    sites: Vec<JavaSite>,
 }
 
 /// Only the bridges (see [`bridge`]) of `files`, without the rest of the symbol layer: for
@@ -932,6 +934,7 @@ pub fn resolve(
             out.stats.push(r.stats);
         }
         out.entries.extend(r.entries);
+        out.java_sites.extend(r.sites);
     }
     out.entries.extend(godot_entries(graph));
     out.entries.extend(npm_main_entries(graph));
@@ -946,6 +949,11 @@ pub fn resolve(
     out.keys = keys::run(&ctx, &binds, &hier, rust_paths, graph, &out.calls);
     out.keys_indexed = true;
     (out.beans, out.injections, out.sinks) = spring::run(&ctx, &binds);
+    if out.beans.is_empty() {
+        out.java_sites.clear();
+    } else {
+        out.java_methods = spring::methods(&ctx);
+    }
     out.normalize();
     out
 }
@@ -983,6 +991,7 @@ fn resolve_file(
         ..CallStats::default()
     };
     let mut calls = Vec::new();
+    let mut sites: Vec<JavaSite> = Vec::new();
     for c in &f.code.calls {
         let caller = caller_of(&callables, c.line);
         match resolve_call(ctx, binds, h, rust_paths, fi, c, caller.map(|x| x.0)) {
@@ -991,6 +1000,16 @@ fn resolve_file(
                     Confidence::Exact => stats.exact += 1,
                     Confidence::Resolved => stats.resolved += 1,
                     Confidence::Heuristic => stats.heuristic += 1,
+                }
+                if f.fam == Fam::Java && ctx.symbols[sid as usize].container.is_some() {
+                    sites.push(JavaSite {
+                        file: f.path.to_string(),
+                        line: c.line,
+                        target: ctx.ids[sid as usize].clone(),
+                        recv: spring::receiver_type(ctx, binds, fi, c)
+                            .map(|t| ctx.ids[t as usize].clone()),
+                        sup: c.sup,
+                    });
                 }
                 calls.push(SymbolCall {
                     file: f.path.to_string(),
@@ -1043,6 +1062,7 @@ fn resolve_file(
         calls,
         stats,
         entries,
+        sites: spring::notable(sites),
     }
 }
 
@@ -1578,6 +1598,16 @@ fn resolve_type(ctx: &Ctx<'_>, binds: &[Bindings<'_>], fi: usize, name: &str) ->
         return Some(match via_binding(ctx, binds, bd, name) {
             Out::Hit(s, c) if ctx.symbols[s as usize].kind.is_type() => Out::Hit(s, c),
             Out::Ambiguous => Out::Ambiguous,
+            // Java: a type nested in the class the import names (`import a.Outer.Inner`).
+            _ if fam == Fam::Java => {
+                let nested: Vec<Sid> = bd
+                    .files
+                    .iter()
+                    .flat_map(|&f| ctx.top_types(f, bd.imported.unwrap_or(name)))
+                    .collect();
+                ctx.decide(&nested, Confidence::Resolved)
+                    .unwrap_or(Out::Unresolved)
+            }
             _ => Out::Unresolved,
         });
     }

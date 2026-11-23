@@ -14,7 +14,8 @@ use super::bridge::{Consts, callables};
 use super::{Bindings, Ctx, Fam, Out, Sid, caller_of, resolve_type};
 use crate::symbols::{Call, Form};
 use cartograph_core::{
-    Confidence, DataSink, InjectedUse, ResourceName, SpringBean, SpringInjection, symbol_id,
+    Confidence, DataSink, InjectedUse, JavaMethod, JavaSite, ResourceName, SpringBean,
+    SpringInjection, symbol_id,
 };
 use std::collections::HashMap;
 
@@ -34,7 +35,36 @@ fn own_type(ctx: &Ctx<'_>, fi: usize, name: &str) -> Option<Sid> {
     }
 }
 
+/// The collection or table a store gives a class by default.
+fn default_name(store: &str, class: &str) -> String {
+    match store {
+        "mongo" => crate::symbols::decapitalize(class),
+        "cassandra" => class.to_lowercase(),
+        _ => snake(class),
+    }
+}
+
+/// Where an entity is kept: as its annotation for the repository's store says, else as any
+/// of its annotations, else by the store's default.
+fn stored(entities: &HashMap<Sid, Vec<Store>>, e: Sid, store: &str, class: &str) -> Option<Store> {
+    let said = entities.get(&e);
+    if let Some(v) = said
+        && let Some(st) = v.iter().find(|s| s.store == store)
+    {
+        return Some(st.clone());
+    }
+    if store.is_empty() {
+        return said.and_then(|v| v.first().cloned());
+    }
+    Some(Store {
+        store: store.to_string(),
+        name: default_name(store, class),
+        confidence: Confidence::Heuristic,
+    })
+}
+
 /// Where an entity's documents or rows live.
+#[derive(Clone)]
 struct Store {
     store: String,
     name: String,
@@ -78,8 +108,8 @@ pub(super) fn run(
     }
     let id = |s: Sid| ctx.ids[s as usize].clone();
     let consts = Consts::new(ctx, binds);
-    // Entities, by type.
-    let mut entities: HashMap<Sid, Store> = HashMap::new();
+    // Entities, by type (one class may be kept in several stores).
+    let mut entities: HashMap<Sid, Vec<Store>> = HashMap::new();
     for &fi in &java {
         for e in &ctx.files[fi].code.entities {
             let Some(t) = own_type(ctx, fi, &e.class) else {
@@ -92,12 +122,7 @@ pub(super) fn run(
                 .filter(|v| v.known() && !v.key.contains('*'));
             let (name, confidence) = match named {
                 Some(v) => (v.key, v.confidence),
-                None if e.store == "mongo" => (
-                    crate::symbols::decapitalize(&e.class),
-                    Confidence::Heuristic,
-                ),
-                None if e.store == "cassandra" => (e.class.to_lowercase(), Confidence::Heuristic),
-                None => (snake(&e.class), Confidence::Heuristic),
+                None => (default_name(&e.store, &e.class), Confidence::Heuristic),
             };
             let path = ctx.files[fi].path;
             sinks.push(DataSink {
@@ -115,7 +140,7 @@ pub(super) fn run(
                 line: e.line,
                 confidence,
             });
-            entities.entry(t).or_insert(Store {
+            entities.entry(t).or_default().push(Store {
                 store: e.store.clone(),
                 name,
                 confidence,
@@ -123,7 +148,7 @@ pub(super) fn run(
         }
     }
     // Repositories, by type: their entity's store.
-    let mut repos: HashMap<Sid, (Sid, String)> = HashMap::new();
+    let mut repos: HashMap<Sid, (Sid, Store)> = HashMap::new();
     for &fi in &java {
         for r in &ctx.files[fi].code.repos {
             let (Some(t), Some(e)) = (
@@ -132,7 +157,7 @@ pub(super) fn run(
             ) else {
                 continue;
             };
-            let Some(st) = entities.get(&e) else {
+            let Some(st) = stored(&entities, e, &r.store, &ctx.symbols[e as usize].name) else {
                 continue;
             };
             sinks.push(DataSink {
@@ -145,7 +170,7 @@ pub(super) fn run(
                 line: r.line,
                 confidence: st.confidence,
             });
-            repos.insert(t, (e, r.base.clone()));
+            repos.insert(t, (e, st));
         }
     }
     for &fi in &java {
@@ -245,13 +270,17 @@ pub(super) fn run(
                 .as_ref()
                 .map(|n| consts.eval(fi, n, 0))
                 .filter(|v| v.known() && !v.key.contains('*'));
-            let (name, confidence) = match (named, entity.and_then(|e| entities.get(&e))) {
+            let known = entity.and_then(|e| entities.get(&e)).and_then(|v| {
+                let same = v.iter().find(|st| st.store == s.store);
+                same.or(v.first()).cloned()
+            });
+            let (name, confidence) = match (named, &known) {
                 (Some(v), _) => (v.key, v.confidence),
                 (None, Some(st)) => (st.name.clone(), st.confidence.max(Confidence::Resolved)),
                 (None, None) => continue,
             };
-            let store = entity
-                .and_then(|e| entities.get(&e))
+            let store = known
+                .as_ref()
                 .map_or(s.store.clone(), |st| st.store.clone());
             sinks.push(DataSink {
                 store,
@@ -275,10 +304,9 @@ pub(super) fn run(
             let Some(t) = receiver(ctx, binds, fi, c, &calls_of) else {
                 continue;
             };
-            let Some((e, _)) = repos.get(&t) else {
+            let Some((e, st)) = repos.get(&t) else {
                 continue;
             };
-            let Some(st) = entities.get(e) else { continue };
             sinks.push(DataSink {
                 store: st.store.clone(),
                 name: st.name.clone(),
@@ -292,6 +320,83 @@ pub(super) fn run(
         }
     }
     (beans, injections, sinks)
+}
+
+/// The innermost type of a file whose lines hold `line`.
+fn type_at(ctx: &Ctx<'_>, fi: usize, line: u32) -> Option<Sid> {
+    let f = &ctx.files[fi];
+    f.code
+        .defs
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.kind.is_type() && (d.start..=d.end).contains(&line))
+        .min_by_key(|(_, d)| d.end - d.start)
+        .map(|(i, _)| f.first + i as Sid)
+}
+
+/// The type of a Java call's receiver: the calling class for a call on itself, the type a
+/// variable or a field is declared with.
+pub(super) fn receiver_type(
+    ctx: &Ctx<'_>,
+    binds: &[Bindings<'_>],
+    fi: usize,
+    c: &Call,
+) -> Option<Sid> {
+    match c.form {
+        Form::Plain | Form::SelfCall => type_at(ctx, fi, c.line),
+        Form::Member => {
+            if let Some(t) = &c.recv_type {
+                return type_in(ctx, binds, fi, t);
+            }
+            let field = c.field.as_deref()?;
+            let own = type_at(ctx, fi, c.line)?;
+            let ty = ctx.files[fi]
+                .code
+                .fields
+                .iter()
+                .find(|x| x.container == ctx.symbols[own as usize].name && x.name == field)?;
+            type_in(ctx, binds, fi, &ty.ty)
+        }
+        _ => None,
+    }
+}
+
+/// The sites that say more than their target, with the others of the same line and target.
+pub(super) fn notable(mut sites: Vec<JavaSite>) -> Vec<JavaSite> {
+    let declared = |s: &JavaSite| {
+        let ty = s.target.rsplit_once('.').map_or("", |(ty, _)| ty);
+        let recv = s.recv.as_deref().and_then(|r| {
+            let (p, n) = r.split_once('#')?;
+            Some(format!("{p}#{}", n.rsplit('.').next().unwrap_or(n)))
+        });
+        recv.is_none_or(|r| r == ty)
+    };
+    let said: std::collections::HashSet<(u32, String)> = sites
+        .iter()
+        .filter(|s| s.sup || !declared(s))
+        .map(|s| (s.line, s.target.clone()))
+        .collect();
+    sites.retain(|s| said.contains(&(s.line, s.target.clone())));
+    sites
+}
+
+/// Every Java method of the repo.
+pub(super) fn methods(ctx: &Ctx<'_>) -> Vec<JavaMethod> {
+    let mut out = Vec::new();
+    for f in ctx.files.iter().filter(|f| f.fam == Fam::Java) {
+        for (i, d) in f.code.defs.iter().enumerate() {
+            if let Some(m) = &d.java {
+                out.push(JavaMethod {
+                    id: ctx.ids[f.first as usize + i].clone(),
+                    arity: m.arity,
+                    is_abstract: m.is_abstract,
+                    is_static: m.is_static,
+                    private: m.private,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// The type of a call's receiver: its declared type, or the declared type of the field of

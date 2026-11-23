@@ -35,7 +35,9 @@ pub use model::{
     split_symbol_id, symbol_id,
 };
 pub use scip::{ScipCoverage, ScipIndexStats, ScipStats, ScipSymbol};
-pub use spring::{DataSink, InjectedUse, ResourceName, SpringBean, SpringInjection};
+pub use spring::{
+    DataSink, InjectedUse, JavaMethod, JavaSite, ResourceName, SpringBean, SpringInjection,
+};
 pub use store::{
     BUSY_TIMEOUT, CacheEntry, GIT_META, SCHEMA_VERSION, ScipCacheRow, Store, WriteTx, git_meta_key,
 };

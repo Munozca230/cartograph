@@ -304,6 +304,20 @@ const MIGRATIONS: &[&str] = &[
         uses      TEXT NOT NULL,
         resource  TEXT
     );
+    CREATE TABLE java_methods (
+        id          TEXT NOT NULL,
+        arity       INTEGER NOT NULL,
+        is_abstract INTEGER NOT NULL,
+        is_static   INTEGER NOT NULL,
+        is_private  INTEGER NOT NULL
+    );
+    CREATE TABLE java_sites (
+        file     TEXT NOT NULL,
+        line     INTEGER NOT NULL,
+        target   TEXT NOT NULL,
+        recv     TEXT,
+        is_super INTEGER NOT NULL
+    );
     CREATE TABLE data_sinks (
         store      TEXT NOT NULL,
         name       TEXT NOT NULL,
@@ -1167,7 +1181,8 @@ fn clear_symbols(conn: &Connection) -> Result<()> {
     }
     if has_table(conn, "spring_beans")? {
         conn.execute_batch(
-            "DELETE FROM spring_beans; DELETE FROM spring_injections; DELETE FROM data_sinks;",
+            "DELETE FROM spring_beans; DELETE FROM spring_injections; DELETE FROM data_sinks;
+             DELETE FROM java_methods; DELETE FROM java_sites;",
         )?;
     }
     Ok(())
@@ -1545,6 +1560,26 @@ fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
         ])?;
     }
     let mut stmt = tx.prepare(
+        "INSERT INTO java_methods (id, arity, is_abstract, is_static, is_private)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    for m in &s.java_methods {
+        stmt.execute(params![
+            m.id,
+            m.arity,
+            m.is_abstract,
+            m.is_static,
+            m.private
+        ])?;
+    }
+    let mut stmt = tx.prepare(
+        "INSERT INTO java_sites (file, line, target, recv, is_super)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    for c in &s.java_sites {
+        stmt.execute(params![c.file, c.line, c.target, c.recv, c.sup])?;
+    }
+    let mut stmt = tx.prepare(
         "INSERT INTO data_sinks (store, name, entity, symbol, via, file, line, confidence)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )?;
@@ -1627,6 +1662,29 @@ fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
         i.uses = serde_json::from_str(&uses)?;
         out.injections.push(i);
     }
+    let mut stmt =
+        conn.prepare("SELECT id, arity, is_abstract, is_static, is_private FROM java_methods")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::spring::JavaMethod {
+            id: r.get(0)?,
+            arity: r.get(1)?,
+            is_abstract: r.get(2)?,
+            is_static: r.get(3)?,
+            private: r.get(4)?,
+        })
+    })?;
+    out.java_methods = rows.collect::<rusqlite::Result<_>>()?;
+    let mut stmt = conn.prepare("SELECT file, line, target, recv, is_super FROM java_sites")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::spring::JavaSite {
+            file: r.get(0)?,
+            line: r.get(1)?,
+            target: r.get(2)?,
+            recv: r.get(3)?,
+            sup: r.get(4)?,
+        })
+    })?;
+    out.java_sites = rows.collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare(
         "SELECT store, name, entity, symbol, via, file, line, confidence FROM data_sinks",
     )?;
@@ -2360,6 +2418,8 @@ mod tests {
             beans: Vec::new(),
             injections: Vec::new(),
             sinks: Vec::new(),
+            java_methods: Vec::new(),
+            java_sites: Vec::new(),
         };
         s.normalize();
         s
@@ -2462,6 +2522,20 @@ mod tests {
                     line: 12,
                     each: true,
                 }],
+            }],
+            java_methods: vec![crate::JavaMethod {
+                id: "sym:src/Orders.java#Orders.save".into(),
+                arity: -1,
+                is_abstract: true,
+                is_static: false,
+                private: false,
+            }],
+            java_sites: vec![crate::JavaSite {
+                file: "src/Checkout.java".into(),
+                line: 12,
+                target: "sym:src/Orders.java#Orders.save".into(),
+                recv: Some("sym:src/Archive.java#Archive".into()),
+                sup: true,
             }],
             sinks: vec![crate::DataSink {
                 store: "mongo".into(),
