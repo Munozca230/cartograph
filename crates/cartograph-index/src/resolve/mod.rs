@@ -420,7 +420,46 @@ pub fn resolve_all(
     let (mut gd_edges, mut gd_meta) = gd.extras(files);
     res.edges.append(&mut gd_edges);
     res.file_meta.append(&mut gd_meta);
+    res.edges.extend(go_test_edges(ix));
     res
+}
+
+/// Go: a `_test.go` file sees the other files of its package without an import, and
+/// `go test` runs a package's tests together. Each test file gets a `uses` edge to its
+/// package as an import of it would: to its Dir (non-test files), or, for a package at the
+/// repo root (no Dir node), to each non-test `.go` file there. An external test package
+/// (`package x_test`) imports the package too; the edge adds nothing then.
+fn go_test_edges(ix: &Index<'_>) -> Vec<Edge> {
+    let is_go = |f: &&&str| f.ends_with(".go");
+    let mut code_dirs: HashMap<&str, Vec<&str>> = HashMap::new();
+    for f in ix.files.iter().filter(is_go) {
+        if !f.ends_with("_test.go") {
+            code_dirs.entry(parent(f)).or_default().push(f);
+        }
+    }
+    let mut out = Vec::new();
+    for t in ix
+        .files
+        .iter()
+        .filter(is_go)
+        .filter(|f| f.ends_with("_test.go"))
+    {
+        let dir = parent(t);
+        let Some(code) = code_dirs.get(dir) else {
+            continue;
+        };
+        let src = node_id(NodeKind::File, t);
+        let dsts: Vec<String> = if dir.is_empty() {
+            code.iter().map(|f| node_id(NodeKind::File, f)).collect()
+        } else {
+            vec![node_id(NodeKind::Dir, dir)]
+        };
+        out.extend(
+            dsts.into_iter()
+                .map(|d| Edge::new(src.clone(), d, EdgeKind::Uses, Confidence::Resolved)),
+        );
+    }
+    out
 }
 
 /// Key of a File node's `meta` listing the repo targets (`file:` / `dir:` ids) that file

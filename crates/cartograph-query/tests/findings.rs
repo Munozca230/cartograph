@@ -90,9 +90,10 @@ fn dir_imports_reach_the_files_of_the_package() {
     let b = g.file_by_path("pkg/b/b.go").unwrap();
     let b2 = g.file_by_path("pkg/b/b2.go").unwrap();
     let a = g.file_by_path("pkg/a/a.go").unwrap();
-    // Fan-in: a.go imports the package, so both files of pkg/b (not its test) have it.
-    assert_eq!(g.fan_in(b), 1);
-    assert_eq!(g.fan_in(b2), 1);
+    // Fan-in: a.go imports the package, so both files of pkg/b (not its test) have it;
+    // so does b_test.go, a test of the package itself.
+    assert_eq!(g.fan_in(b), 2);
+    assert_eq!(g.fan_in(b2), 2);
     assert!(g.out[a as usize].iter().all(|d| d.via_dir));
     let test = g.file_by_path("pkg/b/b_test.go").unwrap();
     assert_eq!(
@@ -136,6 +137,12 @@ fn dir_imports_reach_the_files_of_the_package() {
     );
     // Go never reports file-level cycles from package imports.
     assert!(ids(&r, FindingKind::Cycle).is_empty());
+    // A test of the package itself needs no import: it is still a test to run.
+    let im = impact::impact(&r, &["pkg/tested/t.go".to_string()])
+        .unwrap()
+        .data;
+    let tests: Vec<&str> = im.tests.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(tests, vec!["file:pkg/tested/t_test.go"], "{im:?}");
 }
 
 #[test]

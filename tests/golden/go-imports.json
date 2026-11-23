@@ -84,6 +84,13 @@
       1
     ],
     [
+      "file:app_test.go",
+      "file:app.go",
+      "uses",
+      "resolved",
+      1
+    ],
+    [
       "file:cmd/server/main.go",
       "dir:internal/store",
       "import",
@@ -224,6 +231,13 @@
       1
     ],
     [
+      "file:internal/store/export_test.go",
+      "dir:internal/store",
+      "uses",
+      "resolved",
+      1
+    ],
+    [
       "file:internal/store/store.go",
       "dir:pkg/util",
       "import",
@@ -241,6 +255,13 @@
       "file:internal/store/store_test.go",
       "dir:internal/store",
       "import",
+      "resolved",
+      1
+    ],
+    [
+      "file:internal/store/store_test.go",
+      "dir:internal/store",
+      "uses",
       "resolved",
       1
     ],
