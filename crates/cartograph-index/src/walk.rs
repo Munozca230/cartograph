@@ -273,26 +273,41 @@ pub fn walk(
     };
     let mut results = read_all(&first, true);
     if !noise.is_empty() {
-        let read: Vec<&FileRecord> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
-        let named = crate::noise::Named::of(
-            read.iter()
-                .flat_map(|f| f.imports.iter().map(|i| (f.path.as_str(), i))),
-            read.iter()
-                .filter_map(|f| f.manifest.as_ref())
-                .flat_map(|m| {
-                    let dir = m.path.rsplit_once('/').map_or("", |(d, _)| d);
-                    m.details["entries"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(move |e| e.as_str().map(|e| (dir, e)))
-                }),
-        );
-        let keep: Vec<bool> = noise.iter().map(|(d, _)| named.names(d)).collect();
-        let (again, _): (Vec<_>, Vec<_>) = held
-            .into_iter()
-            .partition(|(_, rel)| noise_of(rel).is_some_and(|i| keep[i]));
-        results.extend(read_all(&again, false));
+        // A folder is read once something read points into it; what it imports may point
+        // into another one, so repeat until nothing more is named.
+        let mut keep = vec![false; noise.len()];
+        let mut held = held;
+        loop {
+            let read: Vec<&FileRecord> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+            let named = crate::noise::Named::of(
+                read.iter()
+                    .flat_map(|f| f.imports.iter().map(|i| (f.path.as_str(), i))),
+                read.iter()
+                    .filter_map(|f| f.manifest.as_ref())
+                    .flat_map(|m| {
+                        let dir = m.path.rsplit_once('/').map_or("", |(d, _)| d);
+                        m.details["entries"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(move |e| e.as_str().map(|e| (dir, e)))
+                    }),
+            );
+            let newly: Vec<usize> = (0..noise.len())
+                .filter(|&i| !keep[i] && named.names(&noise[i].0))
+                .collect();
+            if newly.is_empty() {
+                break;
+            }
+            for &i in &newly {
+                keep[i] = true;
+            }
+            let (again, rest): (Vec<_>, Vec<_>) = held
+                .into_iter()
+                .partition(|(_, rel)| noise_of(rel).is_some_and(|i| newly.contains(&i)));
+            held = rest;
+            results.extend(read_all(&again, false));
+        }
         let dropped: Vec<&(String, String)> = noise
             .iter()
             .zip(&keep)
@@ -338,6 +353,12 @@ fn copy_of_repo(dir: &Path, name: Option<&str>) -> Option<String> {
                 .into(),
         );
     }
+    sibling_worktrees(dir, name)
+}
+
+/// The second rule of [`copy_of_repo`]: `dir` is `<repo>-worktrees` or
+/// `<repo>-worktree-<name>` next to a `<repo>` folder that is a git repository.
+pub fn sibling_worktrees(dir: &Path, name: Option<&str>) -> Option<String> {
     let name = name?;
     let repo = name
         .strip_suffix("-worktrees")
@@ -435,7 +456,7 @@ pub const MINIFIED_MIN_BYTES: usize = 16 * 1024;
 pub const MINIFIED_LINE_BYTES: usize = 500;
 
 /// Why a file is a minified bundle, if it is one: named `*.min.js` / `*.min.css` (and the
-/// `.mjs` / `.cjs` forms), or code of [`MINIFIED_MIN_BYTES`] or more whose lines average
+/// `.mjs` / `.cjs` forms), or JS/TS of [`MINIFIED_MIN_BYTES`] or more whose lines average
 /// more than [`MINIFIED_LINE_BYTES`]. Generated, vendored and slow to parse (one
 /// statement-long line), with nothing to map.
 fn minified(rel: &str, lang: Option<&str>, content: &[u8]) -> Option<String> {
@@ -446,7 +467,10 @@ fn minified(rel: &str, lang: Option<&str>, content: &[u8]) -> Option<String> {
     {
         return Some("a minified bundle (`.min.` file)".into());
     }
-    if lang.is_none() || content.len() < MINIFIED_MIN_BYTES {
+    // Only JS bundles: a Godot scene or resource keeps big arrays on one line.
+    if !matches!(lang, Some("javascript" | "typescript" | "jsx" | "tsx"))
+        || content.len() < MINIFIED_MIN_BYTES
+    {
         return None;
     }
     let lines = content.iter().filter(|&&b| b == b'\n').count() + 1;

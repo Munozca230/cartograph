@@ -161,6 +161,10 @@ impl WatchFilter {
         if parts.len() == 1 && NOTES_FILES.contains(&rel.as_str()) {
             return None;
         }
+        // What the walk leaves out by name alone (worktree copies, output, minified bundles).
+        if cartograph_index::noise::watch_ignores(&self.root, &rel) {
+            return None;
+        }
         if self.data_is_root
             && ((parts.len() == 1 && DATA_FILES.contains(&rel.as_str()))
                 || DATA_DIRS.contains(&parts[0]))

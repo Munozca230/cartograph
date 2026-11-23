@@ -10,20 +10,21 @@
 
 use crate::imports::{RawImport, Spec};
 use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 
-/// Folder names that hold output or data, at any depth (compared in lower case).
-const DATA_NAMES: &[&str] = &[
+/// Folder names that hold output, at any depth (compared in lower case): left out even
+/// when they hold code (coverage reports carry `.js`).
+const OUTPUT_NAMES: &[&str] = &[
     "capturas",
     "captures",
     "screenshots",
-    "logs",
-    "log",
-    "tmp",
-    "temp",
     "coverage",
     "__snapshots__",
     ".nyc_output",
 ];
+/// Folder names that hold logs, temporary files or backups, but also name code packages
+/// (`cmd/backup/`, a `log` module): left out only when they hold no code.
+const DATA_NAMES: &[&str] = &["logs", "log", "tmp", "temp", "backup", "backups"];
 /// Caches of tools (a scanner's work folder, Python bytecode and checkers), at any depth.
 const CACHE_NAMES: &[&str] = &[
     ".scannerwork",
@@ -79,22 +80,25 @@ fn ext(name: &str) -> String {
     }
 }
 
-/// Why a folder name alone marks output or data, if it does.
-fn by_name(name: &str) -> Option<&'static str> {
+/// Why a folder name alone marks output or data, if it does, and whether that holds even
+/// when the folder has code: caches, output, and copies (`_backup*`, `backup-<date>`,
+/// `backup_<x>`, `*.bak`) always; `logs`, `log`, `tmp`, `temp`, `backup`, `backups` only
+/// without code.
+fn by_name(name: &str) -> Option<(&'static str, bool)> {
     let lower = name.to_ascii_lowercase();
     if CACHE_NAMES.contains(&lower.as_str()) {
-        return Some("a tool's cache");
+        return Some(("a tool's cache", true));
     }
-    if DATA_NAMES.contains(&lower.as_str())
-        || lower.starts_with("backup")
-        || lower.starts_with("_backup")
-        || lower.ends_with(".bak")
-    {
-        return Some(
-            "named like output or data (logs, captures, backups, temporary files, coverage, snapshots)",
-        );
+    const WHY: &str =
+        "named like output or data (logs, captures, backups, temporary files, coverage, snapshots)";
+    let copy = lower.starts_with("_backup")
+        || lower.starts_with("backup-")
+        || lower.starts_with("backup_")
+        || lower.ends_with(".bak");
+    if OUTPUT_NAMES.contains(&lower.as_str()) || copy {
+        return Some((WHY, true));
     }
-    None
+    DATA_NAMES.contains(&lower.as_str()).then_some((WHY, false))
 }
 
 fn n_files(n: usize) -> String {
@@ -150,7 +154,8 @@ pub fn candidates<'a>(files: impl Iterator<Item = &'a str>) -> Vec<(String, Stri
             continue;
         }
         let name = dir.rsplit('/').next().unwrap_or(dir);
-        let why = if let Some(why) = by_name(name) {
+        let named = by_name(name).filter(|(_, even_code)| *even_code || c.code == 0);
+        let why = if let Some((why, _)) = named {
             Some(format!("{why}: {}", n_files(c.files)))
         } else if c.files >= MIN_DATA_FILES && c.data == c.files && c.data > c.json {
             Some(format!(
@@ -231,10 +236,14 @@ impl Named {
                 {
                     n.paths.extend(join(dir, s));
                 }
+                // Relative to the file, or found through an include path: both count.
                 Spec::Include {
                     path,
                     system: false,
-                } => n.paths.extend(join(dir, path)),
+                } => {
+                    n.paths.extend(join(dir, path));
+                    words(path, &mut n.words);
+                }
                 Spec::Path(s) | Spec::TypePath(s) | Spec::Go(s) => words(s, &mut n.words),
                 Spec::Include { path, .. } => words(path, &mut n.words),
                 Spec::Python { module, .. } => words(module, &mut n.words),
@@ -264,6 +273,36 @@ impl Named {
                     || (p.starts_with(dir.as_str()) && p.as_bytes().get(dir.len()) == Some(&b'/'))
             })
     }
+}
+
+/// A change the watcher can ignore without a walk: a minified bundle (by name), a file
+/// below a sibling repository's worktree copies, or a file that is not code inside a
+/// cache, an output folder, or a log, temporary or backup folder (`logs/api.log`). Kept
+/// conservative: a code file in a `tmp/` or `log/` folder may be imported, and is watched.
+pub fn watch_ignores(root: &Path, rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel).to_ascii_lowercase();
+    if [".min.js", ".min.mjs", ".min.cjs", ".min.css"]
+        .iter()
+        .any(|e| name.ends_with(e))
+    {
+        return true;
+    }
+    let mut dir = root.to_path_buf();
+    let parts: Vec<&str> = rel.split('/').collect();
+    let code = crate::lang::detect(rel).is_some();
+    for d in &parts[..parts.len().saturating_sub(1)] {
+        dir.push(d);
+        let lower = d.to_ascii_lowercase();
+        if (lower.ends_with("-worktrees") || lower.contains("-worktree-"))
+            && crate::walk::sibling_worktrees(&dir, Some(d)).is_some()
+        {
+            return true;
+        }
+        if !code && by_name(d).is_some() {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -319,7 +358,6 @@ mod tests {
                 "logs",
                 "old.bak",
                 "src/__snapshots__",
-                "src/logs",
             ]
         );
     }
@@ -341,11 +379,35 @@ mod tests {
             [("src/a.ts", &rel), ("main.py", &py)].into_iter(),
             [("tools", "scratch/run.mjs")].into_iter(),
         );
+        // A quoted include goes through include paths too: its words count.
+        let inc = RawImport {
+            line: 1,
+            spec: Spec::Include {
+                path: "log/Logger.h".into(),
+                system: false,
+            },
+        };
+        let c = Named::of([("src/main.cpp", &inc)].into_iter(), std::iter::empty());
+        assert!(c.names("include/log"));
         // The relative import points into `src/logs`, not into a top-level `logs`.
         assert!(named.names("src/logs"));
         assert!(!named.names("logs"));
         assert!(named.names("app/tmp"));
         assert!(named.names("tools/scratch"));
         assert!(!named.names("capturas"));
+    }
+
+    #[test]
+    fn the_watcher_ignores_output_but_not_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("app/.git")).unwrap();
+        assert!(watch_ignores(root, "logs/api.log"));
+        assert!(watch_ignores(root, "src/coverage/lcov.info"));
+        assert!(watch_ignores(root, "vendor/chart.min.js"));
+        assert!(watch_ignores(root, "app-worktrees/feat/src/a.ts"));
+        assert!(!watch_ignores(root, "lib-worktrees/a.ts"));
+        assert!(!watch_ignores(root, "src/log/logger.ts"));
+        assert!(!watch_ignores(root, "src/app.ts"));
     }
 }
