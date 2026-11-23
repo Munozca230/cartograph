@@ -1,8 +1,8 @@
 //! File-system walk: respects `.gitignore` (including nested ones), always skips a fixed
 //! set of directories, the checkouts of other repositories (a folder below the root
 //! holding a `.git` file: a submodule, a linked worktree; a `<repo>-worktrees` folder next
-//! to `<repo>`), reads files in parallel (parsing imports on the same rayon threads), and
-//! records every path it does not index.
+//! to `<repo>`) and the notes file of `annotate`, reads files in parallel (parsing imports
+//! on the same rayon threads), and records every path it does not index.
 
 use crate::imports::{self, RawImport};
 use crate::lang;
@@ -128,16 +128,28 @@ pub fn walk(
             // A `.git` *file* is the pointer of a linked worktree or submodule to its git
             // dir: git metadata, like the `.git` dir.
             let git_file = !is_dir && name == Some(".git");
-            if entry.depth() == 0 || (!is_dir && !git_file && extra.is_empty()) {
+            // The repo's own notes file (`annotate`): never part of the map, so writing a
+            // note changes no hash.
+            let notes = !is_dir
+                && entry.depth() == 1
+                && name.is_some_and(|n| crate::NOTES_FILES.contains(&n));
+            if entry.depth() == 0 || (!is_dir && !git_file && !notes && extra.is_empty()) {
                 return true;
             }
             let rel = relative_escaped(&filter_root, entry.path());
             let detail = if is_dir && !excluded_name {
                 copy_of_repo(entry.path(), name)
+            } else if notes {
+                Some("notes of `annotate`, read by `explain`".to_string())
             } else {
                 None
             };
-            if (is_dir && excluded_name) || git_file || detail.is_some() || extra.contains(&rel) {
+            if (is_dir && excluded_name)
+                || git_file
+                || notes
+                || detail.is_some()
+                || extra.contains(&rel)
+            {
                 if let Ok(mut v) = excluded_sink.lock() {
                     v.push((rel, detail));
                 }

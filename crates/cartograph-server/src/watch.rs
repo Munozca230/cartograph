@@ -16,7 +16,7 @@ use crate::scheduler::Reason;
 use crate::state::AppState;
 use cartograph_index::git::snapshot::{LEGACY_SNAPSHOT_DIR, only_legacy_snapshots};
 use cartograph_index::walk::EXCLUDED_DIRS;
-use cartograph_index::{DATA_DIRS, DATA_FILES};
+use cartograph_index::{DATA_DIRS, DATA_FILES, NOTES_FILES};
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::event::{AccessKind, AccessMode};
@@ -156,6 +156,9 @@ impl WatchFilter {
         if let Some(d) = &self.data_rel
             && (rel == *d || rel.starts_with(&format!("{d}/")))
         {
+            return None;
+        }
+        if parts.len() == 1 && NOTES_FILES.contains(&rel.as_str()) {
             return None;
         }
         if self.data_is_root

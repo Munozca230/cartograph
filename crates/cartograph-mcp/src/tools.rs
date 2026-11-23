@@ -371,8 +371,9 @@ impl Cartograph {
     async fn explain(&self, Parameters(a): Parameters<NodeArgs>) -> CallToolResult {
         let node = self.norm(&a.node);
         let data_dir = self.engine.data_dir.clone();
+        let root = self.engine.root.clone();
         self.run("explain", vec![node.clone()], move |l| {
-            let notes = annotations::load(&data_dir).unwrap_or_default();
+            let (notes, _) = annotations::load_all(&data_dir, &root);
             cartograph_query::explain::explain_with(&l.repo, &node, |id| {
                 annotations::annotation(&notes, &l.hashes, id)
             })
@@ -756,25 +757,47 @@ impl Cartograph {
                 )));
             };
             let _w = engine.notes_lock.lock().unwrap_or_else(|e| e.into_inner());
-            let mut notes = annotations::load(&engine.data_dir).map_err(QueryError::BadArgument)?;
+            // The repo's versioned notes file once it exists (or when asked for), else the
+            // data dir. A note lives in one place: writing it there takes it out of the data
+            // dir, and a delete removes it from both.
+            let root = &engine.root;
+            let in_repo = engine.opts.notes_in_repo || annotations::repo_has_notes(root);
+            let mut local = annotations::load(&engine.data_dir).map_err(QueryError::BadArgument)?;
+            let mut repo = match in_repo {
+                true => Some(annotations::load_repo(root).map_err(QueryError::BadArgument)?),
+                false => None,
+            };
             let deleted = text.is_empty();
-            if deleted {
-                notes.notes.remove(&id);
-            } else {
-                notes.notes.insert(
-                    id.clone(),
-                    annotations::Note {
-                        text: text.clone(),
-                        hash,
-                        updated: annotations::now(),
-                    },
-                );
+            let had_local = local.notes.remove(&id).is_some();
+            let had_repo = repo.as_mut().is_some_and(|r| r.notes.remove(&id).is_some());
+            if !deleted {
+                let note = annotations::Note {
+                    text: text.clone(),
+                    hash,
+                    updated: annotations::now(),
+                };
+                match repo.as_mut() {
+                    Some(r) => r.notes.insert(id.clone(), note),
+                    None => local.notes.insert(id.clone(), note),
+                };
             }
-            annotations::save(&engine.data_dir, &notes).map_err(QueryError::BadArgument)?;
+            if let Some(r) = &repo
+                && (had_repo || !deleted)
+            {
+                annotations::save_repo(root, r).map_err(QueryError::BadArgument)?;
+            }
+            if had_local || (!deleted && repo.is_none()) {
+                annotations::save(&engine.data_dir, &local).map_err(QueryError::BadArgument)?;
+            }
+            let place = if in_repo {
+                annotations::REPO_FILE
+            } else {
+                "the data dir"
+            };
             let msg = if deleted {
                 format!("note on {id} deleted\n")
             } else {
-                format!("note on {id} saved; explain shows it until the code changes\n")
+                format!("note on {id} saved in {place}; explain shows it until the code changes\n")
             };
             Ok(Answer {
                 data: json!({ "id": id, "deleted": deleted, "text": text }),

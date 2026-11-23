@@ -1,8 +1,17 @@
 //! Notes on nodes written by an agent or a human (`annotate`), shown by `explain`.
 //!
-//! Stored in `<data dir>/annotations.json`, apart from the graph database (re-indexing
-//! never touches them, and no schema migration is needed). Each note keeps the content
-//! hash of its node when it was written; `explain` marks it stale once the hash differs.
+//! Two places hold them, apart from the graph database (re-indexing never touches them,
+//! and no schema migration is needed):
+//! - `<repo>/cartograph-notes.toml` ([`REPO_FILE`]): versioned with the code, shared by
+//!   everyone who clones it, one TOML table per node (readable, and one changed note is a
+//!   small diff). `annotate` writes here when the file exists or when asked to
+//!   (`cartograph mcp --notes-in-repo`). The walk and the watcher leave it out, so writing
+//!   a note never changes a hash.
+//! - `<data dir>/annotations.json` ([`FILE`]): local, the default.
+//!
+//! `explain` reads both; a node noted in both shows the repo's note. Each note keeps the
+//! content hash of its node when it was written; `explain` marks it stale once the hash
+//! differs.
 //! A file's hash is its BLAKE3 digest from the index; a folder's is a BLAKE3 over the
 //! sorted `(path, hash)` of every file under it, so adding, removing or editing any file
 //! inside makes the folder's note stale.
@@ -37,6 +46,103 @@ pub struct Notes {
 
 fn version() -> u32 {
     1
+}
+
+/// The notes file at the repo root.
+pub const REPO_FILE: &str = cartograph_index::NOTES_FILE;
+
+/// First lines of [`REPO_FILE`].
+const REPO_HEADER: &str =
+    "# Notes on files and folders, shown by `cartograph explain` (and the MCP `explain` tool).
+# Written by the `annotate` tool; edit them by hand as well. One table per node id.
+# `hash` is the content hash of the node when the note was written: when the code
+# changes, explain shows the note as stale until it is written again.
+";
+
+/// A note as [`REPO_FILE`] keeps it: no timestamp (git has it).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct RepoNote {
+    text: String,
+    hash: String,
+}
+
+/// Read `<root>/cartograph-notes.toml`; a missing file is an empty set, a file that does
+/// not parse is an error (never overwritten silently).
+pub fn load_repo(root: &Path) -> Result<Notes, String> {
+    let p = root.join(REPO_FILE);
+    let text = match std::fs::read_to_string(&p) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Notes {
+                version: 1,
+                ..Notes::default()
+            });
+        }
+        Err(e) => return Err(format!("cannot read {}: {e}", p.display())),
+    };
+    let raw: BTreeMap<String, RepoNote> =
+        toml::from_str(&text).map_err(|e| format!("{} is not valid: {e}", p.display()))?;
+    Ok(Notes {
+        version: 1,
+        notes: raw
+            .into_iter()
+            .map(|(id, n)| {
+                (
+                    id,
+                    Note {
+                        text: n.text,
+                        hash: n.hash,
+                        updated: 0,
+                    },
+                )
+            })
+            .collect(),
+    })
+}
+
+/// Write `<root>/cartograph-notes.toml` atomically (a temporary file next to it, then a
+/// rename), sorted by node id.
+pub fn save_repo(root: &Path, notes: &Notes) -> Result<(), String> {
+    let raw: BTreeMap<&str, RepoNote> = notes
+        .notes
+        .iter()
+        .map(|(id, n)| {
+            (
+                id.as_str(),
+                RepoNote {
+                    text: n.text.clone(),
+                    hash: n.hash.clone(),
+                },
+            )
+        })
+        .collect();
+    let body = toml::to_string(&raw).map_err(|e| e.to_string())?;
+    let p = root.join(REPO_FILE);
+    let tmp = root.join(format!("{REPO_FILE}.tmp"));
+    std::fs::write(&tmp, format!("{REPO_HEADER}\n{body}"))
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// Whether the repo keeps its notes in [`REPO_FILE`] (the file exists).
+pub fn repo_has_notes(root: &Path) -> bool {
+    root.join(REPO_FILE).is_file()
+}
+
+/// The notes `explain` shows: those of the data dir, then those of the repo over them.
+/// A file that cannot be read or parsed is left out with a warning in the result's
+/// second part (the other one still counts).
+pub fn load_all(data_dir: &Path, root: &Path) -> (Notes, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut all = load(data_dir).unwrap_or_else(|e| {
+        warnings.push(e);
+        Notes::default()
+    });
+    match load_repo(root) {
+        Ok(repo) => all.notes.extend(repo.notes),
+        Err(e) => warnings.push(e),
+    }
+    (all, warnings)
 }
 
 /// Path of the notes file of a data dir.
@@ -184,6 +290,51 @@ mod tests {
         g.insert("src/a.rs".into(), "h1b".into());
         assert!(annotation(&notes, &g, "file:src/a.rs").unwrap().stale);
         assert!(annotation(&notes, &f, "file:src/b.rs").is_none());
+    }
+
+    #[test]
+    fn repo_file_round_trip_and_precedence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, data) = (tmp.path().join("r"), tmp.path().join("d"));
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(!repo_has_notes(&root));
+        assert!(load_repo(&root).unwrap().notes.is_empty());
+        let note = |text: &str| Note {
+            text: text.into(),
+            hash: "h".into(),
+            updated: 7,
+        };
+        let mut repo = Notes::default();
+        repo.notes
+            .insert("dir:src".into(), note("shared\nsecond line"));
+        repo.notes
+            .insert("file:src/a.rs".into(), note("from the repo"));
+        save_repo(&root, &repo).unwrap();
+        assert!(repo_has_notes(&root));
+        assert!(!root.join(format!("{REPO_FILE}.tmp")).exists());
+        let text = std::fs::read_to_string(root.join(REPO_FILE)).unwrap();
+        assert!(text.starts_with("# Notes on files and folders"), "{text}");
+        assert!(!text.contains("updated"), "{text}");
+        let back = load_repo(&root).unwrap();
+        assert_eq!(back.notes["dir:src"].text, "shared\nsecond line");
+        assert_eq!(back.notes["file:src/a.rs"].hash, "h");
+        // The repo's note wins over the data dir's for the same node.
+        let mut local = Notes::default();
+        local.notes.insert("file:src/a.rs".into(), note("local"));
+        local
+            .notes
+            .insert("file:src/b.rs".into(), note("only local"));
+        save(&data, &local).unwrap();
+        let (all, warnings) = load_all(&data, &root);
+        assert!(warnings.is_empty());
+        assert_eq!(all.notes["file:src/a.rs"].text, "from the repo");
+        assert_eq!(all.notes["file:src/b.rs"].text, "only local");
+        assert_eq!(all.notes.len(), 3);
+        // A broken repo file is reported, the local notes still count.
+        std::fs::write(root.join(REPO_FILE), "not = [toml").unwrap();
+        let (all, warnings) = load_all(&data, &root);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(all.notes.len(), 2);
     }
 
     #[test]

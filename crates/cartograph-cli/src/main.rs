@@ -184,6 +184,10 @@ enum Command {
         /// Do not record tool calls in <data dir>/stats.jsonl (also: CARTOGRAPH_NO_STATS=1).
         #[arg(long)]
         no_stats: bool,
+        /// `annotate` writes its notes to <PATH>/cartograph-notes.toml, versioned with the
+        /// code (it does so anyway once that file exists), instead of the data dir.
+        #[arg(long)]
+        notes_in_repo: bool,
     },
     /// Usage of the MCP tools in a repo: calls per tool, latency, errors, answer
     /// size, truncation (from <data dir>/stats.jsonl; no arguments or paths are recorded).
@@ -305,8 +309,10 @@ fn main() -> ExitCode {
             fresh_wait_ms,
             max_file_bytes,
             no_stats,
+            notes_in_repo,
         } => {
             let opts = cartograph_mcp::Options {
+                notes_in_repo,
                 stats: !no_stats && std::env::var_os("CARTOGRAPH_NO_STATS").is_none(),
                 max_file_bytes: size_limit(&path, &data, max_file_bytes),
                 data_dir: data.data_dir,

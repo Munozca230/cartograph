@@ -314,3 +314,52 @@ fn notes_persist_and_go_stale_when_the_code_changes() {
     assert!(t.contains("note: none"), "{t}");
     c.shutdown(Duration::from_secs(10));
 }
+
+#[test]
+fn notes_in_the_repo_file() {
+    let (_tmp, root, data) = fixture("query-app");
+    let notes = root.join("cartograph-notes.toml");
+    // Asked for with a flag: the first note creates the versioned file.
+    let mut c = spawn(&root, &data, &["--notes-in-repo"]);
+    c.handshake();
+    let r = call_ready(
+        &mut c,
+        "annotate",
+        json!({"node": "src/core", "text": "Domain core.\nNo I/O here."}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    assert!(text(&r).contains("cartograph-notes.toml"), "{r}");
+    let body = std::fs::read_to_string(&notes).unwrap();
+    assert!(body.contains("[\"dir:src/core\"]"), "{body}");
+    assert!(body.contains("No I/O here."), "{body}");
+    // Writing the file is no change to the map: the note is fresh.
+    let t = text(&c.call("explain", json!({"node": "src/core"}), T));
+    assert!(t.contains("note: Domain core."), "{t}");
+    assert!(!t.contains("stale"), "{t}");
+    c.shutdown(Duration::from_secs(10));
+
+    // Without the flag, the existing file is where notes go; explain reads both places.
+    let mut c = spawn(&root, &data, &[]);
+    c.handshake();
+    let r = call_ready(
+        &mut c,
+        "annotate",
+        json!({"node": "src/core/service.ts", "text": "Business rules."}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    let body = std::fs::read_to_string(&notes).unwrap();
+    assert!(body.contains("file:src/core/service.ts"), "{body}");
+    assert!(!data.join("annotations.json").exists());
+    let t = text(&c.call("explain", json!({"node": "src/core/service.ts"}), T));
+    assert!(t.contains("note: Business rules."), "{t}");
+    // A delete removes it from the file.
+    c.call(
+        "annotate",
+        json!({"node": "src/core/service.ts", "text": ""}),
+        T,
+    );
+    let body = std::fs::read_to_string(&notes).unwrap();
+    assert!(!body.contains("service.ts"), "{body}");
+    assert!(body.contains("dir:src/core"), "{body}");
+    c.shutdown(Duration::from_secs(10));
+}

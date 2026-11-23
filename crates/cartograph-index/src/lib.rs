@@ -72,6 +72,11 @@ pub const DATA_FILES: [&str; 10] = [
 /// source folder has by accident). Left out of the walk and the watcher, with everything in
 /// them, when the data dir is the repo root.
 pub const DATA_DIRS: [&str; 1] = [git::snapshot::SNAPSHOT_DIR];
+/// The notes of `annotate` kept in the repository (versioned with it), and the temporary
+/// file they are written through. Read by `explain`; at the repo root they are never
+/// indexed nor watched, so writing a note changes no content hash.
+pub const NOTES_FILE: &str = "cartograph-notes.toml";
+pub const NOTES_FILES: [&str; 2] = [NOTES_FILE, "cartograph-notes.toml.tmp"];
 /// Name of the repo config file (architecture rules; read by `cartograph-query`).
 pub const CONFIG_FILE: &str = "cartograph.toml";
 /// Run-metadata key of the size limit ([`IndexOptions::max_file_bytes`]) the stored index

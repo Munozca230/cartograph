@@ -41,10 +41,31 @@ Ids are stable and every answer uses them: `file:src/a.rs`, `dir:src`, `repo:`,
 accept plain repo paths (`src/a.rs`, `src/`), absolute paths inside the repo (made
 relative by the server), and `path#name` / `Class.method` / a bare name for symbols.
 
-`explain` shows the note `annotate` left on the node. Notes live in
-`<data dir>/annotations.json`, keyed by node id, with the content hash of the node when
-they were written (for a folder, a hash over every file under it). When the hash changes
-the note shows as `note (stale: …)`. `cartograph query explain` shows them too.
+`explain` shows the note `annotate` left on the node. Each note is kept by node id with
+the content hash of the node when it was written (for a folder, a hash over every file
+under it). When the hash changes the note shows as `note (stale: …)`. `cartograph query
+explain` shows them too. Notes live in one of two places:
+
+- `cartograph-notes.toml` at the repo root, versioned with the code so that everyone who
+  clones the repo (and every agent session) sees them. `annotate` writes there once the
+  file exists, or from the first note with `cartograph mcp --notes-in-repo`; to start
+  keeping notes in the repo, create the file (empty) or pass the flag. One TOML table per
+  node, sorted, so a changed note is a small diff and the file can be edited by hand:
+
+  ```toml
+  ["dir:src/auth"]
+  text = """
+  Session handling. Tokens are refreshed here only;
+  the UI never stores them."""
+  hash = "3f9a…"
+  ```
+
+  The file is never indexed nor watched, so writing a note changes no hash.
+- `<data dir>/annotations.json` otherwise: local to the machine, not versioned.
+
+`explain` reads both; for a node noted in both, the repo's note is shown. Writing a note
+to the repo file takes it out of the data dir, and an empty `text` deletes the note from
+both.
 
 The server instructions (sent at initialization) say when to prefer cartograph over grep,
 so a client that defers tool schemas behind a tool search still knows when to reach for
@@ -179,7 +200,8 @@ With a binary from a release archive or built from source:
   it.
 - Other options: `--config FILE` (rules file instead of `<repo>/cartograph.toml`),
   `--no-watch`, `--structured`, `--tool-timeout` (30 s), `--fresh-wait-ms` (8000),
-  `--max-file-bytes`, `--no-stats` (see [Usage stats](#usage-stats)).
+  `--max-file-bytes`, `--no-stats` (see [Usage stats](#usage-stats)), `--notes-in-repo`
+  (`annotate` writes to `cartograph-notes.toml`, see [Tools](#tools)).
 
 The server indexes in the background at startup, so it can be registered before the repo
 has an index. Without an MCP client, the same answers come from the CLI:
@@ -505,4 +527,6 @@ after stdin closed.
   followed. `callers` of a base method lists the calls made through subtypes that inherit
   it, not the calls to an override (`hierarchy` of the method lists the overriding
   subtypes).
-- Notes are per node id: renaming a file orphans its note.
+- Notes are per node id: renaming a file orphans its note. A note's hash is over the bytes
+  of the files, so a checkout that converts line endings (`core.autocrlf`) sees the notes
+  of the repo file written on another platform as stale.

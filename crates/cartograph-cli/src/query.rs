@@ -230,10 +230,10 @@ pub fn cmd_query(tool: Tool, opts: &QueryOpts) -> Result<ExitCode> {
         }
         Tool::Explain { node } => {
             use cartograph_mcp::annotations;
-            let notes = annotations::load(&data.dir(&opts.repo)).unwrap_or_else(|e| {
+            let (notes, warnings) = annotations::load_all(&data.dir(&opts.repo), &opts.repo);
+            for e in warnings {
                 eprintln!("warning: notes ignored: {e}");
-                annotations::Notes::default()
-            });
+            }
             run!(cartograph_query::explain::explain_with(
                 &repo,
                 &node,

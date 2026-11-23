@@ -48,6 +48,9 @@ pub struct Options {
     pub max_concurrent: usize,
     /// Record each tool call in `<data dir>/stats.jsonl` (see [`crate::stats`]).
     pub stats: bool,
+    /// `annotate` writes to `<root>/cartograph-notes.toml` even before the file exists
+    /// (see [`crate::annotations`]).
+    pub notes_in_repo: bool,
 }
 
 impl Options {
@@ -63,6 +66,7 @@ impl Options {
             fresh_wait: Duration::from_secs(8),
             max_concurrent: 4,
             stats: true,
+            notes_in_repo: false,
         }
     }
 }
