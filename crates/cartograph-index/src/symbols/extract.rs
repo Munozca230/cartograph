@@ -719,6 +719,7 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
             if call.form == Form::Member {
                 let r = receivers.get(&c.node.id());
                 call.recv_type = r.map(|r| r.ty.clone());
+                call.recv_elem = r.is_some_and(|r| r.elem);
                 call.recv_decl = r.and_then(|r| r.decl.clone());
             }
             let args = c.args.or_else(|| {
@@ -1486,6 +1487,7 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         recv_type: None,
         recv_decl: None,
         sup: false,
+        recv_elem: false,
         args: Vec::new(),
         handler: None,
         opts: Vec::new(),
@@ -2218,6 +2220,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             recv_type: None,
             recv_decl: None,
             sup: false,
+            recv_elem: false,
             args: Vec::new(),
             handler: None,
             opts: Vec::new(),
@@ -2264,6 +2267,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 recv_type: None,
                 recv_decl: None,
                 sup: false,
+                recv_elem: false,
                 args: Vec::new(),
                 handler: None,
                 opts: Vec::new(),
@@ -2288,6 +2292,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 recv_type: None,
                 recv_decl: None,
                 sup: false,
+                recv_elem: false,
                 args: Vec::new(),
                 handler: None,
                 opts: Vec::new(),

@@ -68,6 +68,8 @@ impl Decl {
 pub(super) struct Recv {
     pub ty: String,
     pub decl: Option<RecvDecl>,
+    /// `ty` is what a collection or holder gives out.
+    pub elem: bool,
 }
 
 /// What a lambda or loop variable reads of a collection, a map or a holder.
@@ -173,7 +175,10 @@ pub(super) fn generic_parts<'t>(ty: Node<'t>, src: &[u8]) -> Option<(String, Vec
 fn arg_name(n: Node<'_>, src: &[u8]) -> Option<String> {
     match n.kind() {
         "type_identifier" => Some(text(n, src)),
-        "generic_type" => generic_parts(n, src).map(|(name, _)| name),
+        // `Outer.Item<T>` is not the `Item` of here.
+        "generic_type" if n.named_child(0)?.kind() == "type_identifier" => {
+            generic_parts(n, src).map(|(name, _)| name)
+        }
         "wildcard" => {
             let t = text(n, src);
             if !t.contains("extends") {
@@ -471,7 +476,11 @@ impl Scopes {
                     Some(r) => self.read_from(r, scope, path, src).map(|(decl, _)| decl),
                     None => Some(own),
                 };
-                Some(Recv { ty, decl })
+                Some(Recv {
+                    ty,
+                    decl,
+                    elem: false,
+                })
             }
             JTy::From(r) => {
                 let (decl, ty) = self.read_from(&r, scope, path, src)?;
@@ -483,6 +492,7 @@ impl Scopes {
                 Some(Recv {
                     ty,
                     decl: Some(decl),
+                    elem: true,
                 })
             }
             _ => None,
@@ -529,6 +539,7 @@ impl Scopes {
             _ => return None,
         };
         Some(Recv {
+            elem: true,
             ty,
             decl: Some(RecvDecl {
                 name: var.strip_prefix("this.").unwrap_or(&var).to_string(),

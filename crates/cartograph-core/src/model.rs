@@ -622,8 +622,8 @@ impl Symbols {
         self.sinks.dedup();
         self.java_methods.sort();
         self.java_methods.dedup();
+        // Two alike are two calls of a line.
         self.java_sites.sort();
-        self.java_sites.dedup();
     }
 }
 

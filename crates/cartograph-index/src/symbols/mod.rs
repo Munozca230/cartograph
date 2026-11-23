@@ -710,6 +710,10 @@ pub struct Call {
     /// `var`, a lambda parameter of anything else) or not at all: the other rules decide.
     #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
     pub recv_type: Option<String>,
+    /// [`Call::recv_type`] is what a collection or holder gives out: where it leads to no
+    /// method, the other rules decide.
+    #[serde(rename = "z", default, skip_serializing_if = "std::ops::Not::not")]
+    pub recv_elem: bool,
     /// Java `super.f()` and `Type.super.f()`.
     #[serde(rename = "w", default, skip_serializing_if = "std::ops::Not::not")]
     pub sup: bool,
@@ -896,8 +900,9 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// `@Resource` asks for, the bean names of nested classes and generated mappers; 29:
 /// parameters given another value, names of repository interfaces, Cassandra and R2DBC
 /// repositories; 30: modifiers and parameters of Java methods, `super`
-/// calls; 31: `Outer.Inner x` is not typed again.
-pub const REVISION: u32 = 31;
+/// calls; 31: `Outer.Inner x` is not typed again;
+/// 32: [`Call::recv_elem`].
+pub const REVISION: u32 = 32;
 
 /// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
 /// `orderService`; `URLMaker`, two capitals first, stays as it is).

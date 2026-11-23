@@ -1139,6 +1139,7 @@ fn plain_call(name: &str, line: u32, form: Form) -> Call {
         recv_type: None,
         recv_decl: None,
         sup: false,
+        recv_elem: false,
         args: Vec::new(),
         handler: None,
         opts: Vec::new(),

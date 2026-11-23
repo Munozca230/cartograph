@@ -1,0 +1,22 @@
+{
+  "callees": {},
+  "callers": {
+    "sym:src/main/java/com/shop/cart/Cart.java#Cart.weighCart": [
+      "file:src/main/java/com/shop/cart/Box.java:16"
+    ],
+    "sym:src/main/java/com/shop/cart/Stock.java#Stock.weighStock": [
+      "file:src/main/java/com/shop/cart/Stock.java:10"
+    ],
+    "sym:src/main/java/com/shop/left/Item.java#Item.shipItem": [
+      "file:src/main/java/com/shop/cart/Box.java:11",
+      "file:src/main/java/com/shop/cart/Box.java:12"
+    ],
+    "sym:src/main/java/com/shop/pool/Lease.java#Lease.releaseLease": [
+      "file:src/main/java/com/shop/pool/Pooled.java:7"
+    ],
+    "sym:src/main/java/com/shop/pool/Out.java#Entry.flushEntry": [
+      "file:src/main/java/com/shop/pool/Scoped.java:9"
+    ]
+  },
+  "paths": {}
+}

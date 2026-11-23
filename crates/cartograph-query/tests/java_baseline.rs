@@ -23,6 +23,7 @@ fn no_caller_and_no_callee_is_lost() {
     let mut compared = 0;
     for name in [
         "inherit-java",
+        "java-elements",
         "java-receivers",
         "spring-java",
         "workspace-bridges",

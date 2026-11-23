@@ -1266,7 +1266,10 @@ fn resolve_call_by_rules(
             resolve_type(ctx, binds, fi, name).unwrap_or(Out::Unresolved)
         }
         Form::Member | Form::Path => {
-            if let Some(o) = via_field(ctx, binds, h, fi, c, container) {
+            if let Some(o) = via_field(ctx, binds, h, fi, c, container)
+                // What a collection gives out decides only where it leads to a method.
+                && (!c.recv_elem || matches!(o, Out::Hit(..)))
+            {
                 return o;
             }
             let Some(q) = c.qualifier.as_deref() else {
