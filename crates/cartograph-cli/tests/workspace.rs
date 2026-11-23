@@ -189,3 +189,55 @@ fn an_mcp_server_from_inside_a_member() {
     assert_ne!(code, 0);
     assert!(err.contains("must be named"), "{err}");
 }
+
+#[test]
+fn diff_and_check_against_each_members_base() {
+    let ws = workspace_basic();
+    std::fs::remove_dir_all(ws.root.join("mcp/.git")).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let (root, d) = (s(&ws.root), s(data.path()));
+    // The library's model starts using the API's client: a new dependency across members.
+    let money = ws
+        .root
+        .join("shared-lib/src/main/java/com/acme/lib/Money.java");
+    let text = std::fs::read_to_string(&money).unwrap().replace(
+        "package com.acme.lib;\n",
+        "package com.acme.lib;\n\nimport com.acme.api.ReportClient;\n",
+    );
+    std::fs::write(&money, text).unwrap();
+
+    let (code, out, err) = cartograph(&["diff", "-C", &root, "--data-dir", &d]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("lib: merge-base with main"), "{out}");
+    assert!(
+        out.contains("mcp: working tree (no git repository)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("api/src/main/java/com/acme/api/ReportClient.java"),
+        "{out}"
+    );
+
+    // The workspace's rules: lib may depend on nothing; the new edge is introduced.
+    let (code, out, err) = cartograph(&["check", &root, "--data-dir", &d, "--base", "main"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("layer_violation:lib->api"), "{out}");
+    // A revision named for one member must exist there; one for all may be missing.
+    let (code, _, err) = cartograph(&["check", &root, "--data-dir", &d, "--base", "api=nope"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("member api: nope"), "{err}");
+    let (code, out, err) = cartograph(&[
+        "diff",
+        "main,lib=HEAD",
+        "-C",
+        &root,
+        "--data-dir",
+        &d,
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    let base = v["base"].as_str().unwrap_or_default();
+    assert!(base.starts_with("lib: HEAD ("), "{v}");
+    assert!(base.contains(", api: main ("), "{v}");
+}

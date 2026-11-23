@@ -139,7 +139,8 @@ pub struct FindingsArgs {
 pub struct CheckArgs {
     /// A git revision (branch, tag, commit, `HEAD~3`): then only violations the working tree
     /// introduces relative to it fail; the rest are listed as existing. Omitted, null or
-    /// blank = check every rule on the working tree.
+    /// blank = check every rule on the working tree. In a workspace each member resolves it
+    /// in its own repository; `api=feat,lib=main` gives members their own.
     #[serde(default)]
     pub base: Option<String>,
 }
@@ -148,7 +149,8 @@ pub struct CheckArgs {
 pub struct DiffArgs {
     /// A git revision (branch, tag, commit, `HEAD~3`). Omitted, null or blank = the
     /// merge-base of HEAD with the default branch (on that branch itself: HEAD, i.e. the
-    /// uncommitted changes).
+    /// uncommitted changes). In a workspace each member resolves it in its own repository;
+    /// `api=feat,lib=main` gives members their own.
     #[serde(default)]
     pub base: Option<String>,
 }

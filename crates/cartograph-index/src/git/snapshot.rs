@@ -35,6 +35,13 @@
 //!   (`core.autocrlf`, `eol`, `ident`, encodings; external drivers are never run), so a
 //!   file unchanged since the base has the bytes, and hash, of the working tree's copy and
 //!   comes from the extraction cache.
+//!
+//! A workspace ([`workspace_snapshot`]) has one base per member, each in the member's own
+//! repository: the same revision for all (each resolves it, the default being each one's
+//! own merge-base with its default branch), or one per member (`api=feat-x`). A member
+//! without git or without that revision takes its working tree, and the label says so.
+//! The trees go under `<data dir>/.cartograph-base/t<pid>/<member>/`; the cache key holds
+//! every member's commit.
 
 use crate::{IndexError, IndexOptions, Source, walk};
 use cartograph_core::Graph;
@@ -69,11 +76,39 @@ pub struct Revision {
     /// `rev` is (a prefix of) the commit id, not a ref name that happens to look like one.
     #[serde(skip)]
     pub by_id: bool,
+    /// In a workspace, the base of each member (`rev` and `commit` then stand for all).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberBase>,
+}
+
+/// The base of one workspace member: a revision of its repository, or its working tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MemberBase {
+    pub member: String,
+    /// `None`: the member's working tree is its base (see `note`).
+    pub revision: Option<Revision>,
+    /// Why the working tree is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl MemberBase {
+    fn label(&self) -> String {
+        match (&self.revision, &self.note) {
+            (Some(r), _) => format!("{}: {}", self.member, r.label()),
+            (None, Some(n)) => format!("{}: working tree ({n})", self.member),
+            (None, None) => format!("{}: working tree", self.member),
+        }
+    }
 }
 
 impl Revision {
     /// `main (1a2b3c4d)`; a commit id alone is shown short.
     pub fn label(&self) -> String {
+        if !self.members.is_empty() {
+            let all: Vec<String> = self.members.iter().map(MemberBase::label).collect();
+            return all.join(", ");
+        }
         let short = &self.commit[..self.commit.len().min(8)];
         if self.by_id {
             short.to_string()
@@ -201,6 +236,7 @@ fn resolve_in(o: &super::scan::Opened, rev: &str) -> Result<Revision, IndexError
         by_id: !is_ref && !rev.is_empty() && commit.starts_with(&rev.to_ascii_lowercase()),
         commit,
         subject,
+        members: Vec::new(),
     })
 }
 
@@ -369,6 +405,239 @@ fn snapshot_of(
         ms = started.elapsed().as_millis() as u64,
         "base snapshot built"
     );
+    Ok(Snapshot {
+        revision,
+        graph: out.graph,
+        cached: false,
+        ms: started.elapsed().as_millis(),
+        files,
+        write_errors,
+        cache_hits: out.timings.cache_hits,
+        cache_misses: out.timings.cache_misses,
+    })
+}
+
+/// A workspace base as written: one revision for every member and per-member overrides,
+/// `main`, `api=feat-x`, `main,api=feat-x` (see [`workspace_snapshot`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BaseSpec {
+    pub all: Option<String>,
+    pub members: Vec<(String, String)>,
+}
+
+impl BaseSpec {
+    /// Parse `spec` for the members `names`: items separated by commas, `member=rev` for one
+    /// member, a bare revision for every other one (at most one).
+    pub fn parse(spec: &str, names: &[&str]) -> Result<BaseSpec, IndexError> {
+        let mut out = BaseSpec::default();
+        for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match item.split_once('=') {
+                Some((m, rev)) if names.contains(&m.trim()) => {
+                    let (m, rev) = (m.trim(), rev.trim());
+                    if rev.is_empty() {
+                        return Err(IndexError::Git(format!("base {item:?}: no revision")));
+                    }
+                    if out.members.iter().any(|(x, _)| x == m) {
+                        return Err(IndexError::Git(format!("base: member {m} given twice")));
+                    }
+                    out.members.push((m.to_string(), rev.to_string()));
+                }
+                Some((m, _)) => {
+                    return Err(IndexError::Git(format!(
+                        "base {item:?}: {m:?} is not a member (members: {})",
+                        names.join(", ")
+                    )));
+                }
+                None if out.all.is_some() => {
+                    return Err(IndexError::Git(format!(
+                        "base {spec:?}: more than one revision for every member"
+                    )));
+                }
+                None => out.all = Some(item.to_string()),
+            }
+        }
+        if out.all.is_none() && out.members.is_empty() {
+            return Err(IndexError::Git("the base revision is empty".into()));
+        }
+        Ok(out)
+    }
+
+    fn of(&self, member: &str) -> Option<(&str, bool)> {
+        self.members
+            .iter()
+            .find(|(m, _)| m == member)
+            .map(|(_, r)| (r.as_str(), true))
+            .or_else(|| self.all.as_deref().map(|r| (r, false)))
+    }
+}
+
+/// The base of each member of `ws` (see the module docs). `spec` `None` = each member's
+/// default base. A revision named for that member alone must resolve; one given for every
+/// member may be missing from some (they take their working tree).
+pub fn workspace_bases(
+    ws: &cartograph_core::Workspace,
+    spec: Option<&BaseSpec>,
+) -> Result<Vec<MemberBase>, IndexError> {
+    let mut out = Vec::new();
+    for m in &ws.members {
+        let base = |revision, note: Option<String>| MemberBase {
+            member: m.name.clone(),
+            revision,
+            note,
+        };
+        let opened = match super::scan::open(&m.root) {
+            Ok(super::scan::Found::Repo(o)) => *o,
+            Ok(super::scan::Found::NoGit) => {
+                out.push(base(None, Some("no git repository".into())));
+                continue;
+            }
+            Err(e) => {
+                out.push(base(None, Some(format!("git: {e}"))));
+                continue;
+            }
+        };
+        let wanted = spec.and_then(|s| s.of(&m.name));
+        let resolved = match wanted {
+            Some((rev, _)) => resolve_in(&opened, rev),
+            None => default_base(&m.root),
+        };
+        match (resolved, wanted) {
+            (Ok(r), _) => out.push(base(Some(r), None)),
+            (Err(e), Some((rev, true))) => {
+                return Err(IndexError::Git(format!("member {}: {rev}: {e}", m.name)));
+            }
+            (Err(e), _) => out.push(base(None, Some(e.to_string()))),
+        }
+    }
+    Ok(out)
+}
+
+/// The graph of a workspace's base: each member's base ([`workspace_bases`]) under the
+/// member's name, built as one graph (imports across members resolve as in the working
+/// tree). Cached like [`snapshot`] when every member has a revision.
+pub fn workspace_snapshot(
+    ws: &cartograph_core::Workspace,
+    spec: Option<&BaseSpec>,
+    opts: &IndexOptions,
+    cache: Option<&walk::ExtractCache>,
+) -> Result<Snapshot, IndexError> {
+    let started = Instant::now();
+    let root = &ws.dir;
+    let bases = workspace_bases(ws, spec)?;
+    let data_dir = crate::data_dir(root, opts.data_dir.as_deref());
+    let dir = data_dir.join(SNAPSHOT_DIR);
+    std::fs::create_dir_all(&dir).map_err(|source| IndexError::Io {
+        path: dir.clone(),
+        source,
+    })?;
+    let parts: Vec<String> = bases
+        .iter()
+        .map(|b| match &b.revision {
+            Some(r) => format!("{}={}", b.member, r.commit),
+            None => format!("{}=worktree", b.member),
+        })
+        .collect();
+    let key = format!(
+        "{SNAPSHOT_VERSION}|workspace|{}|{}|{}|{}",
+        env!("CARGO_PKG_VERSION"),
+        crate::imports::extractor_version(),
+        opts.max_file_bytes,
+        parts.join(",")
+    );
+    let id = blake3::hash(key.as_bytes()).to_hex().to_string();
+    let revision = Revision {
+        rev: "workspace".to_string(),
+        commit: id.clone(),
+        subject: String::new(),
+        by_id: false,
+        members: bases.clone(),
+    };
+    // A working tree changes under the snapshot: only all-revision bases are cached.
+    let cacheable = bases.iter().all(|b| b.revision.is_some());
+    let file = dir.join(format!("{id}.json"));
+    if cacheable && let Some(graph) = load_cached(&file, &key) {
+        touch(&file);
+        return Ok(Snapshot {
+            revision,
+            graph,
+            cached: true,
+            ms: started.elapsed().as_millis(),
+            files: 0,
+            write_errors: Vec::new(),
+            cache_hits: 0,
+            cache_misses: 0,
+        });
+    }
+    let tmp = dir.join(format!("t{}", unique()));
+    let result = (|| {
+        let mut files = 0;
+        let mut errors = Vec::new();
+        let mut capped = Vec::new();
+        let mut attributes = Vec::new();
+        let mut trees: Vec<(PathBuf, &cartograph_core::Member)> = Vec::new();
+        for (b, m) in bases.iter().zip(&ws.members) {
+            let Some(r) = &b.revision else {
+                trees.push((m.root.clone(), m));
+                continue;
+            };
+            let o = open(&m.root)?;
+            let dest = tmp.join(&m.name);
+            let w = materialize(&o, &r.commit, &dest, opts.max_file_bytes)?;
+            files += w.files;
+            errors.extend(w.errors.into_iter().map(|e| format!("{}/{e}", m.name)));
+            capped.extend(
+                w.capped
+                    .into_iter()
+                    .map(|(p, n)| (format!("{}/{p}", m.name), n)),
+            );
+            attributes.extend(w.attributes);
+            trees.push((dest, m));
+        }
+        let metas: Vec<serde_json::Value> = ws
+            .members
+            .iter()
+            .map(|m| serde_json::json!({ crate::MEMBER_META: { "name": m.name, "path": m.path } }))
+            .collect();
+        let src = Source {
+            mounts: trees
+                .iter()
+                .zip(&metas)
+                .map(|((walk_root, m), meta)| crate::SourceMount {
+                    prefix: &m.name,
+                    walk_root,
+                    resolve_root: &m.root,
+                    meta,
+                })
+                .collect(),
+            name: ws.name.clone(),
+            symbols: false,
+            scip: &[],
+        };
+        let stored;
+        let cache = match cache {
+            Some(c) => c,
+            None => {
+                stored = crate::read_cache(&data_dir);
+                &stored
+            }
+        };
+        let (mut out, delta) = crate::index_inner(&src, opts, Some(cache))?;
+        honest_sizes(&mut out.graph, &capped, opts.max_file_bytes);
+        let read = attributes
+            .into_iter()
+            .chain(delta.disk_reads.iter().filter_map(|p| ws.to_disk(p)));
+        Ok::<_, IndexError>((out, files, errors, inputs(read)))
+    })();
+    if let Err(e) = std::fs::remove_dir_all(&tmp)
+        && tmp.exists()
+    {
+        tracing::warn!(path = %tmp.display(), error = %e, "temporary base tree not removed");
+    }
+    let (out, files, write_errors, inputs) = result?;
+    if cacheable {
+        store_cached(&dir, &file, &key, &revision, &inputs, &out.graph);
+        prune(&dir, KEEP);
+    }
     Ok(Snapshot {
         revision,
         graph: out.graph,
@@ -849,6 +1118,32 @@ fn lfs_size(data: &[u8]) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_specs() {
+        let names = ["api", "lib"];
+        let p = |s: &str| BaseSpec::parse(s, &names);
+        assert_eq!(
+            p("main").unwrap(),
+            BaseSpec {
+                all: Some("main".into()),
+                members: vec![]
+            }
+        );
+        assert_eq!(
+            p(" main , api=feat/x ").unwrap(),
+            BaseSpec {
+                all: Some("main".into()),
+                members: vec![("api".into(), "feat/x".into())]
+            }
+        );
+        assert_eq!(p("api=a,lib=b").unwrap().of("lib"), Some(("b", true)));
+        assert_eq!(p("main,api=a").unwrap().of("lib"), Some(("main", false)));
+        assert!(p("web=x").unwrap_err().to_string().contains("not a member"));
+        assert!(p("main,dev").is_err());
+        assert!(p("api=").is_err());
+        assert!(p(" , ").is_err());
+    }
 
     #[test]
     fn lfs_pointers_are_recognised() {
