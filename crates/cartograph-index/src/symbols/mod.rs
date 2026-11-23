@@ -95,6 +95,81 @@ pub struct Code {
     /// HTTP client instances with their base URL (`const api = axios.create({baseURL})`).
     #[serde(rename = "hi", default, skip_serializing_if = "Vec::is_empty")]
     pub instances: Vec<HttpInstance>,
+    /// String-key sites (TS/JS, Java, Python): enum constants, switch cases,
+    /// registrations, catalog entries and other uses of a key-like string or constant.
+    /// String constants are in [`Code::consts`].
+    #[serde(rename = "ky", default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<RawKey>,
+}
+
+/// What a string-key site is (see [`RawKey`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum KeyForm {
+    /// An enum constant (Java, Python): the key is its string argument or value, else its
+    /// name.
+    #[serde(rename = "e")]
+    Enum,
+    /// A `case` label of a switch (or a Python `match`).
+    #[serde(rename = "c")]
+    Case,
+    /// A call that binds the key to code: `register("K", handler)`,
+    /// `new ActionBinding(K, Ops::run)`, `map.put("K", new Handler())`, a
+    /// registering decorator.
+    #[serde(rename = "r")]
+    Register,
+    /// An annotation that names a class (`@Component("K")`, `@Named("K")`).
+    #[serde(rename = "a")]
+    Annotation,
+    /// An entry of a catalog: an element of an array of strings or of objects (by their
+    /// `name`, `id`, `key`…), a key of an object or dictionary keyed by strings, an
+    /// element of `List.of`/`Set.of`, a key of `Map.of`/`put`.
+    #[serde(rename = "l")]
+    Entry,
+    /// Any other key-like string literal or constant reference.
+    #[serde(rename = "u")]
+    Use,
+    /// A key-like word of a comment that is written as a key (`READ-FILE`, `users:get`,
+    /// `READ_FILE`): the file knows the key, even where no code has it.
+    #[serde(rename = "m")]
+    Comment,
+}
+
+/// A string-key site found in a file, before constants are read (matched after
+/// resolution, `symbols::resolve::keys`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawKey {
+    #[serde(rename = "f")]
+    pub form: KeyForm,
+    /// The key as written: a literal, or a constant ([`Part::Ref`](strexpr::Part::Ref)
+    /// `Steps.OPEN`, `READ_FILE`).
+    #[serde(rename = "v")]
+    pub value: StrExpr,
+    #[serde(rename = "l")]
+    pub line: u32,
+    /// What holds it, for people and for grouping: the enum (`Action`), the switch
+    /// (`switch in Runner.run`), the registering class and callee
+    /// (`FileActionBindings: new ActionBinding`), the catalog's declaration and path
+    /// (`ACTION_CATEGORIES[].actions[].name`), the annotation (`@Component`).
+    #[serde(rename = "c", default, skip_serializing_if = "String::is_empty")]
+    pub container: String,
+    /// First line of the container (0: the container spans files, as an annotation's).
+    #[serde(rename = "k", default, skip_serializing_if = "is_zero_u32")]
+    pub container_line: u32,
+    /// An enum constant's name (`Action.READ_FILE`).
+    #[serde(rename = "n", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The lines of the code a case runs (or a registered lambda), whose calls are what
+    /// the key runs.
+    #[serde(rename = "b", default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<(u32, u32)>,
+    /// What a registration or annotation binds the key to (`Ops::run`, `Foo.class`, the
+    /// annotated class), resolved like calls.
+    #[serde(rename = "h", default, skip_serializing_if = "Vec::is_empty")]
+    pub handlers: Vec<Call>,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
 }
 
 /// How an HTTP call gives its method.
@@ -629,8 +704,9 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// mounts and instances, [`Call::opts`], call arguments of Java and Python, parameters of
 /// the definition around (locals read through); 24: [`Call::argc`], options of a local
 /// object, `${base}/${path}` wrappers, Flask variables, `String.format` placeholders, the
-/// parameters of an object's functions inside a callback.
-pub const REVISION: u32 = 24;
+/// parameters of an object's functions inside a callback; 25: string-key sites
+/// ([`Code::keys`]).
+pub const REVISION: u32 = 25;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

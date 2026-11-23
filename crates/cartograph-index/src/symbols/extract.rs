@@ -7,6 +7,7 @@
 
 mod bridge;
 mod http;
+mod keys;
 
 use super::strexpr::{Part, looks_constant};
 use super::{
@@ -738,6 +739,7 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
     // Bridges: string constants, Electron IPC sites, exposures and world uses.
     if matches!(lang, Lang::Js | Lang::Java | Lang::Python) {
         code.consts = bridge::consts(lang, tree.root_node(), src);
+        code.keys = keys::keys(lang, tree.root_node(), src);
     }
     if lang == Lang::Js {
         code.ipc = bridge::ipc_sites(&call_list, src);

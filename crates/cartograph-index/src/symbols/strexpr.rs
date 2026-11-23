@@ -112,6 +112,23 @@ pub fn looks_constant(r: &str) -> bool {
         && !last.chars().any(|c| c.is_ascii_lowercase())
 }
 
+/// Whether a string is key-like for a string key (see `symbols::extract::keys`): 2 to 64
+/// characters, no spaces, quotes, brackets or format holes, not a path (`/a`, `./a`) nor a
+/// URL, with a letter.
+pub fn key_like(s: &str) -> bool {
+    let n = s.chars().count();
+    if !(2..=64).contains(&n) || s.contains("://") {
+        return false;
+    }
+    let first = s.chars().next().unwrap_or(' ');
+    if !(first.is_alphanumeric() || first == '_' || first == '@') {
+        return false;
+    }
+    s.chars().any(|c| c.is_alphabetic())
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/' | '@' | '+'))
+}
+
 fn short(t: &str) -> String {
     let t: String = t.split_whitespace().collect::<Vec<_>>().join(" ");
     if t.chars().count() > HOLE_TEXT {

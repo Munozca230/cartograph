@@ -40,10 +40,10 @@ pub const DYNAMIC: &str = "dynamic";
 
 /// The value of a string expression once constants are read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Val {
+pub(super) struct Val {
     /// The text, `*` for each unknown part; empty when the start is unknown.
-    key: String,
-    confidence: Confidence,
+    pub(super) key: String,
+    pub(super) confidence: Confidence,
 }
 
 impl Val {
@@ -54,7 +54,7 @@ impl Val {
         }
     }
 
-    fn known(&self) -> bool {
+    pub(super) fn known(&self) -> bool {
         !self.key.is_empty()
     }
 }
@@ -68,15 +68,36 @@ pub(super) struct Consts<'c, 'a> {
 
 impl<'c, 'a> Consts<'c, 'a> {
     pub(super) fn new(ctx: &'c Ctx<'a>, binds: &'c [Bindings<'a>]) -> Self {
+        Self::build(ctx, binds, false)
+    }
+
+    /// With the enum constants of key sites too (`Action.READ_FILE` reads as its key), for
+    /// string keys: a bridge never takes an enum constant for a channel or a URL.
+    pub(super) fn with_enums(ctx: &'c Ctx<'a>, binds: &'c [Bindings<'a>]) -> Self {
+        Self::build(ctx, binds, true)
+    }
+
+    fn build(ctx: &'c Ctx<'a>, binds: &'c [Bindings<'a>], enums: bool) -> Self {
         let by_file = ctx
             .files
             .iter()
             .map(|f| {
-                f.code
+                let mut m: HashMap<&'a str, &'a StrExpr> = f
+                    .code
                     .consts
                     .iter()
                     .map(|k| (k.name.as_str(), &k.value))
-                    .collect()
+                    .collect();
+                if enums {
+                    for k in &f.code.keys {
+                        if k.form == crate::symbols::KeyForm::Enum
+                            && let Some(n) = &k.name
+                        {
+                            m.entry(n.as_str()).or_insert(&k.value);
+                        }
+                    }
+                }
+                m
             })
             .collect();
         Consts {
@@ -146,7 +167,7 @@ impl<'c, 'a> Consts<'c, 'a> {
     }
 
     /// The value of `e` written in file `fi`.
-    fn eval(&self, fi: usize, e: &StrExpr, depth: u8) -> Val {
+    pub(super) fn eval(&self, fi: usize, e: &StrExpr, depth: u8) -> Val {
         let mut key = String::new();
         let mut confidence = Confidence::Exact;
         for (i, p) in e.0.iter().enumerate() {

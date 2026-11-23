@@ -48,8 +48,17 @@ fn move_id(id: &str) -> String {
     id.to_string()
 }
 
-/// Keys whose string value is a repo-relative path.
-const PATH_KEYS: [&str; 6] = ["path", "file", "dir", "old_path", "src_file", "dst_file"];
+/// Keys whose string value is a repo-relative path. An empty `container_file` (a key
+/// container that spans files) is no path.
+const PATH_KEYS: [&str; 7] = [
+    "path",
+    "file",
+    "dir",
+    "old_path",
+    "src_file",
+    "dst_file",
+    "container_file",
+];
 
 /// Move every repo path and id in `v` under the prefix. `external` marks an External node,
 /// whose path is an `ecosystem:name`, not a repo path.
@@ -58,6 +67,7 @@ fn move_value(v: &mut Value, key: Option<&str>, external: bool) {
         Value::String(s) => {
             if key.is_some_and(|k| TEXT_KEYS.contains(&k)) {
                 // Messages are compared with their paths unmoved (see `unmove_texts`).
+            } else if key == Some("container_file") && s.is_empty() {
             } else if key.is_some_and(|k| PATH_KEYS.contains(&k)) && !external && !s.contains("://")
             {
                 *s = under(s);

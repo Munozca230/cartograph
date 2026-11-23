@@ -54,6 +54,7 @@
 mod bridge;
 mod hier;
 mod http;
+mod keys;
 
 pub use http::HttpServers;
 
@@ -941,6 +942,7 @@ pub fn resolve(
     }
     out.endpoints = found.endpoints;
     out.bridges = found.bridges;
+    out.keys = keys::run(&ctx, &binds, &hier, rust_paths, graph, &out.calls);
     out.normalize();
     out
 }
