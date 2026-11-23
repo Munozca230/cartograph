@@ -19,7 +19,7 @@ and Spring Boot 3 (`jakarta.*`) code index the same way.
 | `@Primary`, `@Qualifier("x")` | on the bean class or the `@Bean` method |
 | Injection points | fields with `@Autowired`, `@Inject` (`javax.inject` / `jakarta.inject`) or `@Resource` (`javax.annotation` / `jakarta.annotation`); the parameters of the constructor Spring calls: the one marked `@Autowired` or `@Inject`, else the only constructor of a bean class (the default since Spring 4.3), else the fields a Lombok `@RequiredArgsConstructor` (final fields without a value) or `@AllArgsConstructor` writes the constructor for; the parameters of `@Autowired` setters and methods and of `@Bean` methods |
 | What an injection point receives | `T`, `List<T>`, `Set<T>`, `Queue<T>`, `Deque<T>`, `Collection<T>`, `Iterable<T>` and their usual implementations, `Map<String, T>` (and `ConcurrentMap`…), `T[]`, `Optional<T>`, `ObjectProvider<T>`, `Provider<T>`; `@Qualifier("x")`, `@Named("x")`, `@Resource`, `@Resource(name = "x")` |
-| Data | `@Document(collection = "x")` / `@Document("x")` (Mongo; without a name, the class name decapitalized), `@Entity` / `@Table(name = "x")` (JPA), Spring Data's own `@Table("x")` (JDBC, Cassandra; a table without a name takes the class name in snake case, in lower case for Cassandra); Spring Data repositories (`extends MongoRepository<E, Id>`, `JpaRepository`, `CrudRepository`…) and any call on one, whose interface is a bean; `getCollection(NAME[, E.class])` with a literal or a constant, in a file that imports the Mongo driver or Spring Data Mongo, `mongoTemplate.find(q, E.class)` and the other `MongoTemplate` / `MongoOperations` calls that name an entity class or a collection, `entityManager.find(E.class, id)` |
+| Data | `@Document(collection = "x")` / `@Document("x")` (Mongo; without a name, the class name decapitalized), `@Entity` / `@Table(name = "x")` (JPA), Spring Data's own `@Table("x")` (JDBC, Cassandra; a table without a name takes the class name in snake case, in lower case for Cassandra); Spring Data repositories (`extends MongoRepository<E, Id>`, `JpaRepository`, `CassandraRepository`, `R2dbcRepository`, `CrudRepository`…) and any call on one, whose interface is a bean; `getCollection(NAME[, E.class])` with a literal or a constant, in a file that imports the Mongo driver or Spring Data Mongo, `mongoTemplate.find(q, E.class)` and the other `MongoTemplate` / `MongoOperations` calls that name an entity class or a collection, `entityManager.find(E.class, id)` |
 
 `@PostConstruct` (`javax.annotation` or `jakarta.annotation`) injects nothing: such a method
 is read like any other, so its calls on injected fields resolve.
@@ -59,13 +59,14 @@ lambda or loop over an injected list (`rules.stream().flatMap(r -> r.discounts()
   bean of the type, or a `@Bean` method that returns the interface) or whose receiver is
   not what Spring injects (another parameter, a local variable). The receiver is followed
   from a constructor or setter parameter into the field it is assigned to
-  (`this.x = x`, `requireNonNull(x)`, `List.copyOf(x)`, `new ArrayList<>(x)`), and from a
+  (`this.x = x`, `requireNonNull(x)`, `List.copyOf(x)`, `new ArrayList<>(x)`; not when the parameter or the field is given another value), and from a
   collection into the loops and lambdas over it.
 - `path` to a client that calls out over HTTP or IPC (see [mcp.md](mcp.md#slices)): past
   the controller, a call to an interface method goes on to the bean Spring injects there,
   down to the method that reads or writes, shown as `→ collection orders (Mongo, via
   Order)`.
-- Flows (web map): a call to an interface method continues to the beans that implement it.
+- Flows (web map): a call to an interface method continues to the beans that implement it,
+  and one to a class's method to the beans below it that override it (not `super.m()`).
 
 ## What it does not read
 
