@@ -279,6 +279,11 @@ fn electron_entries() {
         entry("ipc", "legacy:ping").map(|e| e.1),
         Some("sym:src/electron/legacy.js#onPing".into())
     );
+    // The renderer: the module script `index.html` loads.
+    assert_eq!(
+        entry("main", "index.html"),
+        Some(("src/ui/main.ts".into(), "file:src/ui/main.ts".into()))
+    );
     // A channel held in a parameter (`ipcMain.handle(channel, fn)`) names nothing.
     assert!(!s.entries.iter().any(|e| e.name == "channel"));
 }

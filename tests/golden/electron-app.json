@@ -15,7 +15,8 @@
     "src/electron/preload.ts:38 (top level) -> sym:src/electron/preload.ts#makeLocal [exact]",
     "src/electron/updater.ts:6 sym:src/electron/updater.ts#Updater.register -> sym:src/electron/handlers.ts#checkForUpdates [resolved]",
     "src/ui/app.ts:4 sym:src/ui/app.ts#boot -> sym:src/electron/api.ts#api.stop [resolved]",
-    "src/ui/app.ts:5 sym:src/ui/app.ts#boot -> sym:src/electron/api.ts#default.run [resolved]"
+    "src/ui/app.ts:5 sym:src/ui/app.ts#boot -> sym:src/electron/api.ts#default.run [resolved]",
+    "src/ui/main.ts:3 (top level) -> sym:src/ui/app.ts#boot [resolved]"
   ],
   "entries": [
     "ipc \"legacy:ping\" src/electron/legacy.js:14 -> sym:src/electron/legacy.js#onPing",
@@ -24,7 +25,8 @@
     "ipc \"doc:save\" src/electron/main.ts:10 -> sym:src/electron/handlers.ts#saveDoc",
     "ipc \"app:reload\" src/electron/main.ts:11 -> file:src/electron/main.ts",
     "ipc \"CHANNELS.UPDATE_CHECK\" src/electron/main.ts:12 -> file:src/electron/main.ts",
-    "ipc \"update:now\" src/electron/updater.ts:6 -> sym:src/electron/updater.ts#Updater.register"
+    "ipc \"update:now\" src/electron/updater.ts:6 -> sym:src/electron/updater.ts#Updater.register",
+    "main \"index.html\" src/ui/main.ts:0 -> file:src/ui/main.ts"
   ],
   "stats": [
     "src/electron/api.ts: exact 2, resolved 2, heuristic 0, ambiguous 0, unresolved 0",
@@ -34,7 +36,8 @@
     "src/electron/main.ts: exact 1, resolved 1, heuristic 0, ambiguous 0, unresolved 8",
     "src/electron/preload.ts: exact 1, resolved 4, heuristic 0, ambiguous 0, unresolved 8",
     "src/electron/updater.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 1",
-    "src/ui/app.ts: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 0"
+    "src/ui/app.ts: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 0",
+    "src/ui/main.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 0"
   ],
   "supers": [],
   "symbols": [

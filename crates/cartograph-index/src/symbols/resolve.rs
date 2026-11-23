@@ -1556,6 +1556,86 @@ fn npm_main_entries(graph: &Graph) -> Vec<EntryPoint> {
     out
 }
 
+/// Extensions of a script an HTML page loads that make it the app's code (with
+/// `type="module"`, any script counts).
+const PAGE_SCRIPT_EXTS: &[&str] = &[".ts", ".tsx", ".jsx", ".mts"];
+
+/// Where a browser app starts: the module scripts an `index.html` loads (Vite's
+/// `<script type="module" src="/src/main.tsx">`), as `main` entries named by the page, on
+/// the script's file. `src` is relative to the page's folder (a leading `/` too: the folder
+/// of the page is the dev server's root). `pages` holds `(path, text)` of the pages; a
+/// script that is not an indexed file is left out.
+pub fn page_entries(pages: &[(&str, &str)], is_file: impl Fn(&str) -> bool) -> Vec<EntryPoint> {
+    let mut out = Vec::new();
+    for (page, text) in pages {
+        let dir = dir_of(page);
+        let lower = text.to_ascii_lowercase();
+        let mut at = 0;
+        while let Some(i) = lower[at..].find("<script") {
+            let start = at + i;
+            let end = lower[start..].find('>').map_or(lower.len(), |e| start + e);
+            at = end;
+            let tag = &text[start..end];
+            let tag_lower = &lower[start..end];
+            let module =
+                tag_lower.contains("type=\"module\"") || tag_lower.contains("type='module'");
+            let Some(src) = attr(tag, tag_lower, "src") else {
+                continue;
+            };
+            let src = src.split(['?', '#']).next().unwrap_or("");
+            if src.contains("://") || src.starts_with("//") || src.is_empty() {
+                continue;
+            }
+            if !module && !PAGE_SCRIPT_EXTS.iter().any(|e| src.ends_with(e)) {
+                continue;
+            }
+            let rel = src.trim_start_matches('/');
+            let path = if dir.is_empty() {
+                rel.to_string()
+            } else {
+                format!("{dir}/{rel}")
+            };
+            if !is_file(&path) {
+                continue;
+            }
+            out.push(EntryPoint {
+                target: Some(format!("file:{path}")),
+                file: path,
+                line: 0,
+                kind: EntryKind::Main,
+                name: (*page).to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// The value of attribute `name` in an HTML tag (quoted with `"` or `'`).
+fn attr<'t>(tag: &'t str, lower: &str, name: &str) -> Option<&'t str> {
+    let mut from = 0;
+    while let Some(i) = lower[from..].find(name) {
+        let k = from + i;
+        from = k + name.len();
+        let before = lower[..k].chars().last();
+        if !before.is_some_and(char::is_whitespace) {
+            continue;
+        }
+        let rest = lower[from..].trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let quote = rest.chars().next()?;
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+        let open = lower.len() - rest.len() + 1;
+        let close = lower[open..].find(quote)? + open;
+        return tag.get(open..close);
+    }
+    None
+}
+
 /// A test file by its path alone (a `test`/`tests`/`__tests__`/`e2e`/`spec` folder, a
 /// `.test.`/`.spec.` name): what a test imports says nothing about who runs a file.
 fn looks_like_test(id: &str) -> bool {

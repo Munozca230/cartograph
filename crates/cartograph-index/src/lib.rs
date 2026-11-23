@@ -510,7 +510,24 @@ fn index_inner(
             .iter()
             .map(|(path, lang, code)| symbols::resolve::FileCode { path, lang, code })
             .collect();
-        symbols::resolve::resolve(&graph, &files, &rust_call_paths)
+        let mut s = symbols::resolve::resolve(&graph, &files, &rust_call_paths);
+        let pages: Vec<(&str, &str)> = configs
+            .iter()
+            .filter(|(p, _)| p.rsplit('/').next() == Some("index.html"))
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        if !pages.is_empty() {
+            let files: HashSet<&str> = graph
+                .nodes_of(NodeKind::File)
+                .map(|n| n.path.as_str())
+                .collect();
+            s.entries
+                .extend(symbols::resolve::page_entries(&pages, |p| {
+                    files.contains(p)
+                }));
+            s.normalize();
+        }
+        s
     };
     let symbols_ms = symbols_started.elapsed().as_millis();
     // N3, pass 2: SCIP definitions and calls over the N2 layer.
