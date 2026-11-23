@@ -6,6 +6,7 @@
 //! `cartograph.toml` (layers, cycles in `no_cycles` scopes, `max_fan_out`): `check` fails on
 //! those and only those.
 
+mod bridges;
 mod chains;
 mod coupling;
 mod cycles;
@@ -276,6 +277,16 @@ pub(crate) fn declares(g: &RepoGraph, a: FileIx, b: FileIx) -> bool {
 
 /// Every finding of the repo, sorted: violations first, then by severity, kind and id.
 pub fn analyze(g: &RepoGraph, cfg: &Config, git: &crate::history::GitTable) -> Vec<Finding> {
+    analyze_with(g, cfg, git, &crate::bridges::BridgeTable::default())
+}
+
+/// [`analyze`], with the findings about bridges.
+pub fn analyze_with(
+    g: &RepoGraph,
+    cfg: &Config,
+    git: &crate::history::GitTable,
+    bridged: &crate::bridges::BridgeTable,
+) -> Vec<Finding> {
     let cx = Ctx::new(g, cfg);
     let mut out = Vec::new();
     let on = |k| cfg.enabled(k);
@@ -308,6 +319,15 @@ pub fn analyze(g: &RepoGraph, cfg: &Config, git: &crate::history::GitTable) -> V
     }
     if on(FindingKind::HiddenCoupling) {
         out.extend(coupling::hidden_coupling(&cx, git));
+    }
+    if on(FindingKind::IpcNoHandler) {
+        out.extend(bridges::ipc_no_handler(&cx, bridged));
+    }
+    if on(FindingKind::IpcUnexposed) {
+        out.extend(bridges::ipc_unexposed(&cx, bridged));
+    }
+    if on(FindingKind::IpcUnusedHandler) {
+        out.extend(bridges::ipc_unused_handler(&cx, bridged));
     }
     // Ids are unique: a repeated one gets `#2`, `#3`…
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
@@ -455,14 +475,15 @@ mod tests {
         assert_eq!(g.bridge(b, a).map(|d| d.weight), Some(2));
         assert!(g.dep(b, a).is_none(), "a bridge is not a Dep");
         assert_eq!(g.fan_in(a), 0);
-        let rules = "[[layers]]
-name = \"ui\"
-paths = [\"ui\"]
+        let rules = r#"
 [[layers]]
-name = \"core\"
-paths = [\"core\"]
-forbid = [\"ui\"]
-";
+name = "ui"
+paths = ["ui"]
+[[layers]]
+name = "core"
+paths = ["core"]
+forbid = ["ui"]
+"#;
         let cfg = Config::parse(rules, "cartograph.toml").unwrap();
         let found = analyze(&g, &cfg, &crate::history::GitTable::default());
         assert!(
@@ -472,11 +493,7 @@ forbid = [\"ui\"]
             "{found:#?}"
         );
         let counted = Config::parse(
-            &format!(
-                "{rules}[rules]
-layers_count_bridges = true
-"
-            ),
+            &format!("{rules}[rules]\nlayers_count_bridges = true\n"),
             "cartograph.toml",
         )
         .unwrap();

@@ -45,6 +45,8 @@ pub struct SymbolTable {
     pub scip: Option<cartograph_core::ScipStats>,
     /// The members of a workspace, to read `api:src/a.ts#f` and member-relative paths.
     pub members: crate::workspace::Members,
+    /// Bridges (IPC, HTTP, packages), an overlay on the calls.
+    pub bridges: crate::bridges::BridgeTable,
 }
 
 impl SymbolTable {
@@ -87,6 +89,7 @@ impl SymbolTable {
             .map(|x| (x.id.clone(), x.line))
             .collect();
         t.scip = s.scip.stats.clone();
+        t.bridges = crate::bridges::BridgeTable::build(s);
         t
     }
 
@@ -1015,6 +1018,37 @@ pub struct CallSiteRow {
     pub via: Option<String>,
 }
 
+/// A caller over a bridge: a site in another process or repository that reaches the
+/// symbol through an IPC channel, an exposed preload function or an HTTP route.
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgedCaller {
+    pub kind: cartograph_core::BridgeKind,
+    /// `invoke`, `send`, `push`, `expose`.
+    pub subtype: String,
+    /// The channel, route or exposed name (`docs:save`, `window.api.getUser`).
+    pub key: String,
+    pub file: String,
+    pub line: u32,
+    /// The function that makes the call there.
+    pub caller: Option<String>,
+    pub confidence: Confidence,
+    /// One bridge further: who reaches that function (a renderer view calling the exposed
+    /// preload function that invokes the channel).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reached_from: Vec<BridgedSite>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub reached_more: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgedSite {
+    /// The key of that bridge (`window.api.getUser`).
+    pub key: String,
+    pub file: String,
+    pub line: u32,
+    pub caller: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CallerFile {
     pub file: String,
@@ -1059,6 +1093,55 @@ pub struct CallersResult {
     pub through: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub through_decls: Vec<String>,
+    /// Callers over a bridge (IPC, HTTP): see [`BridgedCaller`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bridged: Vec<BridgedCaller>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub bridged_more: usize,
+}
+
+/// The callers of `id` over a bridge, each with who reaches its own caller over one more
+/// bridge; by file and line.
+fn bridged_callers(t: &SymbolTable, id: &str) -> Vec<(BridgedCaller, Vec<BridgedSite>)> {
+    let mut out: Vec<(BridgedCaller, Vec<BridgedSite>)> = t
+        .bridges
+        .into_symbol(id)
+        .map(|b| {
+            let mut reach: Vec<BridgedSite> = b
+                .src
+                .as_deref()
+                .map(|s| {
+                    t.bridges
+                        .into_symbol(s)
+                        .filter(|x| x.src_file != b.dst_file)
+                        .map(|x| BridgedSite {
+                            key: x.key.clone(),
+                            file: x.src_file.clone(),
+                            line: x.src_line,
+                            caller: x.src.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            reach.sort_by(|a, b| (&a.key, &a.file, a.line).cmp(&(&b.key, &b.file, b.line)));
+            (
+                BridgedCaller {
+                    kind: b.kind,
+                    subtype: b.subtype.clone(),
+                    key: b.key.clone(),
+                    file: b.src_file.clone(),
+                    line: b.src_line,
+                    caller: b.src.clone(),
+                    confidence: b.confidence,
+                    reached_from: Vec::new(),
+                    reached_more: 0,
+                },
+                reach,
+            )
+        })
+        .collect();
+    out.sort_by(|a, b| (&a.0.file, a.0.line).cmp(&(&b.0.file, b.0.line)));
+    out
 }
 
 /// A call site of `callers`, with the supertype declaration it went through (`Type.m`).
@@ -1189,6 +1272,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
         }
     }
     let through = calls.iter().filter(|c| c.1.is_some()).count();
+    let bridged = bridged_callers(t, &id);
     let mut by_file: BTreeMap<&str, Vec<Site<'_>>> = BTreeMap::new();
     for c in &calls {
         by_file.entry(c.0.file.as_str()).or_default().push(*c);
@@ -1280,6 +1364,16 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                 scip,
                 through,
                 through_decls: through_decls.clone(),
+                bridged: bridged
+                    .iter()
+                    .take(max_files)
+                    .map(|(b, reach)| BridgedCaller {
+                        reached_from: reach.iter().take(per * 2).cloned().collect(),
+                        reached_more: reach.len().saturating_sub(per * 2),
+                        ..b.clone()
+                    })
+                    .collect(),
+                bridged_more: bridged.len().saturating_sub(max_files),
             }
         },
         render_callers,
@@ -1305,6 +1399,7 @@ fn render_callers(r: &CallersResult) -> String {
         s.push_str(
             " · no resolved call sites (calls that did not resolve are only counted; see `symbols` of the calling folder)\n",
         );
+        render_bridged(r, &mut s);
         return s;
     }
     let mut conf = Vec::new();
@@ -1367,6 +1462,7 @@ fn render_callers(r: &CallersResult) -> String {
             s.push_str(&format!("{indent}  +{} more\n", gr.more));
         }
     }
+    render_bridged(r, &mut s);
     if r.groups_more > 0 {
         let shown_tests = r.groups.iter().filter(|g| g.test).count();
         let more_tests = r.test_files.saturating_sub(shown_tests);
@@ -1382,6 +1478,50 @@ fn render_callers(r: &CallersResult) -> String {
         }
     }
     s
+}
+
+/// The callers over a bridge: `over IPC "docs:save" (invoke) from path:line f()`, then
+/// who reaches that caller.
+fn render_bridged(r: &CallersResult, s: &mut String) {
+    if r.bridged.is_empty() {
+        return;
+    }
+    let who = |c: &Option<String>| {
+        c.as_deref().map_or(String::new(), |x| {
+            split_symbol_id(x).map_or(String::new(), |(_, n)| format!(" {}()", clip(n, 80)))
+        })
+    };
+    for b in &r.bridged {
+        s.push_str(&format!(
+            "over {} \"{}\" ({}) from {}:{}{} [{}]\n",
+            crate::bridges::kind_label(b.kind),
+            clip(&b.key, 120),
+            b.subtype,
+            clip(&b.file, 200),
+            b.line,
+            who(&b.caller),
+            b.confidence
+        ));
+        let mut last_key = "";
+        for x in &b.reached_from {
+            if x.key != last_key {
+                s.push_str(&format!("  reached from {} by:\n", clip(&x.key, 120)));
+                last_key = &x.key;
+            }
+            s.push_str(&format!(
+                "    {}:{}{}\n",
+                clip(&x.file, 200),
+                x.line,
+                who(&x.caller)
+            ));
+        }
+        if b.reached_more > 0 {
+            s.push_str(&format!("    +{} more\n", b.reached_more));
+        }
+    }
+    if r.bridged_more > 0 {
+        s.push_str(&format!("+{} more over bridges\n", r.bridged_more));
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

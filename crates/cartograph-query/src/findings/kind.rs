@@ -27,10 +27,20 @@ pub enum FindingKind {
     DeepChain,
     /// Two files that change together in git but have no dependency path either way.
     HiddenCoupling,
+    /// An IPC channel used (`invoke`, `send`) that no main-process handler serves.
+    IpcNoHandler,
+    /// A renderer calls a function of an exposed world the preload does not expose.
+    IpcUnexposed,
+    /// An IPC handler no `invoke` or `send` of the repo uses.
+    IpcUnusedHandler,
+    /// A member imports another member's code without declaring its package.
+    UndeclaredMemberDependency,
+    /// A member depends on another member's package at another version than it has.
+    VersionSkew,
 }
 
 impl FindingKind {
-    pub const ALL: [FindingKind; 10] = [
+    pub const ALL: [FindingKind; 15] = [
         FindingKind::LayerViolation,
         FindingKind::FanOutLimit,
         FindingKind::Cycle,
@@ -41,6 +51,11 @@ impl FindingKind {
         FindingKind::Orphan,
         FindingKind::DeepChain,
         FindingKind::HiddenCoupling,
+        FindingKind::IpcNoHandler,
+        FindingKind::IpcUnexposed,
+        FindingKind::IpcUnusedHandler,
+        FindingKind::UndeclaredMemberDependency,
+        FindingKind::VersionSkew,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -55,6 +70,11 @@ impl FindingKind {
             FindingKind::Orphan => "orphan",
             FindingKind::DeepChain => "deep_chain",
             FindingKind::HiddenCoupling => "hidden_coupling",
+            FindingKind::IpcNoHandler => "ipc_no_handler",
+            FindingKind::IpcUnexposed => "ipc_unexposed",
+            FindingKind::IpcUnusedHandler => "ipc_unused_handler",
+            FindingKind::UndeclaredMemberDependency => "undeclared_member_dependency",
+            FindingKind::VersionSkew => "version_skew",
         }
     }
 }

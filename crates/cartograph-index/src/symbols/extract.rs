@@ -5,6 +5,8 @@
 //! Definitions nested in a function body (local functions, closures, classes declared in a
 //! function) are left out: they are not reachable by name from elsewhere.
 
+mod bridge;
+
 use super::{
     BindKind, Binding, Call, Code, Def, FieldType, Form, RawEntry, ScriptExtends, Super, TraitImpl,
 };
@@ -701,8 +703,25 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
             if call.form == Form::Member && call.qualifier.is_some() {
                 call.recv_type = recv_types.get(&c.node.id()).cloned();
             }
+            if lang == Lang::Js
+                && let Some(args) = c.args
+            {
+                let (args, handler) = bridge::call_args(lang, args, src);
+                call.args = args;
+                call.handler = handler.map(Box::new);
+            }
             code.calls.push(call);
         }
+    }
+    // Bridges: string constants, Electron IPC sites, exposures and world uses.
+    if matches!(lang, Lang::Js | Lang::Java | Lang::Python) {
+        code.consts = bridge::consts(lang, tree.root_node(), src);
+    }
+    if lang == Lang::Js {
+        code.ipc = bridge::ipc_sites(&call_list, src);
+        let defs = code_defs_index(&code);
+        code.exposes = bridge::exposures(&call_list, tree.root_node(), src, &defs);
+        code.worlds = bridge::world_uses(&call_list, tree.root_node(), src);
     }
     // `exposeInMainWorld("api", deskApi)`: the members of the module-level object `deskApi`
     // are reachable from another context, so they count as exported.
@@ -1377,6 +1396,8 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         scope,
         field,
         recv_type: None,
+        args: Vec::new(),
+        handler: None,
     })
 }
 
@@ -2385,6 +2406,8 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             scope: Vec::new(),
             field: None,
             recv_type: None,
+            args: Vec::new(),
+            handler: None,
         }),
         "member_expression"
         | "selector_expression"
@@ -2424,6 +2447,8 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 scope: Vec::new(),
                 field: obj.and_then(|o| self_field(lang, o, src)),
                 recv_type: None,
+                args: Vec::new(),
+                handler: None,
             })
         }
         "argument" => n.named_child(0).and_then(|c| handler_ref(lang, c, src)),
@@ -2441,6 +2466,8 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 scope,
                 field: None,
                 recv_type: None,
+                args: Vec::new(),
+                handler: None,
             })
         }
         _ => None,

@@ -883,7 +883,7 @@ pub fn resolve(
     }
     out.entries.extend(godot_entries(graph));
     out.entries.extend(npm_main_entries(graph));
-    let found = bridge::run(&ctx, &binds, &g, bridges);
+    let found = bridge::run(&ctx, &binds, &hier, &g, rust_paths, graph, bridges);
     out.endpoints = found.endpoints;
     out.bridges = found.bridges;
     out.normalize();

@@ -114,6 +114,13 @@
     ],
     [
       "file:desktop/src/main/ipc.ts",
+      "file:desktop/src/preload/index.ts",
+      "bridge",
+      "exact",
+      1
+    ],
+    [
+      "file:desktop/src/main/ipc.ts",
       "file:desktop/src/shared/channels.ts",
       "import",
       "exact",
@@ -149,9 +156,23 @@
     ],
     [
       "file:desktop/src/preload/index.ts",
+      "file:desktop/src/main/ipc.ts",
+      "bridge",
+      "resolved",
+      1
+    ],
+    [
+      "file:desktop/src/preload/index.ts",
       "file:desktop/src/shared/channels.ts",
       "import",
       "exact",
+      1
+    ],
+    [
+      "file:desktop/src/renderer/App.tsx",
+      "file:desktop/src/preload/index.ts",
+      "bridge",
+      "resolved",
       1
     ],
     [

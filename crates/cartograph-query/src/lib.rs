@@ -21,6 +21,7 @@
 )]
 
 pub mod algo;
+pub mod bridges;
 pub mod budget;
 pub mod check;
 pub mod config;
@@ -143,8 +144,9 @@ impl Repo {
 
     /// Every finding, sorted (violations, then severity, kind and id).
     pub fn findings(&self) -> &[Finding] {
-        self.findings
-            .get_or_init(|| findings::analyze(&self.graph, &self.config, &self.git))
+        self.findings.get_or_init(|| {
+            findings::analyze_with(&self.graph, &self.config, &self.git, &self.symbols.bridges)
+        })
     }
 
     /// Resolve an id or path typed by a user or agent.

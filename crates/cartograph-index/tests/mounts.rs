@@ -49,7 +49,7 @@ fn move_id(id: &str) -> String {
 }
 
 /// Keys whose string value is a repo-relative path.
-const PATH_KEYS: [&str; 4] = ["path", "file", "dir", "old_path"];
+const PATH_KEYS: [&str; 6] = ["path", "file", "dir", "old_path", "src_file", "dst_file"];
 
 /// Move every repo path and id in `v` under the prefix. `external` marks an External node,
 /// whose path is an `ecosystem:name`, not a repo path.

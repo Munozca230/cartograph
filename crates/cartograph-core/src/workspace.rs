@@ -416,15 +416,8 @@ paths = ["lib"]
         assert_eq!(w.to_disk("logs/app.log"), None);
         assert_eq!(w.bridges.http, Some(true));
         assert_eq!(w.bridges.ipc, None);
-        let bad = parse(
-            "[[member]]
-name = \"api\"
-path = \"a\"
-[bridges]
-https = true
-",
-        )
-        .unwrap_err();
+        let bad = parse("[[member]]\nname = \"api\"\npath = \"a\"\n[bridges]\nhttps = true\n")
+            .unwrap_err();
         assert_eq!(bad.key.as_deref(), Some("bridges"));
         assert_eq!(bad.line, Some(4));
     }

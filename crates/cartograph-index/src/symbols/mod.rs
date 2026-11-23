@@ -11,6 +11,7 @@
 
 mod extract;
 pub mod resolve;
+pub mod strexpr;
 
 pub use extract::extract;
 
@@ -18,6 +19,7 @@ use crate::grammars::Grammar;
 use cartograph_core::{EntryKind, SymbolKind};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+use strexpr::{ConstDef, StrExpr};
 use tree_sitter::Query;
 
 /// A Rust call's path (`krate::m` of `krate::m::f()`) as `(file, inline-module scope,
@@ -68,6 +70,111 @@ pub struct Code {
     /// quotes kept). The file is the class: its functions have no container.
     #[serde(rename = "g", default, skip_serializing_if = "Option::is_none")]
     pub extends: Option<ScriptExtends>,
+    /// Module-level string constants (TS/JS, Java, Python), for bridge keys written as a
+    /// constant.
+    #[serde(rename = "k", default, skip_serializing_if = "Vec::is_empty")]
+    pub consts: Vec<ConstDef>,
+    /// Electron IPC channel sites (TS/JS).
+    #[serde(rename = "ic", default, skip_serializing_if = "Vec::is_empty")]
+    pub ipc: Vec<IpcSite>,
+    /// Functions an Electron preload exposes to the renderer (`exposeInMainWorld`).
+    #[serde(rename = "ex", default, skip_serializing_if = "Vec::is_empty")]
+    pub exposes: Vec<Exposure>,
+    /// Calls on a world a preload may expose (`window.api.getUser()`).
+    #[serde(rename = "wu", default, skip_serializing_if = "Vec::is_empty")]
+    pub worlds: Vec<WorldUse>,
+}
+
+/// What an Electron IPC call does with its channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IpcOp {
+    /// `ipcMain.handle` / `handleOnce`: serves `invoke`.
+    #[serde(rename = "h")]
+    Handle,
+    /// `ipcMain.on` / `once`: serves `send`.
+    #[serde(rename = "o")]
+    On,
+    /// `ipcRenderer.invoke`.
+    #[serde(rename = "i")]
+    Invoke,
+    /// `ipcRenderer.send`.
+    #[serde(rename = "s")]
+    Send,
+    /// `ipcRenderer.sendSync`.
+    #[serde(rename = "y")]
+    SendSync,
+    /// `ipcRenderer.on` / `once`: listens to what the main process pushes.
+    #[serde(rename = "l")]
+    Listen,
+    /// `webContents.send`: the main process pushes to a renderer.
+    #[serde(rename = "p")]
+    Push,
+}
+
+impl IpcOp {
+    /// It serves a channel (else it uses one).
+    pub fn provides(self) -> bool {
+        matches!(self, IpcOp::Handle | IpcOp::On | IpcOp::Listen)
+    }
+
+    /// The method as written, for labels.
+    pub fn label(self) -> &'static str {
+        match self {
+            IpcOp::Handle => "ipcMain.handle",
+            IpcOp::On => "ipcMain.on",
+            IpcOp::Invoke => "ipcRenderer.invoke",
+            IpcOp::Send => "ipcRenderer.send",
+            IpcOp::SendSync => "ipcRenderer.sendSync",
+            IpcOp::Listen => "ipcRenderer.on",
+            IpcOp::Push => "webContents.send",
+        }
+    }
+}
+
+/// An Electron IPC call on a channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IpcSite {
+    #[serde(rename = "l")]
+    pub line: u32,
+    #[serde(rename = "o")]
+    pub op: IpcOp,
+    #[serde(rename = "c")]
+    pub channel: StrExpr,
+    /// A handler or listener passed by reference (`getUser`, `this.onSave.bind(this)`);
+    /// `None` for one written inline (the function around the call runs it).
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub handler: Option<Call>,
+}
+
+/// A function a preload exposes: `world.path` (`api.getUser`, `api.updater.check`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Exposure {
+    #[serde(rename = "l")]
+    pub line: u32,
+    #[serde(rename = "w")]
+    pub world: String,
+    #[serde(rename = "p")]
+    pub path: String,
+    /// The definition of the file that runs it (qualified name), when there is one.
+    #[serde(rename = "d", default, skip_serializing_if = "Option::is_none")]
+    pub def: Option<String>,
+}
+
+/// A renderer call on a world: `window.world.path(…)`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldUse {
+    #[serde(rename = "l")]
+    pub line: u32,
+    #[serde(rename = "w")]
+    pub world: String,
+    #[serde(rename = "p")]
+    pub path: String,
+    /// Reached through a local alias (`const api = window.api`).
+    #[serde(rename = "a", default, skip_serializing_if = "std::ops::Not::not")]
+    pub alias: bool,
+    /// The string-like arguments (see [`Call::args`]).
+    #[serde(rename = "g", default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<Option<StrExpr>>,
 }
 
 /// A supertype of a class, struct, interface or trait, as written in its definition (generic
@@ -236,6 +343,15 @@ pub struct Call {
     /// lambda parameter) or not at all: the other rules decide.
     #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
     pub recv_type: Option<String>,
+    /// TS/JS: the string-like arguments among the first ones (literals, templates,
+    /// constant-looking names), `None` for the others; empty when none is. A bridge reads
+    /// them when the called function passes one on as a channel or URL (a wrapper).
+    #[serde(rename = "a", default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<Option<StrExpr>>,
+    /// With [`Call::args`], the last argument when it is a function reference (a handler
+    /// handed to a wrapper).
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub handler: Option<Box<Call>>,
 }
 
 /// What an import binds.
@@ -358,8 +474,9 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// `exposeInMainWorld("api", {…})`) as `x.prop`; 17: Electron `ipcMain.handle` / `on`
 /// entries ([`cartograph_core::EntryKind::Ipc`]); 18: [`Call::recv_type`] (Java receivers
 /// typed by their declaration); 19: a receiver's declaration counts only in its block, and
-/// an inherited field may hide an outer one.
-pub const REVISION: u32 = 19;
+/// an inherited field may hide an outer one; 20: bridges: string constants
+/// ([`Code::consts`]), IPC sites, exposures and world uses, [`Call::args`].
+pub const REVISION: u32 = 20;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {
