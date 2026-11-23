@@ -3285,6 +3285,24 @@ mod tests {
             .collect()
     }
 
+    /// `await x.f<T>(…)` parses as a call whose function is `await x.f`: still `x.f()`.
+    #[test]
+    fn typescript_calls_awaited_with_type_arguments() {
+        let c = code(
+            "typescript",
+            "class S {
+  async a() {
+    const r = await this.client.post<string>('/y', {});
+    await get<A, B>(u);
+    return r;
+  }
+}
+",
+        );
+        assert_eq!(calls(&c), vec!["Member post L3", "Plain get L4"]);
+        assert_eq!(c.calls[0].field.as_deref(), Some("client"));
+    }
+
     #[test]
     fn python_all_decides_what_a_module_exports() {
         let c = code(

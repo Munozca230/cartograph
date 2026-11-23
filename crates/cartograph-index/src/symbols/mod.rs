@@ -477,8 +477,9 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// an inherited field may hide an outer one; 20: bridges: string constants
 /// ([`Code::consts`]), IPC sites, exposures and world uses, [`Call::args`]; 21: an exposed
 /// property built elsewhere (a call, a member, a bind) is an exposure; `ipc` is a receiver
-/// only as `webContents.ipc`.
-pub const REVISION: u32 = 21;
+/// only as `webContents.ipc`; 22: `await x.f<T>()` is a call of `x.f` (the grammar reads
+/// `await x.f` as the function of a call with type arguments).
+pub const REVISION: u32 = 22;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {
