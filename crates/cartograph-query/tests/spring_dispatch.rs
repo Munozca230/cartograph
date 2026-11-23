@@ -105,7 +105,8 @@ fn by_slice(r: &Repo) -> (BTreeSet<String>, BTreeSet<String>) {
         if let Some(rest) = line.trim().strip_prefix("also reaches: ") {
             others.extend(
                 rest.split(", ")
-                    .filter_map(|x| x.strip_suffix(" (Mongo)"))
+                    .filter_map(|x| x.split_once(" (Mongo"))
+                    .map(|(name, _)| name)
                     .map(str::to_string),
             );
         }
@@ -766,6 +767,19 @@ fn callers_follow_the_same_rules() {
     // A decorator calls another implementation.
     let t = of("a decorator of an interface", "Wire.charge");
     assert!(t.contains("Retry.charge()"), "{t}");
+}
+
+#[test]
+fn data_only_other_beans_reach_is_marked() {
+    let case = CASES
+        .iter()
+        .find(|c| c.name == "a decorator of a class")
+        .unwrap();
+    let t = path::path(&repo(case), "ui/page.ts", "ui/client.ts")
+        .unwrap()
+        .text;
+    assert!(t.contains("Card.charge (Mongo, another bean)"), "{t}");
+    assert!(!t.contains("Wire.charge (Mongo, another bean)"), "{t}");
 }
 
 #[test]

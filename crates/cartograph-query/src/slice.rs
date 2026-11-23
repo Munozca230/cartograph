@@ -470,17 +470,19 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
         writes: *w,
     };
     let mut others: Vec<String> = Vec::new();
-    for (_, _, d, _) in &found {
+    for (at, _, d, _) in &found {
         if d.name == best.name && d.store == best.store {
             continue;
         }
-        let s = format!(
-            "{} ({})",
+        // Those of the beans Spring chooses come first.
+        let of = format!(
+            "{} ({}",
             d.name,
             cartograph_core::spring::store_label(&d.store)
         );
-        if !others.contains(&s) {
-            others.push(s);
+        if !others.iter().any(|o| o.starts_with(&of)) {
+            let mark = if at.0 { ", another bean)" } else { ")" };
+            others.push(of + mark);
         }
     }
     (hops, Some(sink), others)
