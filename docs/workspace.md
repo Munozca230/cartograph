@@ -57,7 +57,7 @@ Member names cannot be id kinds or ecosystems (`file`, `dir`, `sym`, `npm`, `mav
 `go`…), so `name:` never reads as anything else. Two members cannot share or nest folders.
 `[bridges]` turns kinds of bridges on or off (every kind is on in a workspace; see
 [bridges.md](bridges.md)). `[member.http]` says how a member serves HTTP: `hosts` that
-reach it, its `context_path` (else its Spring `server.servlet.context-path`) and whether
+reach it, its `context_path` (else each Spring module's `server.servlet.context-path`) and whether
 it is `public` (see [bridges.md](bridges.md#http)). `produces` is accepted and ignored for
 now.
 

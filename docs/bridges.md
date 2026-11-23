@@ -81,9 +81,10 @@ What is read:
   `app.use("/prefix", router)` (the router imported or not, up to three mounts deep; a
   router mounted twice has its routes under both prefixes); and the HTTP entries of other
   frameworks (Flask, FastAPI, NestJS with `setGlobalPrefix`, Go, axum, ASP.NET) with their
-  literal paths. A member's context path prefixes its routes: `[member.http]
-  context_path`, else its `server.servlet.context-path` in
-  `src/main/resources/application.{properties,yml,yaml}`.
+  literal paths. A context path prefixes routes: `[member.http] context_path` for the
+  whole member, else each Spring module's `server.servlet.context-path` (in that
+  module's `src/main/resources/application.{properties,yml,yaml}`, `${NAME:/default}`
+  read as its default) for the routes of that module.
 - **clients**: `fetch(url, { method })`; axios, got and ky (`axios.get(url)`,
   `axios({ url, method })`, and instances made with `axios.create({ baseURL })`, used in
   the file or imported from another one); RestTemplate (`getForObject`, `postForEntity`,
@@ -105,7 +106,7 @@ What is read:
 
 Matching:
 
-- the URL is cut at `?` and `#`; `{id}`, `{id:re}`, `:id`, `${…}` and unknown parts are
+- the URL is cut at `?` and `#`; `{id}`, `{id:re}`, `:id`, `<int:id>`, `${…}` and unknown parts are
   path variables (`:id?` gives the route with and without it, a last `*` / `**` takes the
   rest); a literal segment beats a variable (`/users/me` before `/users/{id}`); methods are
   equal, or one side takes any; more than three routes tied for a call is `ambiguous`;
