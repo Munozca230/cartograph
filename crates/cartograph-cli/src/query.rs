@@ -70,7 +70,8 @@ pub enum Tool {
     Find {
         #[arg(required = true)]
         query: Vec<String>,
-        /// file, dir, ext or sym.
+        /// file, dir, ext, sym or key (a string key's trace; also given unasked when no
+        /// path holds the query).
         #[arg(long)]
         kind: Option<String>,
     },

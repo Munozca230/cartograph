@@ -14,6 +14,8 @@ pub mod limits {
     pub const DEPS: usize = 1500;
     pub const IMPACT: usize = 1500;
     pub const FIND: usize = 800;
+    /// `find` of a string key: its trace (definitions, runners, catalogs, missing, uses).
+    pub const TRACE: usize = 1500;
     pub const PATH: usize = 800;
     pub const FINDINGS: usize = 1500;
     pub const CHECK: usize = 1000;

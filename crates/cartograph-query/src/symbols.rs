@@ -47,6 +47,8 @@ pub struct SymbolTable {
     pub members: crate::workspace::Members,
     /// Bridges (IPC, HTTP, packages), an overlay on the calls.
     pub bridges: crate::bridges::BridgeTable,
+    /// String keys: where each is defined, run, listed and used.
+    pub keys: crate::keys::KeyTable,
 }
 
 impl SymbolTable {
@@ -90,6 +92,7 @@ impl SymbolTable {
             .collect();
         t.scip = s.scip.stats.clone();
         t.bridges = crate::bridges::BridgeTable::build(s);
+        t.keys = crate::keys::KeyTable::build(s);
         t
     }
 

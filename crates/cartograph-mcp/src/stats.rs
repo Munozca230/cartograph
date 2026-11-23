@@ -316,7 +316,8 @@ pub fn budget_of(tool: &str) -> Option<usize> {
         "explain" => EXPLAIN,
         "deps" => DEPS,
         "impact" => IMPACT,
-        "find" => FIND,
+        // A string key's trace may take up to TRACE; paths and symbols stay within FIND.
+        "find" => TRACE,
         "path" => PATH,
         "findings" => FINDINGS,
         "check" => CHECK,

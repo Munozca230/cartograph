@@ -419,23 +419,24 @@ fn callers_complete_a_partial_name() {
 
 /// `find` of a name no path holds and no symbol has: the letter-by-letter matches come with
 /// a note saying they are not substring matches. Symbols match with case and separators
-/// ignored (`GET-DATE` finds `ACTION_GET_DATE`).
+/// ignored (`READ-FILE` finds `ActionRunner.runReadFile`). A string key gets its trace
+/// instead (`tests/keys.rs`).
 #[test]
 fn find_says_when_hits_are_only_approximate() {
     let r = repo(&[
         (
             "src/actions.ts",
-            "export const ACTION_GET_DATE = \"GET-DATE\";\n",
+            "export class ActionRunner {\n  runReadFile() {}\n}\n",
         ),
         ("scripts/migrate-legacy-data.js", "const a = 1;\n"),
     ]);
-    let a = find::find(&r, "GET-DATE", None).unwrap();
+    let a = find::find(&r, "READ-FILE", None).unwrap();
     assert!(
         a.text.starts_with("no file, folder or library has it"),
         "{}",
         a.text
     );
-    assert!(a.text.contains("ACTION_GET_DATE"), "{}", a.text);
+    assert!(a.text.contains("ActionRunner.runReadFile"), "{}", a.text);
     let a = find::find(&r, "gtlgcy", None).unwrap();
     assert!(
         a.text.starts_with("no exact or substring match; closest"),

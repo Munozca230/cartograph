@@ -44,6 +44,11 @@ offline, and writes nothing inside the analyzed repository unless you let it.
   `callers`, `deps`, `impact`, `path` and the map follow them; channels without a handler,
   calls no route serves, unused routes and undeclared or skewed dependencies are
   findings. See [docs/bridges.md](docs/bridges.md).
+- **String keys and tests to run.** `find` of a string key (an action or step name, a
+  channel, a registry key) traces it across repositories: where it is defined, what runs
+  it, which catalogs list it and where it is missing. `impact` ranks the tests to run by
+  closeness, marks the slow ones and gives the command per build (Maven, Gradle,
+  vitest/jest, pytest, go, cargo). See [docs/mcp.md](docs/mcp.md#string-keys).
 - **Git layer.** Per-file churn, last change, owners, co-change and hotspots, read with
   gix (no `git` binary needed) and updated incrementally.
 - **MCP server.** `cartograph mcp <repo>` is a stdio MCP server for any MCP client or

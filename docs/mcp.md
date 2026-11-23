@@ -24,7 +24,7 @@ the model, *instead of* the text, which reads worse and costs about twice the to
 | `explain` | opening a file to learn its role and neighbours | `node` | 1k |
 | `deps` | grepping import statements | `node`, `dir` out/in/both (out), `depth` 1-3 (1), `level` file/folder (file) | 1.5k |
 | `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder; the tests closest first, slow ones marked, and the command that runs them: see [Tests to run](#tests-to-run)) | `nodes` (list) | 1.5k |
-| `find` | glob/grep for a name | `query`, `kind` file/dir/ext/sym (all but sym; symbols too when no path has it) | 0.8k |
+| `find` | glob/grep for a name, or for a string key across repos | `query`, `kind` file/dir/ext/sym/key (all but sym; symbols too when no path has it; a string key's trace when the query is one and no path has it: see [String keys](#string-keys)) | 0.8k (1.5k for a key) |
 | `path` | tracing why A depends on B by hand | `from`, `to`, `bridges` (true: steps over an IPC channel or an exposed preload function count, and say so) | 0.8k |
 | `symbols` | reading a file for its outline (a line per definition; when that does not fit, the uncalled members of the biggest objects and classes by name, `api (150, pub): save, load, +148 more`, then the other symbols that do not fit) | `node` | 1k |
 | `callers` | grepping a function name before changing it | `symbol` | 1k |
@@ -77,6 +77,55 @@ both.
 The server instructions (sent at initialization) say when to prefer cartograph over grep,
 so a client that defers tool schemas behind a tool search still knows when to reach for
 the tools. Every tool but `annotate` and `open_map` is marked read-only.
+
+### String keys
+
+A string key is a name programs agree on: an action or step name (`READ-FILE`), an IPC
+channel, a registry or map key, a state. `find` with a key the index knows (or with the
+name of a constant that defines one: `READ_FILE`, `Action.READ_FILE`) answers with its
+trace instead of paths, across the members of a workspace:
+
+```
+key "ZIP-DIR" in 2 members (core, ui):
+defined (1):
+  core/src/main/java/com/acme/core/Action.java:15 enum Action.ZIP_DIR
+lists it (catalogs) (2):
+  ui/src/actions/catalog.ts:25 ACTION_CATEGORIES[].actions[].name
+  ui/src/actions/icons.ts:13 ACTION_ICONS
+missing from (holds its siblings, not it; it may be left out on purpose):
+  FileActionBindings: new ActionBinding (server/app/src/main/java/com/acme/server/actions/FileActionBindings.java:8): holds 11 of the 11 other keys of Action (core/src/main/java/com/acme/core/Action.java)
+```
+
+- **defined**: enum constants (Java, Python; the key is the constant's string argument,
+  else its name) and string constants (`static final String`, TS `const` and `as const`
+  objects, string enums, Python module constants), read through imports.
+- **runs it**: `case` labels of a switch (or a Python `match`), each with the first call
+  its body makes (`→ Documents.open`); registrations that bind the key to code
+  (`register("K", handler)`, `new ActionBinding(K, Ops::run)`, `map.put("K", new
+  Handler())`, a registering decorator), with that code; naming annotations
+  (`@Component("K")`).
+- **lists it**: catalogs: arrays of keys, arrays of objects named by `name`, `id`, `key`,
+  `action`, `type`… (a category's items count with the catalog's), objects and
+  dictionaries keyed by strings, `List.of` / `Set.of` / `Map.of`. A registering or listing
+  container needs 3 keys; fewer are uses.
+- **used**: other string literals and constant references (code first, tests last), and
+  the files whose comments name the key. Uses of plain lower-case words (`name`, `value`)
+  are not indexed.
+- **missing from**: only for a key something defines. The keys of its definition are its
+  domain; its siblings are the other keys of a definition, registry or switch of that
+  domain that holds it. A container of the domain (an enum or class of constants never)
+  that lacks the key is named when it holds at least 80% and at least 10 of those siblings
+  and lacks at most 8 of them besides the key. Never one in the file of the siblings, one
+  whose file mentions the key anywhere (comments included), one that leaves out a family
+  of keys sharing a word with it (`*-REMOTE`), one that shares no key with another list
+  holding the key (the steps without an editor are none of the editor registry's), tests
+  and scripts. At most 3, each with its evidence; a key can still be left out on purpose.
+
+Exact keys first. Keys that differ only in case or separators (`READ_FILE`, `readFile`)
+are named apart as lower-confidence matches; when no key is the query as written, the
+closest variant is traced and labelled so. A query that some path holds keeps the path
+answer, with a line saying it is a key too (`kind: "key"` traces it). Key sites (TS/JS,
+Java, Python) are stored with the symbol layer (`key_sites`, schema v13).
 
 ### Tests to run
 
@@ -148,7 +197,7 @@ URL with a one-line description of what it shows.
 |---|---|
 | unknown id | `isError: true`, "did you mean: a, b, c?" from fuzzy matches, or a pointer to `find` |
 | ambiguous symbol name | `isError: true` with the candidate ids |
-| `find` with no path holding the query | the symbols whose name holds it (case and separators ignored: `GET-DATE` finds `ACTION_GET_DATE`) after a line saying so; with none, the letter-by-letter matches after "no exact or substring match; closest …" |
+| `find` with no path holding the query | the symbols whose name holds it (case and separators ignored: `READ-FILE` finds `ACTION_READ_FILE`) after a line saying so; with none, the letter-by-letter matches after "no exact or substring match; closest …" |
 | `callers` of a name no symbol has | the symbols whose name starts with it (else contains it, 3 characters at least): one is answered for, with a first line that says so (no `formatAction`; showing `formatActionCommand`); several are the ambiguous error above; none is the unknown-id error |
 | bad enum value (`dir: "up"`) | `isError: true` with the accepted values |
 | wrong type, missing field | `isError: true`, "failed to deserialize parameters: missing field `node`" |
@@ -529,7 +578,7 @@ The suite is not part of `cargo test` (only the runner is, in
 a finding to fix, and it stays visible instead of being weakened to keep the build green.
 CI runs it in a job that may fail without failing the workflow.
 
-### Results (2026-11-23, 58 cases: 58 pass)
+### Results (2026-11-23, 63 cases: 63 pass)
 
 Every answer is within its budget. Since the first run below, cases were added for dense
 symbol listings, for workspaces (`ws-*` on `tests/fixtures/workspace-basic`: members as
@@ -540,7 +589,11 @@ a path through the preload, what is left unmatched, a class two members declare,
 undeclared member and a version skew, impact over IPC, a member's npm package; over HTTP
 the callers of a Spring route through a fetch wrapper and an axios instance, the HTTP
 findings, a call no route serves in `explain`, and a path from a client to the
-controller).
+controller), and on `tests/fixtures/workspace-keys` for string keys (`find-key-*`: a key
+missing from the registry that holds its siblings, a step name traced by its constant to
+the switch case that runs it, a key every list holds) and for runnable tests
+(`impact-runnable-*`: Maven tests closest first with the slow ones apart, vitest and
+Playwright commands).
 
 The first run (2026-11-21, 34 cases) is kept below for its defects. Two cases on the `inherit-ts` fixture cover inheritance:
 `callers` of a base method lists the calls made through subclasses that inherit it (and

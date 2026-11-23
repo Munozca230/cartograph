@@ -414,6 +414,49 @@ contains = ["npx vitest run src/actions/catalog.test.ts", "npx playwright test e
 
 # ---------------------------------------------------------------- find
 
+# ---------------------------------------------------------------- find: string keys
+
+[[case]]
+id = "find-key-missing-from-registry"
+repo = "keys"
+question = "Where is the action ZIP-DIR defined, who runs it, who lists it, and where is it missing?"
+tool = "find"
+args = { query = "ZIP-DIR" }
+contains = [
+  "core/src/main/java/com/acme/core/Action.java:15 enum Action.ZIP_DIR",
+  "ui/src/actions/catalog.ts",
+  "ui/src/actions/icons.ts",
+  "missing from",
+  "FileActionBindings.java",
+]
+in_order = true
+budget = 1500
+
+[[case]]
+id = "find-key-by-constant-runs-code"
+repo = "keys"
+question = "What runs the step named by Steps.STEP_EXPORT, and does every list of steps have it?"
+tool = "find"
+args = { query = "STEP_EXPORT" }
+contains = [
+  "key \"EXPORT\"",
+  "core/src/main/java/com/acme/core/Steps.java",
+  "case in Runner.run",
+  "Documents.java (Documents.share)",
+  "STEP_TO_KEY (agent/src/steps.ts:3)",
+]
+budget = 1500
+
+[[case]]
+id = "find-key-everywhere-no-missing"
+repo = "keys"
+question = "Where is READ-FILE registered and listed? (it is in every list: nothing is missing)"
+tool = "find"
+args = { query = "READ-FILE" }
+contains = ["FileOps.java (FileOps.read)", "ACTION_CATEGORIES[].actions[].name", "used ("]
+not_contains = ["missing from"]
+budget = 1500
+
 [[case]]
 id = "find-snapshot"
 repo = "self"

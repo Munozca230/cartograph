@@ -84,8 +84,9 @@ pub struct ImpactArgs {
 pub struct FindArgs {
     /// Name or path fragment, e.g. `store`, `api/routes`, `parseConfig`.
     pub query: String,
-    /// `file`, `dir`, `ext` (libraries) or `sym` (functions, classes, methods, types).
-    /// Omitted = folders, files and libraries.
+    /// `file`, `dir`, `ext` (libraries), `sym` (functions, classes, methods, types) or
+    /// `key` (a string key's trace). Omitted = folders, files and libraries, or the trace of
+    /// a string key when no path holds the query.
     #[serde(default)]
     pub kind: Option<String>,
 }
@@ -459,7 +460,10 @@ impl Cartograph {
         description = "Fuzzy search by name or path fragment over folders, files and libraries; \
             with kind=sym over functions, classes, methods and types (with path:line). Use it \
             instead of glob/grep when you know roughly a name but not where it lives. Returns \
-            ids to pass to the other tools.",
+            ids to pass to the other tools. A string key (an action or step name, an IPC \
+            channel, a registry key: `GET-USER`, or its constant `GET_USER`) gets its trace \
+            instead: where it is defined, what runs it, which catalogs list it, where it is \
+            missing, and its uses, across members (kind=key asks for it).",
         annotations(read_only_hint = true)
     )]
     async fn find(&self, Parameters(a): Parameters<FindArgs>) -> CallToolResult {

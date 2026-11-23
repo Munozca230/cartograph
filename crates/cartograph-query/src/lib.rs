@@ -37,6 +37,7 @@ pub mod history;
 pub mod hotspots;
 pub mod impact;
 pub mod infer;
+pub mod keys;
 pub mod kind;
 pub mod list;
 pub mod overview;

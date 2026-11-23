@@ -1,9 +1,12 @@
 //! `find(query, kind?)`: fuzzy search over dir and file paths and external packages, and the
-//! id resolution every other query uses (with "did you mean" suggestions).
+//! id resolution every other query uses (with "did you mean" suggestions). A query that is
+//! a string key the index knows (`READ-FILE`, or the constant `READ_FILE`) gets its trace
+//! instead (see [`crate::keys`]).
 
 use crate::QueryError;
 use crate::budget::{self, Answer, fit, limits};
 use crate::graph::{NodeRef, ROOT, RepoGraph};
+use crate::keys::squash;
 use serde::Serialize;
 
 /// What `find` searches.
@@ -15,6 +18,8 @@ pub enum FindKind {
     Ext,
     /// Symbols: needs the symbol layer (see [`find_symbols`]).
     Sym,
+    /// A string key's trace (see [`crate::keys`]).
+    Key,
 }
 
 impl std::str::FromStr for FindKind {
@@ -25,8 +30,9 @@ impl std::str::FromStr for FindKind {
             "dir" | "dirs" | "folder" | "folders" => Ok(FindKind::Dir),
             "ext" | "external" | "lib" | "libs" => Ok(FindKind::Ext),
             "sym" | "symbol" | "symbols" => Ok(FindKind::Sym),
+            "key" | "keys" => Ok(FindKind::Key),
             other => Err(QueryError::BadArgument(format!(
-                "kind must be file, dir, ext or sym, got {other:?}"
+                "kind must be file, dir, ext, sym or key, got {other:?}"
             ))),
         }
     }
@@ -98,6 +104,8 @@ pub fn find_symbols(repo: &crate::Repo, query: &str) -> Result<Answer<FindResult
                 })
                 .collect(),
             more: hits.len().saturating_sub(limit),
+            trace: None,
+            key_hint: None,
         },
         render,
     ))
@@ -123,6 +131,13 @@ pub struct FindResult {
     pub hits: Vec<Hit>,
     /// Matches left out.
     pub more: usize,
+    /// The query is a string key: where it is defined, run, listed, missing and used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace: Option<crate::keys::Trace>,
+    /// The query is also a string key whose trace `kind: key` gives (said after the
+    /// paths that hold it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_hint: Option<String>,
 }
 
 fn is_subsequence(q: &str, hay: &str) -> bool {
@@ -270,16 +285,8 @@ fn search_hits(g: &RepoGraph, query: &str, kind: Option<FindKind>) -> (Vec<(f64,
     )
 }
 
-/// Lower case, letters and digits only: `GET-DATE`, `get_date` and `getDate` are alike.
-fn squash(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 /// Symbols whose `Class.name` holds the query once case and separators are ignored
-/// (`GET-DATE` → `ACTION_GET_DATE`, `getDate`), most called first. Empty for a query of
+/// (`READ-FILE` → `ACTION_READ_FILE`, `readFile`), most called first. Empty for a query of
 /// fewer than three letters or digits.
 fn loose_symbols(repo: &crate::Repo, query: &str) -> Vec<Hit> {
     let q = squash(query);
@@ -346,6 +353,55 @@ pub fn find(
     }
     let g = &repo.graph;
     let (all, substring) = search_hits(g, query, kind);
+    // A string key the index knows: its trace, unless a path holds the query (then the
+    // paths, and a pointer to the trace).
+    let traced = |a: Answer<crate::keys::Trace>| Answer {
+        text: a.text,
+        data: FindResult {
+            query: query.to_string(),
+            note: None,
+            hits: Vec::new(),
+            more: 0,
+            trace: Some(a.data),
+            key_hint: None,
+        },
+    };
+    let mut key_hint = None;
+    match kind {
+        Some(FindKind::Key) => {
+            return Ok(match crate::keys::answer(repo, query) {
+                Some(a) => traced(a),
+                None => Answer {
+                    text: format!(
+                        "no string key {query:?}: no enum constant, string constant, case, \
+                         registration or catalog has it\n"
+                    ),
+                    data: FindResult {
+                        query: query.to_string(),
+                        note: None,
+                        hits: Vec::new(),
+                        more: 0,
+                        trace: None,
+                        key_hint: None,
+                    },
+                },
+            });
+        }
+        // A key that only differs in case or separators gives way to the symbols that
+        // hold the query the same way (a method `readFile` for `READ-FILE`): they are
+        // listed, and the key named after them.
+        None if !substring => {
+            if crate::keys::is_exact(repo, query) || loose_symbols(repo, query).is_empty() {
+                if let Some(a) = crate::keys::answer(repo, query) {
+                    return Ok(traced(a));
+                }
+            } else {
+                key_hint = crate::keys::hint(repo, query);
+            }
+        }
+        None => key_hint = crate::keys::hint(repo, query),
+        _ => {}
+    }
     let steps = [25, 20, 15, 10, 6, 3];
     // No path holds it: a symbol may (a constant, a function), else say the hits are
     // only letter-by-letter matches.
@@ -364,6 +420,8 @@ pub fn find(
                     ),
                     hits: syms.iter().take(limit).cloned().collect(),
                     more: syms.len().saturating_sub(limit),
+                    trace: None,
+                    key_hint: key_hint.clone(),
                 },
                 render,
             ));
@@ -380,6 +438,8 @@ pub fn find(
             note: note.clone(),
             hits: all.iter().take(limit).map(|&(_, n)| hit(g, n)).collect(),
             more: all.len().saturating_sub(limit),
+            trace: None,
+            key_hint: key_hint.clone(),
         },
         render,
     ))
@@ -399,12 +459,16 @@ fn render(r: &FindResult) -> String {
             FindKind::File => format!("{} LOC", h.size),
             FindKind::Dir => format!("{} files", h.size),
             FindKind::Ext => format!("used by {} files", h.size),
-            FindKind::Sym => format!("←{}", h.size),
+            FindKind::Sym | FindKind::Key => format!("←{}", h.size),
         };
         s.push_str(&format!("{}  {size}\n", budget::clip(&h.label, 140)));
     }
     if r.more > 0 {
         s.push_str(&format!("+{} more\n", r.more));
+    }
+    if let Some(h) = &r.key_hint {
+        s.push_str(h);
+        s.push('\n');
     }
     s
 }
