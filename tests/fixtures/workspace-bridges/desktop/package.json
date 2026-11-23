@@ -1,0 +1,9 @@
+{
+  "name": "@acme/desktop",
+  "version": "1.0.0",
+  "main": "dist/main/main.js",
+  "dependencies": {
+    "@acme/ui-kit": "^1.0.0",
+    "electron": "30.0.0"
+  }
+}

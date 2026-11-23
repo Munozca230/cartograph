@@ -273,14 +273,28 @@ pub fn resolve_all(
     files: &[FileImports<'_>],
     rust_calls: &[RustCallPath],
 ) -> Resolution {
-    let (ts, mut diagnostics) = ts::Resolver::new(ix);
+    resolve_all_with(ix, files, rust_calls, &crate::packages::Packages::default())
+}
+
+/// [`resolve_all`] in a workspace whose members' packages are known: Java imports across
+/// members follow the declared dependencies, TS imports of a member's package reach its
+/// source.
+pub fn resolve_all_with(
+    ix: &Index<'_>,
+    files: &[FileImports<'_>],
+    rust_calls: &[RustCallPath],
+    packages: &crate::packages::Packages,
+) -> Resolution {
+    let (mut ts, mut diagnostics) = ts::Resolver::new(ix);
+    ts.member_packages = packages.active();
     let py = python::Resolver::new(ix);
     let (rs, mut rs_diagnostics) = rust::Resolver::new(ix, files);
     let (cf, mut cf_diagnostics) = cfamily::Resolver::new(ix);
     diagnostics.append(&mut rs_diagnostics);
     diagnostics.append(&mut cf_diagnostics);
     let (go, mut go_diags) = go::Resolver::new(ix);
-    let java = java::Resolver::new(ix, files);
+    let mut java = java::Resolver::new(ix, files);
+    java.eligibility = packages.eligibility();
     let csharp = csharp::Resolver::new(ix, files);
     diagnostics.append(&mut go_diags);
     let gd = godot::Resolver::new(ix, files);

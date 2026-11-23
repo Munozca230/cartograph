@@ -15,6 +15,9 @@
 //! 5. Workspace package of the nearest workspace root → its `exports` (`.` or the subpath),
 //!    `module`, `main`, `src/index.*`, `index.*` → `Resolved`. Two members with the same
 //!    name → `ambiguous`; a member with no matching file → `not_found`.
+//!    5b. In a workspace with package bridges on: a package another member builds,
+//!    declared by the importer's nearest `package.json` → that member's `exports`,
+//!    `module`, `main`, `src/index.*`, `index.*` → `Resolved`.
 //! 6. **Heuristic:** a bare specifier that is not a declared dependency of the nearest
 //!    `package.json` and matches a file relative to that package's dir (or the repo root
 //!    when there is none) → `Import`, `Heuristic`. This is a guess at a bundler alias or
@@ -40,6 +43,9 @@ pub struct Resolver<'i, 'a> {
     configs: HashMap<String, CompilerPaths>,
     packages: BTreeMap<String, PackageJson>,
     workspaces: Workspaces,
+    /// Step 5b: a bare import of a package another workspace member builds, declared by the
+    /// importer's `package.json`, resolves to that member's source.
+    pub member_packages: bool,
 }
 
 impl<'i, 'a> Resolver<'i, 'a> {
@@ -69,6 +75,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
                 configs,
                 packages,
                 workspaces,
+                member_packages: false,
             },
             diagnostics,
         )
@@ -210,6 +217,12 @@ impl<'i, 'a> Resolver<'i, 'a> {
         }
         let nearest = npm::nearest_package(&self.packages, dir);
         let declared = nearest.is_some_and(|p| p.deps.contains(name));
+        if declared
+            && self.member_packages
+            && let Some(outcome) = self.member_package(importer, name, sub, spec, ts_importer)
+        {
+            return outcome;
+        }
         if !declared {
             let base_dir = nearest.map_or("", |p| p.dir.as_str());
             if let Some(p) = join(base_dir, spec).and_then(|b| self.probe(&b, ts_importer)) {
@@ -217,6 +230,41 @@ impl<'i, 'a> Resolver<'i, 'a> {
             }
         }
         Outcome::external(format!("npm:{name}"), Confidence::Resolved)
+    }
+
+    /// Step 5b: `name` built by a `package.json` of another member than the importer's.
+    fn member_package(
+        &self,
+        importer: &str,
+        name: &str,
+        sub: &str,
+        spec: &str,
+        ts_importer: bool,
+    ) -> Option<Outcome> {
+        let me = self.ix.mount_root(importer);
+        let dirs: Vec<&str> = self
+            .packages
+            .values()
+            .filter(|p| p.name.as_deref() == Some(name))
+            .map(|p| p.dir.as_str())
+            .filter(|d| {
+                let m = self.ix.mount_root(d);
+                !m.is_empty() && m != me
+            })
+            .collect();
+        match dirs.as_slice() {
+            [] => None,
+            [dir] => Some(match self.package_file(dir, sub, ts_importer) {
+                Some(p) => Outcome::file(p, Confidence::Resolved),
+                None => Outcome::not_found(format!(
+                    "member package {name} ({dir}) has no file for {spec:?}"
+                )),
+            }),
+            many => Some(Outcome::ambiguous(format!(
+                "member package {name} is built in {}",
+                many.join(", ")
+            ))),
+        }
     }
 
     /// File for `sub` (`""` = the package entry) inside the workspace package at `dir`.

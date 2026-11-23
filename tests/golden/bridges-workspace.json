@@ -1,0 +1,40 @@
+{
+  "bridges": [
+    "ipc expose \"window.api.saveDoc\" desktop/src/renderer/App.tsx:4 sym:desktop/src/renderer/App.tsx#App -> desktop/src/preload/index.ts:13 sym:desktop/src/preload/index.ts#api.saveDoc [exact]",
+    "ipc expose \"window.api.getUser\" desktop/src/renderer/App.tsx:6 sym:desktop/src/renderer/App.tsx#App -> desktop/src/preload/index.ts:14 sym:desktop/src/preload/index.ts#getUser [resolved]",
+    "ipc expose \"window.api.onProgress\" desktop/src/renderer/App.tsx:9 sym:desktop/src/renderer/App.tsx#App -> desktop/src/preload/index.ts:15 sym:desktop/src/preload/index.ts#api.onProgress [exact]",
+    "ipc invoke \"users:get\" desktop/src/preload/index.ts:5 sym:desktop/src/preload/index.ts#getUser -> desktop/src/main/main.ts:13 sym:desktop/src/main/users.ts#getUser [resolved]",
+    "ipc invoke \"docs:save\" desktop/src/preload/index.ts:13 sym:desktop/src/preload/index.ts#api.saveDoc -> desktop/src/main/docs.ts:6 sym:desktop/src/main/docs.ts#DocsModule.onSave [resolved]",
+    "ipc push \"progress\" desktop/src/main/main.ts:16 - -> desktop/src/preload/index.ts:16 sym:desktop/src/preload/index.ts#api.onProgress [resolved]",
+    "package maven \"maven:com.acme:lib\" api/pom.xml:22 - -> lib/pom.xml:4 - [exact]",
+    "package npm \"npm:@acme/ui-kit\" desktop/package.json:6 - -> ui/package.json:2 - [exact]"
+  ],
+  "endpoints": [
+    "ipc provide \"\" desktop/src/main/main.ts:15 [heuristic] ipcMain.handle (dynamic)",
+    "ipc provide \"docs:save\" desktop/src/main/docs.ts:6 [resolved] Module.handle sym sym:desktop/src/main/docs.ts#DocsModule.onSave",
+    "ipc provide \"docs:unused\" desktop/src/main/docs.ts:7 [resolved] Module.handle sym sym:desktop/src/main/docs.ts#DocsModule.onUnused (unused)",
+    "ipc provide \"progress\" desktop/src/preload/index.ts:16 [resolved] ipcRenderer.on sym sym:desktop/src/preload/index.ts#api.onProgress",
+    "ipc provide \"users:get\" desktop/src/main/main.ts:13 [resolved] ipcMain.handle sym sym:desktop/src/main/users.ts#getUser",
+    "ipc provide \"window.api.broken\" desktop/src/preload/index.ts:19 [exact] exposeInMainWorld sym sym:desktop/src/preload/index.ts#api.broken",
+    "ipc provide \"window.api.dynamic\" desktop/src/preload/index.ts:21 [exact] exposeInMainWorld sym sym:desktop/src/preload/index.ts#api.dynamic",
+    "ipc provide \"window.api.getUser\" desktop/src/preload/index.ts:14 [exact] exposeInMainWorld sym sym:desktop/src/preload/index.ts#getUser",
+    "ipc provide \"window.api.onProgress\" desktop/src/preload/index.ts:15 [exact] exposeInMainWorld sym sym:desktop/src/preload/index.ts#api.onProgress",
+    "ipc provide \"window.api.saveDoc\" desktop/src/preload/index.ts:13 [exact] exposeInMainWorld sym sym:desktop/src/preload/index.ts#api.saveDoc",
+    "ipc consume \"\" desktop/src/preload/index.ts:21 [heuristic] ipcRenderer.invoke sym sym:desktop/src/preload/index.ts#api.dynamic (dynamic)",
+    "ipc consume \"docs:save\" desktop/src/preload/index.ts:13 [resolved] ipcRenderer.invoke sym sym:desktop/src/preload/index.ts#api.saveDoc",
+    "ipc consume \"nope\" desktop/src/preload/index.ts:19 [exact] ipcRenderer.invoke sym sym:desktop/src/preload/index.ts#api.broken (unmatched)",
+    "ipc consume \"progress\" desktop/src/main/main.ts:16 [resolved] webContents.send",
+    "ipc consume \"users:get\" desktop/src/preload/index.ts:5 [resolved] ipcRenderer.invoke sym sym:desktop/src/preload/index.ts#getUser",
+    "ipc consume \"window.api.getUser\" desktop/src/renderer/App.tsx:6 [resolved] window.api sym sym:desktop/src/renderer/App.tsx#App",
+    "ipc consume \"window.api.notExposed\" desktop/src/renderer/App.tsx:8 [resolved] window.api sym sym:desktop/src/renderer/App.tsx#App (unexposed)",
+    "ipc consume \"window.api.onProgress\" desktop/src/renderer/App.tsx:9 [exact] window.api sym sym:desktop/src/renderer/App.tsx#App",
+    "ipc consume \"window.api.saveDoc\" desktop/src/renderer/App.tsx:4 [exact] window.api sym sym:desktop/src/renderer/App.tsx#App",
+    "package provide \"maven:com.acme:api\" api/pom.xml:8 [exact] 2.0.0",
+    "package provide \"maven:com.acme:legacy\" legacy/pom.xml:4 [exact] 0.9",
+    "package provide \"maven:com.acme:lib\" lib/pom.xml:4 [exact] 1.4.0-SNAPSHOT",
+    "package provide \"npm:@acme/desktop\" desktop/package.json:2 [exact] 1.0.0",
+    "package provide \"npm:@acme/ui-kit\" ui/package.json:2 [exact] 2.1.0",
+    "package consume \"maven:com.acme:lib\" api/pom.xml:22 [exact] 1.2.0 (version_skew 1.4.0-SNAPSHOT)",
+    "package consume \"npm:@acme/ui-kit\" desktop/package.json:6 [exact] ^1.0.0 (version_skew 2.1.0)"
+  ]
+}

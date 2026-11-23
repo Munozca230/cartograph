@@ -63,6 +63,9 @@ pub struct Resolver {
     own_groups: Vec<String>,
     /// Skipped `.java` files and why (to explain a missing class).
     skipped: Vec<(String, String)>,
+    /// In a workspace, the members each member's imports may reach (its declared package
+    /// dependencies); empty: every member.
+    pub eligibility: crate::packages::Eligibility,
 }
 
 const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
@@ -349,6 +352,38 @@ impl Resolver {
                 v.sort();
                 v
             },
+            eligibility: Default::default(),
+        }
+    }
+
+    /// The member (mount prefix) of a path, `""` outside every member.
+    fn member_of<'p>(&self, path: &'p str) -> &'p str {
+        match path.split_once('/') {
+            Some((m, _)) if self.mount_roots.contains(m) => m,
+            _ => "",
+        }
+    }
+
+    /// The candidates of an import the importer's member may use: its own member's, else
+    /// those of members it declares (through their packages); when only undeclared members
+    /// have one, all of them as a guess.
+    fn eligible<'c>(&self, importer: &str, cands: &'c [String]) -> (Vec<&'c String>, Confidence) {
+        if self.eligibility.is_empty() {
+            return (cands.iter().collect(), Confidence::Resolved);
+        }
+        let me = self.member_of(importer);
+        let own: Vec<&String> = cands.iter().filter(|c| self.member_of(c) == me).collect();
+        if !own.is_empty() {
+            return (own, Confidence::Resolved);
+        }
+        let ok: Vec<&String> = cands
+            .iter()
+            .filter(|c| self.eligibility.eligible(me, self.member_of(c)))
+            .collect();
+        if ok.is_empty() {
+            (cands.iter().collect(), Confidence::Heuristic)
+        } else {
+            (ok, Confidence::Resolved)
         }
     }
 
@@ -471,27 +506,23 @@ impl Resolver {
             && wildcard
             && let Some(files) = self.packages.get(name)
         {
+            let (files, confidence) = self.eligible(importer, files);
+            let files: Vec<String> = files.into_iter().cloned().collect();
             return self
-                .package_targets(importer, name, files)
+                .package_targets(importer, name, &files)
                 .into_iter()
-                .map(|target| {
-                    (
-                        spec.clone(),
-                        Outcome::Resolved {
-                            target,
-                            confidence: Confidence::Resolved,
-                        },
-                    )
-                })
+                .map(|target| (spec.clone(), Outcome::Resolved { target, confidence }))
                 .collect();
         }
         let segs: Vec<&str> = name.split('.').collect();
         for n in (1..=segs.len()).rev() {
             let prefix = segs[..n].join(".");
             if let Some(cands) = self.types.get(&prefix) {
-                let best = self.prefer(importer, cands);
+                let (cands, confidence) = self.eligible(importer, cands);
+                let cands: Vec<String> = cands.into_iter().cloned().collect();
+                let best = self.prefer(importer, &cands);
                 return match best.as_slice() {
-                    [one_file] => one(Outcome::file((*one_file).clone(), Confidence::Resolved)),
+                    [one_file] => one(Outcome::file((*one_file).clone(), confidence)),
                     many => {
                         let list: Vec<&str> = many.iter().take(3).map(|s| s.as_str()).collect();
                         one(Outcome::ambiguous(format!(

@@ -26,6 +26,7 @@ pub mod imports;
 pub mod lang;
 pub mod manifest;
 pub mod noise;
+pub mod packages;
 mod paths;
 pub mod report;
 pub mod resolve;
@@ -669,10 +670,16 @@ fn index_inner(
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let res = resolve::resolve_all(&ix, &files, &rust_calls);
+        let pk = if src.bridges.packages {
+            packages::Packages::build(&ix)
+        } else {
+            packages::Packages::default()
+        };
+        let res = resolve::resolve_all_with(&ix, &files, &rust_calls, &pk);
         delta.disk_reads = ix.take_disk_reads();
-        res
+        (res, pk)
     };
+    let (res, packages) = res;
     let rust_call_paths = res.rust_call_paths;
     if cancelled() {
         return Err(IndexError::Cancelled);
@@ -758,6 +765,15 @@ fn index_inner(
         let started = Instant::now();
         p.merge_symbols(&mut symbols);
         scip_ms += started.elapsed().as_millis();
+    }
+    // Package bridges: rows of the symbol layer (the imports they explain are edges).
+    if src.symbols {
+        let (endpoints, bridges) = packages.rows();
+        if !endpoints.is_empty() || !bridges.is_empty() {
+            symbols.endpoints.extend(endpoints);
+            symbols.bridges.extend(bridges);
+            symbols.normalize();
+        }
     }
     // Matched bridges become derived edges (never counted by `aggregate`).
     if !symbols.bridges.is_empty() {

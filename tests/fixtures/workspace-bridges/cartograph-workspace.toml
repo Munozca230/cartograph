@@ -1,0 +1,27 @@
+# Bridges between the members of a workspace: a Java API that depends on a library's
+# package (at an older version) and imports a class of a member it does not declare, an
+# Electron app whose renderer reaches main-process handlers over IPC (through a preload
+# exposure, a handler wrapper and channel constants), and a UI kit the app takes as an
+# npm package.
+[workspace]
+name = "bridged"
+
+[[member]]
+name = "lib"
+path = "shared-lib"
+
+[[member]]
+name = "api"
+path = "api"
+
+[[member]]
+name = "legacy"
+path = "legacy"
+
+[[member]]
+name = "ui"
+path = "ui-kit"
+
+[[member]]
+name = "desktop"
+path = "desktop"

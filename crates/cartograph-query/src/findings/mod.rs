@@ -329,6 +329,12 @@ pub fn analyze_with(
     if on(FindingKind::IpcUnusedHandler) {
         out.extend(bridges::ipc_unused_handler(&cx, bridged));
     }
+    if on(FindingKind::VersionSkew) {
+        out.extend(bridges::version_skew(&cx, bridged));
+    }
+    if on(FindingKind::UndeclaredMemberDependency) {
+        out.extend(bridges::undeclared_member_dependency(&cx, bridged));
+    }
     // Ids are unique: a repeated one gets `#2`, `#3`…
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     for f in &mut out {

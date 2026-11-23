@@ -128,3 +128,138 @@ pub(super) fn ipc_unused_handler(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> 
     )
 }
 
+/// Endpoint detail of a dependency on another version than its member builds (written by
+/// `cartograph_index::packages`): `version_skew <the producer's version>`.
+const VERSION_SKEW: &str = "version_skew";
+
+/// Dependencies on another member's package at another version than it builds.
+pub(super) fn version_skew(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for e in &b.endpoints {
+        let Some(have) = e
+            .detail
+            .as_deref()
+            .and_then(|d| d.strip_prefix(VERSION_SKEW))
+            .map(str::trim)
+        else {
+            continue;
+        };
+        if e.kind != BridgeKind::Package || e.role != BridgeRole::Consume {
+            continue;
+        }
+        let producers: Vec<&str> = b
+            .from_file(&e.file)
+            .filter(|x| x.kind == BridgeKind::Package && x.key == e.key)
+            .map(|x| member_of(cx, &x.dst_file))
+            .collect();
+        let who = if producers.is_empty() {
+            "its member".to_string()
+        } else {
+            producers.join(", ")
+        };
+        let mut f = Finding::new(
+            FindingKind::VersionSkew,
+            Severity::Info,
+            &format!("{}:{}", e.file, e.key),
+            format!(
+                "{} depends on {} {} but {who} builds {have}",
+                e.file, e.key, e.label
+            ),
+        );
+        f.line(format!("{}:{} {} {}", e.file, e.line, e.key, e.label));
+        if let Some(fx) = cx.g.file_by_path(&e.file) {
+            f.node(cx.g.id(NodeRef::File(fx)));
+        }
+        out.push(f);
+    }
+    out
+}
+
+/// Members whose code another member imports without declaring its package (Java, where
+/// the build would not find the class).
+pub(super) fn undeclared_member_dependency(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
+    use std::collections::{BTreeSet, HashMap};
+    let g = cx.g;
+    if g.members.names.is_empty() {
+        return Vec::new();
+    }
+    let package = |e: &&BridgeEndpoint| e.kind == BridgeKind::Package;
+    let known: BTreeSet<&str> = b
+        .endpoints
+        .iter()
+        .filter(package)
+        .map(|e| member_of(cx, &e.file))
+        .collect();
+    let producers: BTreeSet<&str> = b
+        .endpoints
+        .iter()
+        .filter(package)
+        .filter(|e| e.role == BridgeRole::Provide)
+        .map(|e| member_of(cx, &e.file))
+        .collect();
+    let mut direct: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for x in b.bridges.iter().filter(|x| x.kind == BridgeKind::Package) {
+        direct
+            .entry(member_of(cx, &x.src_file))
+            .or_default()
+            .insert(member_of(cx, &x.dst_file));
+    }
+    let reaches = |from: &str, to: &str| {
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut stack: Vec<&str> = vec![from];
+        while let Some(m) = stack.pop() {
+            for &n in direct.get(m).into_iter().flatten() {
+                if n == to {
+                    return true;
+                }
+                if seen.insert(n) {
+                    stack.push(n);
+                }
+            }
+        }
+        false
+    };
+    let mut pairs: BTreeMap<(&str, &str), Vec<(u32, u32)>> = BTreeMap::new();
+    for (i, deps) in g.out.iter().enumerate() {
+        let f = &g.files[i];
+        if !cx.active[i] || f.lang.as_deref() != Some("java") {
+            continue;
+        }
+        let a = member_of(cx, &f.path);
+        if !known.contains(a) {
+            continue;
+        }
+        for d in deps {
+            if d.kinds & crate::graph::dep_kind::IMPORT == 0 {
+                continue;
+            }
+            let bm = member_of(cx, g.path(d.file));
+            if bm.is_empty() || bm == a || !producers.contains(bm) || reaches(a, bm) {
+                continue;
+            }
+            pairs.entry((a, bm)).or_default().push((i as u32, d.file));
+        }
+    }
+    pairs
+        .into_iter()
+        .map(|((a, bm), edges)| {
+            let n = edges.len();
+            let mut f = Finding::new(
+                FindingKind::UndeclaredMemberDependency,
+                Severity::Warning,
+                &format!("{a}->{bm}"),
+                format!(
+                    "{a} imports code of {bm} without declaring its package ({n} {})",
+                    if n == 1 { "import" } else { "imports" }
+                ),
+            );
+            for (x, y) in edges {
+                f.line(g.edge_evidence(x, y));
+                f.edge(g, x, y);
+                f.node(g.id(NodeRef::File(x)));
+            }
+            f.metric("imports", n as f64);
+            f
+        })
+        .collect()
+}
