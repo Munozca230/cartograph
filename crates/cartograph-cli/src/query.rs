@@ -498,6 +498,23 @@ pub fn cmd_infer(
     force: bool,
     json: bool,
 ) -> Result<ExitCode> {
+    // A workspace: the proposal is in the workspace's grammar (paths start with a member),
+    // for its file, which holds the members too: printed, never written over it.
+    if path.join(cartograph_core::WORKSPACE_FILE).is_file() {
+        if write {
+            bail!(
+                "{} is a workspace: infer does not rewrite {}; copy the proposed [[layers]] \
+                 into it, or run `cartograph infer --write` on a member's folder for that \
+                 member's own cartograph.toml",
+                path.display(),
+                cartograph_core::WORKSPACE_FILE
+            );
+        }
+        eprintln!(
+            "note: a workspace: the layers below go in {} (paths start with a member)",
+            cartograph_core::WORKSPACE_FILE
+        );
+    }
     // The rest of the existing config is what is being replaced (maybe broken); only its
     // `ignore` counts. When that `ignore` cannot be read (the file is unreadable, not TOML,
     // or its `ignore` is invalid), writing would drop it: refuse, as `check` does when it

@@ -94,6 +94,18 @@ fn index_query_and_check_a_workspace() {
         "{v}"
     );
 
+    // infer proposes layers in the workspace's grammar and never rewrites its file.
+    let (code, out, err) = cartograph(&["infer", &root, "--data-dir", &d]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("[[layers]]") && out.contains("\"api/**\""),
+        "{out}"
+    );
+    assert!(err.contains("cartograph-workspace.toml"), "{err}");
+    let (code, _, err) = cartograph(&["infer", &root, "--data-dir", &d, "--write"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("does not rewrite"), "{err}");
+
     // Rules: the workspace's layers, and the API's own (rebased) layers.
     let (code, out, _) = cartograph(&["check", &root, "--data-dir", &d]);
     assert_eq!(code, 1, "{out}");
