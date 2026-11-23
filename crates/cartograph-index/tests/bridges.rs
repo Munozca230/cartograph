@@ -491,3 +491,43 @@ fn a_context_path_belongs_to_its_module() {
         vec!["GET /orders/x src/client.ts:1", "GET /y src/client.ts:2"]
     );
 }
+
+/// `client.patch("/x", body)` in a file that imports no server reads like a route
+/// registration but is a call: tied to its wrapper by name all the same.
+#[test]
+fn a_call_shaped_like_a_route_outside_a_server_is_a_call() {
+    let s = http_repo(&[
+        (
+            "src/server.ts",
+            "import express from 'express';\nconst app = express();\nfunction h() {}\napp.patch('/api/items/:id', h);\napp.get('/api/jobs', h);\n",
+        ),
+        (
+            "src/client.ts",
+            "export class Client {
+  constructor(private readonly base: string) {}
+  patch(path: string, body: unknown) {
+    return fetch(`${this.base}${path}`, { method: 'PATCH', body: JSON.stringify(body) });
+  }
+  get(path: string) {
+    return fetch(`${this.base}${path}`);
+  }
+}
+",
+        ),
+        (
+            "src/tool.ts",
+            "export async function update(deps: { client: { patch(p: string, b: unknown): Promise<void>; get(p: string): Promise<void> } }, id: string, body: unknown) {
+  await deps.client.get('/api/jobs');
+  await deps.client.patch(`/api/items/${id}`, body);
+}
+",
+        ),
+    ]);
+    assert_eq!(
+        http_keys(&s),
+        vec![
+            "GET /api/jobs src/tool.ts:2",
+            "PATCH /api/items/{} src/tool.ts:3"
+        ]
+    );
+}

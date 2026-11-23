@@ -1029,11 +1029,14 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
     // A call is read once per wrapper shape: two calls on one line are two sites, and a
     // wrapper that gains a level in a later round is read again for it.
     let mut seen: HashSet<(usize, usize, String)> = HashSet::new();
-    // Route and mount registrations (`app.get("/x", h)`): never a client call.
+    // Route and mount registrations (`app.get("/x", h)`) of files that import an
+    // Express-style server: never a client call. Elsewhere `client.patch("/x", body)` only
+    // looks like one.
     let registrations: HashSet<(usize, u32)> = ctx
         .files
         .iter()
         .enumerate()
+        .filter(|(_, f)| gate_matches("js-http", &cx.g.libraries(f.path)))
         .flat_map(|(fi, f)| {
             f.code
                 .routes
