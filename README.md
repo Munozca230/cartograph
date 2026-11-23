@@ -15,14 +15,19 @@ offline, and writes nothing inside the analyzed repository unless you let it.
   tree-sitter. Imports resolve through tsconfig paths, package manifests and workspaces,
   Python packages, Cargo crates, Go modules, Java and C# namespaces, and include paths.
   Each edge carries a confidence (exact, resolved, heuristic), and what does not resolve
-  is listed with a reason. A content-hash extraction cache makes re-indexing incremental.
+  is listed with a reason. Besides what `.gitignore` ignores, the walk leaves out data and
+  tool folders (captures, logs, backups, caches, hidden tool folders at the top) unless
+  code imports them, copies of the repository (its worktrees), and minified bundles, each
+  with a reason. A content-hash extraction cache makes re-indexing incremental.
 - **Web UI.** `cartograph serve` opens a local map on `127.0.0.1` that updates live as
   files change:
   - **Plano**: the repository as a layered plan. Folders and files are cards, open folders
     are nested boxes and dependencies point down. The few edges that have to point up to
     close a cycle are drawn in magenta.
-  - **Flujos**: call flows from the entry points (CLI commands, HTTP routes, `main`,
-    Godot main scenes and autoloads) or from any function, expandable card by card.
+  - **Flujos**: call flows from the entry points (CLI commands, HTTP routes, `main` and
+    `package.json` `main`, the scripts an `index.html` loads, Electron `ipcMain`
+    handlers, Godot main scenes and autoloads) or from any function, expandable card by
+    card.
 - **Findings and rules.** Layer violations, file and folder cycles, fan-out limits, god
   modules, hubs, stable-dependency violations, orphans, deep chains and hidden coupling.
   Rules live in an optional `cartograph.toml`:
@@ -37,7 +42,8 @@ offline, and writes nothing inside the analyzed repository unless you let it.
   coding agent. Its tools are `overview`, `explain`, `deps`, `impact`, `find`, `path`,
   `symbols`, `callers`, `hierarchy`, `entries`, `findings`, `check`, `diff`, `hotspots`,
   `annotate` and `open_map`. Each answer is compact text within a token budget, and the
-  index stays fresh while the agent edits. When the user asks to see the architecture or
+  index stays fresh while the agent edits. Notes left with `annotate` can live in a
+  versioned `cartograph-notes.toml` next to the code. When the user asks to see the architecture or
   a flow, `open_map` opens the web map in the browser, focused on the folder, file or
   function at hand, served from inside the MCP server (no `cartograph serve` needed).
 - **Evals and stats.** `cartograph eval` runs a suite of agent questions through the real
