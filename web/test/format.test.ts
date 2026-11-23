@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLoc, locUnit } from "../src/ui/format";
+import { formatLoc, locUnit, SPRING_VIA, viaLabel, viaTip } from "../src/ui/format";
 
 describe("formatLoc", () => {
   it("says thousands as people say them", () => {
@@ -20,5 +20,15 @@ describe("formatLoc", () => {
   it("puts 'de' between millions and the unit", () => {
     expect(`${formatLoc(1_500_000)} ${locUnit(1_500_000)}`).toBe("1,5 millones de líneas");
     expect(`${formatLoc(1300)} ${locUnit(1300)}`).toBe("1,3 mil líneas");
+  });
+});
+
+describe("viaLabel and viaTip", () => {
+  it("say a Spring bean in Spanish and keep a bridge's key", () => {
+    expect(viaLabel(SPRING_VIA)).toBe("bean de Spring");
+    expect(viaTip(SPRING_VIA)).toContain("Bean de Spring");
+    expect(viaLabel("ipc invoke users:get")).toBe("ipc invoke users:get");
+    expect(viaTip("ipc invoke users:get")).toBe("Puente, no una llamada: ipc invoke users:get");
+    expect(viaLabel("x".repeat(40))).toHaveLength(36);
   });
 });

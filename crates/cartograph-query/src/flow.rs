@@ -42,6 +42,10 @@ const THROUGH_BUDGET: usize = 4000;
 /// Folders whose subfolders are better lanes than themselves (`src/core`, not `src`).
 const SOURCE_ROOTS: &[&str] = &["src", "lib", "app", "source", "pkg", "internal", "packages"];
 
+/// The `via` of a flow edge from an interface method to a bean's method that implements
+/// it (Spring runs the bean's).
+pub const SPRING_VIA: &str = "Spring bean";
+
 /// Calls of one caller to one target, merged.
 #[derive(Debug, Clone)]
 struct Callee {
@@ -147,6 +151,39 @@ impl CallIndex {
                 calls: 1,
                 via: Some(crate::bridges::step_label(b)),
             });
+        }
+        // Spring: a call to an interface method goes on to the methods of the beans that
+        // implement it (a constructor's or a list's beans alike).
+        if !t.spring.beans.is_empty() {
+            let mut targets: Vec<String> = ix
+                .out
+                .values()
+                .flatten()
+                .filter(|c| c.via.is_none())
+                .map(|c| c.target.clone())
+                .collect();
+            targets.sort();
+            targets.dedup();
+            for target in targets {
+                let impls = crate::spring::dispatch(t, &target);
+                if impls.is_empty() {
+                    continue;
+                }
+                let list = ix.out.entry(target).or_default();
+                for (m, _) in impls {
+                    if list.iter().any(|c| c.target == m) {
+                        continue;
+                    }
+                    let line = t.symbol(&m).map_or(0, |s| s.line);
+                    list.push(Callee {
+                        target: m,
+                        line,
+                        confidence: Confidence::Resolved,
+                        calls: 1,
+                        via: Some(SPRING_VIA.to_string()),
+                    });
+                }
+            }
         }
         for f in repo.findings() {
             if f.severity == Severity::Info {

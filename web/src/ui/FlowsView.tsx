@@ -41,7 +41,7 @@ import { layoutForFlow } from "../state/flowLayout";
 import { flows } from "../state/flows";
 import { useAppState } from "../state/store";
 import { cameraStep, FLOW_K_MIN, FLOW_K_OPEN, fitFlow, keepView, revealCard, zoomAt } from "./flowCamera";
-import { formatNumber, relativeTime } from "./format";
+import { formatNumber, relativeTime, viaLabel, viaTip } from "./format";
 import { Icon } from "./icons";
 import { Minimap } from "./Minimap";
 import { arrowPath, roundPath } from "./planGeometry";
@@ -54,6 +54,7 @@ const CLICK_MS = 260;
 const RESIZE_SETTLE_MS = 150;
 
 const CONFIDENCE: Record<string, string> = { exact: "exacta", resolved: "resuelta", heuristic: "heurística" };
+
 
 /** Canvas measures of the card fonts (rough until the font has loaded). */
 function measures(): FlowMeasures {
@@ -137,7 +138,7 @@ const FlowContent = memo(function FlowContent({
             {/* A bridge (IPC, HTTP), not a call: its channel or route just before the arrow. */}
             {e.via && (
               <text className="ecount" x={end.x - 12} y={end.y + 13} textAnchor="end">
-                {e.via.length > 36 ? `${e.via.slice(0, 35)}…` : e.via}
+                {viaLabel(e.via)}
               </text>
             )}
             {/* Several call sites, one edge: how many, just before the arrow. */}
@@ -379,7 +380,7 @@ function FlowStage() {
       const dst = d.flow.nodes.find((x) => x.id === edge.dst);
       const lines: Tip["lines"] = [
         { text: `${src ? shortFile(src.file, "") : ""}:${edge.line}${edge.calls > 1 ? ` · ${edge.calls} llamadas` : ""}` },
-        { text: edge.via ? `Puente, no una llamada: ${edge.via}` : edge.confidence === "heuristic" ? "Heurística: el nombre es único en el repositorio" : `Llamada ${CONFIDENCE[edge.confidence]}` },
+        { text: edge.via ? viaTip(edge.via) : edge.confidence === "heuristic" ? "Heurística: el nombre es único en el repositorio" : `Llamada ${CONFIDENCE[edge.confidence]}` },
       ];
       if (dst?.finding) lines.push({ text: `Llega a un archivo con ${dst.finding === "error" ? "un error" : "un aviso"} de arquitectura`, alert: true });
       setTip({ title: `${src?.name ?? edge.src} → ${dst?.name ?? edge.dst}`, lines, x: e.clientX, y: e.clientY });

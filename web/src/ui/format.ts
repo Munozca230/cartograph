@@ -103,3 +103,18 @@ export function nameOf(id: string): string {
 export function pathOf(id: string): string {
   return id.slice(id.indexOf(":") + 1);
 }
+
+/** The `via` of an edge from an interface method to a Spring bean's method (the server's `SPRING_VIA`). */
+export const SPRING_VIA = "Spring bean";
+
+/** The label drawn on a dashed edge: a bridge's channel or route, or "bean de Spring". */
+export function viaLabel(via: string): string {
+  if (via === SPRING_VIA) return "bean de Spring";
+  return via.length > 36 ? `${via.slice(0, 35)}…` : via;
+}
+
+/** The tooltip line of a dashed edge. */
+export function viaTip(via: string): string {
+  if (via === SPRING_VIA) return "Bean de Spring: la llamada a la interfaz ejecuta este método";
+  return `Puente, no una llamada: ${via}`;
+}

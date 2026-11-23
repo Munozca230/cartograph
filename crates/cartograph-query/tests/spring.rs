@@ -150,3 +150,30 @@ fn path_without_bridges_stays_strict() {
     .unwrap();
     assert!(!a.text.contains("continues"), "{}", a.text);
 }
+
+#[test]
+fn flows_go_on_from_an_interface_method_to_its_beans() {
+    use cartograph_query::flow::{CallIndex, FlowOptions, SPRING_VIA, flow};
+    let r = repo();
+    let ix = CallIndex::build(&r);
+    let g = flow(
+        &r,
+        &ix,
+        "sym:api/src/main/java/com/shop/api/order/OrderController.java#OrderController.create",
+        &FlowOptions::default(),
+    )
+    .unwrap();
+    let edge = g
+        .edges
+        .iter()
+        .find(|e| e.dst.ends_with("OrderServiceImpl.create"))
+        .unwrap_or_else(|| panic!("{:?}", g.edges));
+    assert!(edge.src.ends_with("OrderService.create"), "{edge:?}");
+    assert_eq!(edge.via.as_deref(), Some(SPRING_VIA));
+    // On down to the store of the other member.
+    assert!(
+        g.edges.iter().any(|e| e.dst.ends_with("OrderStore.save")),
+        "{:?}",
+        g.edges
+    );
+}
