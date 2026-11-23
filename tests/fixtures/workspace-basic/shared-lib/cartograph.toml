@@ -1,0 +1,5 @@
+# The library's own rules: the model never depends on anything else.
+[[layers]]
+name = "model"
+paths = ["src/main/java/com/acme/lib"]
+allow = []

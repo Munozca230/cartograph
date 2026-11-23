@@ -1,0 +1,15 @@
+# The API's own rules: controllers on top of services; services call no outside client
+# (UserService breaks it on purpose: the finding is api.service->api.client).
+[[layers]]
+name = "web"
+paths = ["src/main/java/com/acme/api/UserController.java"]
+allow = ["service"]
+
+[[layers]]
+name = "service"
+paths = ["src/main/java/com/acme/api/UserService.java"]
+allow = []
+
+[[layers]]
+name = "client"
+paths = ["src/main/java/com/acme/api/ReportClient.java"]

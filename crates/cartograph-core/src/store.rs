@@ -227,6 +227,11 @@ const MIGRATIONS: &[&str] = &[
         line INTEGER NOT NULL
     );
     "#,
+    // v11: workspaces. Each commit belongs to the member whose repository it comes from
+    // (`''` for a single repo), so one member's history is rebuilt without the others'.
+    r#"
+    ALTER TABLE git_commits ADD COLUMN member TEXT NOT NULL DEFAULT '';
+    "#,
 ];
 
 /// One row of the SCIP cache: the decoded form (`data`, opaque to the store) of the SCIP
@@ -589,6 +594,62 @@ impl WriteTx<'_> {
         Ok(())
     }
 
+    /// Delete the git layer of one workspace member (`""`: the whole layer, as
+    /// [`WriteTx::clear_git`]): its commits and their changes, the aggregates of its files,
+    /// and the authors no commit names any more.
+    pub fn clear_git_member(&self, member: &str) -> Result<()> {
+        if member.is_empty() {
+            return self.clear_git();
+        }
+        self.tx.execute(
+            "DELETE FROM git_changes WHERE seq IN (SELECT seq FROM git_commits WHERE member = ?1)",
+            [member],
+        )?;
+        self.tx
+            .execute("DELETE FROM git_commits WHERE member = ?1", [member])?;
+        self.tx.execute(
+            "DELETE FROM git_authors WHERE id NOT IN (SELECT author FROM git_commits)",
+            [],
+        )?;
+        delete_history_under(&self.tx, member)
+    }
+
+    /// Delete the git layer of every member not in `keep` (and that of a single repo).
+    pub fn retain_git_members(&self, keep: &[&str]) -> Result<()> {
+        let mut stmt = self.tx.prepare("SELECT DISTINCT member FROM git_commits")?;
+        let found: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        drop(stmt);
+        for m in found.iter().filter(|m| !keep.contains(&m.as_str())) {
+            if m.is_empty() {
+                self.tx.execute(
+                    "DELETE FROM git_changes WHERE seq IN
+                       (SELECT seq FROM git_commits WHERE member = '')",
+                    [],
+                )?;
+                self.tx
+                    .execute("DELETE FROM git_commits WHERE member = ''", [])?;
+            } else {
+                self.clear_git_member(m)?;
+            }
+        }
+        // Aggregates of paths outside every member (a single repo before).
+        let mut stmt = self.tx.prepare("SELECT path FROM git_files")?;
+        let paths: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        drop(stmt);
+        let outside = |p: &str| !keep.contains(&p.split('/').next().unwrap_or(p));
+        for p in paths.iter().filter(|p| outside(p)) {
+            self.tx
+                .execute("DELETE FROM git_files WHERE path = ?1", [p])?;
+            self.tx
+                .execute("DELETE FROM git_pairs WHERE a = ?1 OR b = ?1", [p])?;
+        }
+        Ok(())
+    }
+
     /// Append raw history rows. Authors are upserted by id; commits must have new `seq`s.
     pub fn append_git_raw(&self, raw: &GitRaw) -> Result<()> {
         let mut stmt = self.tx.prepare(
@@ -598,11 +659,13 @@ impl WriteTx<'_> {
             stmt.execute(params![a.id, a.name, a.email_hash])?;
         }
         let mut stmt = self.tx.prepare(
-            "INSERT INTO git_commits (seq, id, time, author, files, merge)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO git_commits (seq, id, time, author, files, merge, member)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
         for c in &raw.commits {
-            stmt.execute(params![c.seq, c.id, c.time, c.author, c.files, c.merge])?;
+            stmt.execute(params![
+                c.seq, c.id, c.time, c.author, c.files, c.merge, c.member
+            ])?;
         }
         let mut stmt = self.tx.prepare(
             "INSERT INTO git_changes (seq, path, old_path, kind, added, removed)
@@ -623,8 +686,13 @@ impl WriteTx<'_> {
 
     /// Replace the aggregated history and store its status under the [`GIT_META`] key.
     pub fn write_history(&self, h: &History) -> Result<()> {
-        self.tx
-            .execute_batch("DELETE FROM git_files; DELETE FROM git_pairs;")?;
+        self.write_member_history("", h)
+    }
+
+    /// Replace the aggregated history of one workspace member (the files under its folder;
+    /// `""`: every file) and store its status under [`git_meta_key`].
+    pub fn write_member_history(&self, member: &str, h: &History) -> Result<()> {
+        delete_history_under(&self.tx, member)?;
         let mut stmt = self.tx.prepare(
             "INSERT INTO git_files (path, commits, added, removed, recent, first_time,
                 last_time, co_commits, complexity, authors)
@@ -656,7 +724,11 @@ impl WriteTx<'_> {
             stmt.execute(params![p.a, p.b, p.together, p.last_time])?;
         }
         if let Some(status) = &h.status {
-            set_meta(&self.tx, GIT_META, &serde_json::to_string(status)?)?;
+            set_meta(
+                &self.tx,
+                &git_meta_key(member),
+                &serde_json::to_string(status)?,
+            )?;
         }
         Ok(())
     }
@@ -668,13 +740,43 @@ impl WriteTx<'_> {
     }
 }
 
-/// Meta key holding the [`GitStatus`] of the last git pass (JSON).
+/// Meta key holding the [`GitStatus`] of the last git pass (JSON). In a workspace it sums
+/// the members up; each member's own is under [`git_meta_key`].
 pub const GIT_META: &str = "git";
+
+/// Meta key of the git status of a workspace member (`git:<member>`; [`GIT_META`] for
+/// `""`, a single repo).
+pub fn git_meta_key(member: &str) -> String {
+    if member.is_empty() {
+        GIT_META.to_string()
+    } else {
+        format!("{GIT_META}:{member}")
+    }
+}
+
+/// Delete the aggregates of the files under `member`'s folder (`""`: all of them).
+fn delete_history_under(conn: &Connection, member: &str) -> Result<()> {
+    if member.is_empty() {
+        conn.execute_batch("DELETE FROM git_files; DELETE FROM git_pairs;")?;
+        return Ok(());
+    }
+    let like = format!("{member}/%");
+    conn.execute(
+        "DELETE FROM git_files WHERE path = ?1 OR path LIKE ?2",
+        params![member, like],
+    )?;
+    conn.execute(
+        "DELETE FROM git_pairs WHERE a = ?1 OR a LIKE ?2 OR b = ?1 OR b LIKE ?2",
+        params![member, like],
+    )?;
+    Ok(())
+}
 
 fn read_git_raw(conn: &Connection) -> Result<GitRaw> {
     let mut raw = GitRaw::default();
-    let mut stmt =
-        conn.prepare("SELECT seq, id, time, author, files, merge FROM git_commits ORDER BY seq")?;
+    let mut stmt = conn.prepare(
+        "SELECT seq, id, time, author, files, merge, member FROM git_commits ORDER BY seq",
+    )?;
     let rows = stmt.query_map([], |r| {
         Ok(GitCommit {
             seq: r.get(0)?,
@@ -683,6 +785,7 @@ fn read_git_raw(conn: &Connection) -> Result<GitRaw> {
             author: r.get(3)?,
             files: r.get(4)?,
             merge: r.get(5)?,
+            member: r.get(6)?,
         })
     })?;
     for row in rows {
@@ -1831,6 +1934,7 @@ mod tests {
                     author: 0,
                     files: 2,
                     merge: false,
+                    member: String::new(),
                 },
                 GitCommit {
                     seq: 1,
@@ -1839,6 +1943,7 @@ mod tests {
                     author: 1,
                     files: 0,
                     merge: true,
+                    member: String::new(),
                 },
             ],
             authors: vec![
@@ -2040,6 +2145,116 @@ mod tests {
         assert_eq!(store.load_graph().unwrap(), sample());
         assert_eq!(store.load_symbols().unwrap(), sample_symbols());
         assert!(store.load_scip_cache("x").unwrap().is_none());
+    }
+
+    #[test]
+    fn migrates_a_v10_db_to_v11_with_commits_of_no_member() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let mut store = Store { conn };
+            store.migrate_to(10).unwrap();
+            store
+                .connection()
+                .execute_batch(
+                    "INSERT INTO git_authors (id, name, email_hash) VALUES (0, 'Ada', 'h');
+                     INSERT INTO git_commits (seq, id, time, author, files, merge)
+                     VALUES (0, 'c0', 100, 0, 1, 0);",
+                )
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        let raw = store.load_git_raw().unwrap();
+        assert_eq!(raw.commits.len(), 1);
+        assert_eq!(raw.commits[0].member, "");
+    }
+
+    #[test]
+    fn a_member_git_layer_is_rebuilt_without_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("graph.db")).unwrap();
+        let commit = |seq: u32, member: &str| GitCommit {
+            seq,
+            id: format!("{seq:040}"),
+            time: 100,
+            author: seq,
+            files: 1,
+            merge: false,
+            member: member.to_string(),
+        };
+        let change = |seq: u32, path: &str| GitChange {
+            seq,
+            path: path.to_string(),
+            old_path: None,
+            kind: crate::history::ChangeKind::Modified,
+            added: Some(1),
+            removed: Some(0),
+        };
+        let raw = GitRaw {
+            commits: vec![commit(0, "api"), commit(1, "lib")],
+            authors: vec![
+                GitAuthor {
+                    id: 0,
+                    name: "Ada".into(),
+                    email_hash: "a".into(),
+                },
+                GitAuthor {
+                    id: 1,
+                    name: "Grace".into(),
+                    email_hash: "g".into(),
+                },
+            ],
+            changes: vec![change(0, "api/a.ts"), change(1, "lib/b.java")],
+        };
+        let file = |path: &str| FileHistory {
+            path: path.to_string(),
+            commits: 1,
+            added: 1,
+            removed: 0,
+            recent: 1,
+            first_time: 100,
+            last_time: 100,
+            co_commits: 0,
+            complexity: 0,
+            authors: Vec::new(),
+        };
+        let history = |path: &str| History {
+            status: Some(GitStatus::default()),
+            files: vec![file(path)],
+            pairs: Vec::new(),
+        };
+        let tx = store.begin_replace().unwrap();
+        tx.append_git_raw(&raw).unwrap();
+        tx.write_member_history("api", &history("api/a.ts"))
+            .unwrap();
+        tx.write_member_history("lib", &history("lib/b.java"))
+            .unwrap();
+        tx.commit().unwrap();
+        let paths = |s: &Store| -> Vec<String> {
+            s.load_history()
+                .unwrap()
+                .files
+                .into_iter()
+                .map(|f| f.path)
+                .collect()
+        };
+        assert_eq!(paths(&store), vec!["api/a.ts", "lib/b.java"]);
+        assert!(store.get_meta("git:api").unwrap().is_some());
+        let tx = store.begin_replace().unwrap();
+        tx.clear_git_member("api").unwrap();
+        tx.commit().unwrap();
+        let left = store.load_git_raw().unwrap();
+        assert_eq!(left.commits, vec![commit(1, "lib")]);
+        assert_eq!(left.changes, vec![change(1, "lib/b.java")]);
+        assert_eq!(left.authors.len(), 1, "Ada authored only api's commit");
+        assert_eq!(paths(&store), vec!["lib/b.java"]);
+        let tx = store.begin_replace().unwrap();
+        tx.retain_git_members(&["api"]).unwrap();
+        tx.commit().unwrap();
+        assert!(store.load_git_raw().unwrap().commits.is_empty());
+        assert!(paths(&store).is_empty());
     }
 
     #[test]

@@ -46,6 +46,21 @@ impl GitRepo {
         r
     }
 
+    /// An empty repository (no commit yet) on branch `main` in `root`, which may already
+    /// hold files.
+    pub fn init_at(root: &Path) -> GitRepo {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty_config = tmp.path().join("empty.gitconfig");
+        std::fs::write(&empty_config, "").unwrap();
+        let r = GitRepo {
+            _tmp: tmp,
+            root: root.to_path_buf(),
+            empty_config,
+        };
+        r.git(&["init", "-q", "-b", "main"]);
+        r
+    }
+
     fn command(&self, dir: &Path) -> Command {
         let mut c = Command::new("git");
         c.current_dir(dir)

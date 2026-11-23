@@ -1,0 +1,42 @@
+# A workspace of four repositories: a Java library, a Spring API that uses it, an
+# Electron desktop app and an MCP server that call the API. Two members live in folders
+# named otherwise (api in backend-api, desktop in desktop-app). The folders logs/,
+# backups/, docs/ and api-worktrees/ hold no member and are never walked.
+[workspace]
+name = "system"
+
+[[member]]
+name = "lib"
+path = "shared-lib"
+
+[[member]]
+name = "api"
+path = "backend-api"
+[member.http]
+context_path = "/api"
+
+[[member]]
+name = "desktop"
+path = "desktop-app"
+
+[[member]]
+name = "mcp"
+path = "mcp"
+
+[[layers]]
+name = "lib"
+paths = ["lib"]
+allow = []
+
+[[layers]]
+name = "api"
+paths = ["api"]
+allow = ["lib"]
+
+[[layers]]
+name = "clients"
+paths = ["desktop", "mcp"]
+forbid = ["api"]
+
+[rules]
+no_cycles = true

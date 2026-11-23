@@ -68,6 +68,10 @@ pub struct GitCommit {
     /// merge, whose changes are not recorded.
     pub files: u32,
     pub merge: bool,
+    /// The workspace member whose repository it belongs to (`""` for a single repo); the
+    /// paths of its changes start with the member's folder.
+    #[serde(default)]
+    pub member: String,
 }
 
 /// One author identity as written in commits (after `.mailmap`).

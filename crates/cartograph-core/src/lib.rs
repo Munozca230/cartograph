@@ -30,7 +30,9 @@ pub use model::{
     split_symbol_id, symbol_id,
 };
 pub use scip::{ScipCoverage, ScipIndexStats, ScipStats, ScipSymbol};
-pub use store::{BUSY_TIMEOUT, CacheEntry, GIT_META, SCHEMA_VERSION, ScipCacheRow, Store, WriteTx};
+pub use store::{
+    BUSY_TIMEOUT, CacheEntry, GIT_META, SCHEMA_VERSION, ScipCacheRow, Store, WriteTx, git_meta_key,
+};
 pub use workspace::{Member, WORKSPACE_FILE, Workspace, WorkspaceError, expand_alias};
 
 /// Errors from the core crate.

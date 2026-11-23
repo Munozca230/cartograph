@@ -292,6 +292,7 @@ mod tests {
             author,
             files,
             merge: false,
+            member: String::new(),
         }
     }
 
