@@ -31,6 +31,9 @@ pub struct QueryOpts {
     /// Print JSON instead of text.
     #[arg(long, global = true)]
     pub json: bool,
+    /// In a workspace, look for plain paths in this member first.
+    #[arg(long, value_name = "NAME", global = true)]
+    pub member: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -211,7 +214,16 @@ pub fn cmd_query(tool: Tool, opts: &QueryOpts) -> Result<ExitCode> {
     let data = DataDirArg {
         data_dir: opts.data_dir.clone(),
     };
-    let (repo, hashes) = open_repo_hashed(&opts.repo, &data, opts.config.as_deref(), false)?;
+    let (mut repo, hashes) = open_repo_hashed(&opts.repo, &data, opts.config.as_deref(), false)?;
+    if let Some(m) = &opts.member {
+        if !repo.graph.members.names.contains(m) {
+            bail!(
+                "--member {m}: not a member of this index (members: {})",
+                repo.graph.members.names.join(", ")
+            );
+        }
+        repo.set_default_member(Some(m.clone()));
+    }
     let json = opts.json;
     macro_rules! run {
         ($e:expr) => {

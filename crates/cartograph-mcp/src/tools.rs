@@ -245,7 +245,7 @@ impl Cartograph {
     /// A tool argument as the query crate wants it: an absolute path inside the repo
     /// becomes repo-relative (prefixes `file:`, `dir:`, `sym:` and a `#name` suffix kept).
     pub fn norm(&self, arg: &str) -> String {
-        norm_arg(&self.engine.root, arg)
+        norm_arg(&self.engine.root, self.engine.workspace.as_ref(), arg)
     }
 
     /// Answer a query: freshness gate, then the query under the guard, then the text (with
@@ -851,8 +851,9 @@ fn with_base_warning<T>(mut a: Answer<T>, b: &base::Base) -> Answer<T> {
     a
 }
 
-/// See [`Cartograph::norm`].
-pub fn norm_arg(root: &Path, arg: &str) -> String {
+/// See [`Cartograph::norm`]. In a workspace, an absolute path is relative to the member
+/// whose folder holds it.
+pub fn norm_arg(root: &Path, workspace: Option<&cartograph_core::Workspace>, arg: &str) -> String {
     let t = arg.trim();
     for prefix in ["file:", "dir:", "sym:", ""] {
         let Some(rest) = t.strip_prefix(prefix) else {
@@ -863,6 +864,18 @@ pub fn norm_arg(root: &Path, arg: &str) -> String {
             None => (rest, ""),
         };
         let path = Path::new(p);
+        if path.is_absolute()
+            && let Some(ws) = workspace
+        {
+            let rel = ws.from_disk(path).or_else(|| {
+                dunce::canonicalize(path)
+                    .ok()
+                    .and_then(|c| ws.from_disk(&c))
+            });
+            if let Some(rel) = rel {
+                return format!("{prefix}{rel}{frag}");
+            }
+        }
         if path.is_absolute() {
             let rel = cartograph_index::walk::relative(root, path).or_else(|| {
                 dunce::canonicalize(path)
@@ -935,11 +948,14 @@ mod tests {
         std::fs::write(root.join("src/a.rs"), "").unwrap();
         let abs = root.join("src").join("a.rs");
         let abs = abs.to_str().unwrap();
-        assert_eq!(norm_arg(&root, abs), "src/a.rs");
-        assert_eq!(norm_arg(&root, &format!("file:{abs}")), "file:src/a.rs");
-        assert_eq!(norm_arg(&root, &format!("{abs}#run")), "src/a.rs#run");
-        assert_eq!(norm_arg(&root, root.to_str().unwrap()), ".");
-        assert_eq!(norm_arg(&root, "src/a.rs"), "src/a.rs");
-        assert_eq!(norm_arg(&root, " dir:src "), "dir:src");
+        assert_eq!(norm_arg(&root, None, abs), "src/a.rs");
+        assert_eq!(
+            norm_arg(&root, None, &format!("file:{abs}")),
+            "file:src/a.rs"
+        );
+        assert_eq!(norm_arg(&root, None, &format!("{abs}#run")), "src/a.rs#run");
+        assert_eq!(norm_arg(&root, None, root.to_str().unwrap()), ".");
+        assert_eq!(norm_arg(&root, None, "src/a.rs"), "src/a.rs");
+        assert_eq!(norm_arg(&root, None, " dir:src "), "dir:src");
     }
 }

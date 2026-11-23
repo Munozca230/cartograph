@@ -11,6 +11,10 @@
 //! `HEAD`, its reflog, branch refs, `packed-refs`, `shallow`) become a `Git` request: the
 //! history is read again, no file is. The git dirs are watched too when they are outside
 //! the root (a linked worktree, a root below the work tree's top).
+//!
+//! A workspace root (`cartograph-workspace.toml`) is watched member by member: each
+//! member's folder with its own ignore rules and git dirs, its paths reported under the
+//! member's name; the workspace file itself (non-recursively) re-indexes everything.
 
 use crate::scheduler::Reason;
 use crate::state::AppState;
@@ -315,33 +319,94 @@ pub fn start(state: Arc<AppState>) -> Result<Watcher, String> {
     )
 }
 
+/// One watched tree: a single repo (prefix `""`) or a workspace member.
+struct Tree {
+    prefix: String,
+    root: PathBuf,
+    filter: WatchFilter,
+    git: Option<GitWatch>,
+}
+
+impl Tree {
+    fn new(prefix: &str, root: &Path, data_dir: &Path) -> Tree {
+        Tree {
+            prefix: prefix.to_string(),
+            root: root.to_path_buf(),
+            filter: WatchFilter::new(root, data_dir),
+            git: GitWatch::find(root),
+        }
+    }
+
+    /// The path of the index of `abs` when a change there can change the index.
+    fn relevant(&self, abs: &Path) -> Option<String> {
+        let rel = self.filter.relevant(abs)?;
+        Some(if self.prefix.is_empty() {
+            rel
+        } else {
+            format!("{}/{rel}", self.prefix)
+        })
+    }
+}
+
 /// Watch `root` (`root` and `data_dir` normalized, see `crate::normalize`) and call
 /// `on_change` with the repo-relative paths that can change the index. An empty set means
 /// "unknown" (the watcher lost events): re-index everything. `on_git` is called when git's
-/// history may have changed ([`GitWatch`]), with the same debounce. Used by `serve` and by
-/// the MCP server.
+/// history may have changed ([`GitWatch`]), with the same debounce. A workspace root is
+/// watched member by member (see the module docs). Used by `serve` and by the MCP server.
 pub fn start_with(
     root: &Path,
     data_dir: &Path,
     on_change: impl Fn(BTreeSet<String>) + Send + 'static,
     on_git: impl Fn() + Send + 'static,
 ) -> Result<Watcher, String> {
-    let filter = WatchFilter::new(root, data_dir);
-    let git = GitWatch::find(root);
-    let extra = git
+    let workspace = cartograph_core::Workspace::find(root).map_err(|e| e.to_string())?;
+    let trees: Vec<Tree> = match &workspace {
+        None => vec![Tree::new("", root, data_dir)],
+        Some(ws) => ws
+            .members
+            .iter()
+            .filter_map(|m| {
+                let r = crate::normalize(&m.root).ok()?;
+                Some(Tree::new(&m.name, &r, data_dir))
+            })
+            .collect(),
+    };
+    let ws_file = workspace
         .as_ref()
-        .map(|g| g.extra_watches(root))
-        .unwrap_or_default();
+        .map(|_| root.join(cartograph_core::WORKSPACE_FILE));
+    let mut extra: Vec<(PathBuf, RecursiveMode)> = Vec::new();
+    for t in &trees {
+        if let Some(g) = &t.git {
+            extra.extend(g.extra_watches(&t.root));
+        }
+    }
+    let roots: Vec<PathBuf> = trees.iter().map(|t| t.root.clone()).collect();
     let handle = move |res: Result<Vec<PathBuf>, String>| match res {
         Ok(paths) => {
-            if paths.iter().any(|p| touches_ignore_rules(p)) {
-                filter.reload();
+            if ws_file.as_ref().is_some_and(|f| paths.contains(f)) {
+                tracing::debug!("workspace file changed; scheduling a full re-index");
+                on_change(BTreeSet::new());
+                return;
             }
-            let changed: BTreeSet<String> =
-                paths.iter().filter_map(|p| filter.relevant(p)).collect();
-            let git_changed = git
-                .as_ref()
-                .is_some_and(|g| paths.iter().any(|p| g.matches(p)));
+            if paths.iter().any(|p| touches_ignore_rules(p)) {
+                trees.iter().for_each(|t| t.filter.reload());
+            }
+            // The tree with the longest root holding each path.
+            let tree_of = |p: &Path| {
+                trees
+                    .iter()
+                    .filter(|t| p.starts_with(&t.root))
+                    .max_by_key(|t| t.root.as_os_str().len())
+            };
+            let changed: BTreeSet<String> = paths
+                .iter()
+                .filter_map(|p| tree_of(p).and_then(|t| t.relevant(p)))
+                .collect();
+            let git_changed = paths.iter().any(|p| {
+                trees
+                    .iter()
+                    .any(|t| t.git.as_ref().is_some_and(|g| g.matches(p)))
+            });
             if !changed.is_empty() {
                 tracing::debug!(count = changed.len(), paths = ?changed, "watched changes");
                 on_change(changed);
@@ -373,9 +438,16 @@ pub fn start_with(
         .name("cartograph-watch".into())
         .spawn(move || batch_events(&rx, handle))
         .map_err(|e| format!("cannot start the watcher thread: {e}"))?;
-    watcher
-        .watch(root, RecursiveMode::Recursive)
-        .map_err(|e| format!("cannot watch {}: {e}", root.display()))?;
+    for r in &roots {
+        watcher
+            .watch(r, RecursiveMode::Recursive)
+            .map_err(|e| format!("cannot watch {}: {e}", r.display()))?;
+    }
+    if workspace.is_some()
+        && let Err(e) = watcher.watch(root, RecursiveMode::NonRecursive)
+    {
+        tracing::warn!(dir = %root.display(), error = %e, "cannot watch the workspace file");
+    }
     for (dir, mode) in extra {
         // Without it, new commits show up at the next file change instead.
         if let Err(e) = watcher.watch(&dir, mode) {

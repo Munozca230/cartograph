@@ -176,6 +176,36 @@ pub struct Snapshot {
     /// The query layer behind the flow endpoints (`/api/entries`, `/api/flow`,
     /// `/api/symbol`, `/api/file-flows`): the graph with its symbols and git history.
     pub flows: Option<FlowLayer>,
+    /// `/api/meta`'s `workspace`, for a workspace index: its members (see [`workspace_meta`]).
+    pub workspace: Option<Value>,
+}
+
+/// The members of a workspace index, from its run metadata (`None` for a single repo):
+/// `{ members: [{ name, path, root, git, branch, head, detached }] }`, `path` as the
+/// workspace file writes it, `git` the state of the member's last git pass (`null` before
+/// the first one).
+pub fn workspace_meta(meta: &BTreeMap<String, String>) -> Option<Value> {
+    let members: Vec<cartograph_core::Member> = meta
+        .get(cartograph_index::META_WORKSPACE)
+        .and_then(|t| serde_json::from_str(t).ok())?;
+    let rows: Vec<Value> = members
+        .iter()
+        .map(|m| {
+            let git: Option<cartograph_core::GitStatus> = meta
+                .get(&cartograph_core::git_meta_key(&m.name))
+                .and_then(|t| serde_json::from_str(t).ok());
+            json!({
+                "name": m.name,
+                "path": m.path,
+                "root": m.root.to_string_lossy().replace('\\', "/"),
+                "git": git.as_ref().map(|g| g.state),
+                "branch": git.as_ref().and_then(|g| g.branch.clone()),
+                "head": git.as_ref().and_then(|g| g.head.clone()),
+                "detached": git.as_ref().is_some_and(|g| g.detached),
+            })
+        })
+        .collect();
+    Some(json!({ "members": rows }))
 }
 
 /// The repo as `cartograph-query` sees it, with its calls indexed for flows.
@@ -645,8 +675,10 @@ impl Snapshot {
         if let Some(root) = dirs.first_mut() {
             root.name = repo_name.clone();
         }
+        let workspace = workspace_meta(meta);
 
         Snapshot {
+            workspace,
             generation,
             repo_name,
             indexed_at,

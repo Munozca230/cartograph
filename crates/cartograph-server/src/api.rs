@@ -275,6 +275,9 @@ async fn meta(State(state): AppStateRef) -> axum::Json<Value> {
         "languages": snap.as_ref().map_or_else(|| json!([]), |s| json!(s.languages)),
         "watching": state.watching(),
     });
+    if let Some(ws) = snap.as_ref().and_then(|s| s.workspace.clone()) {
+        body["workspace"] = ws;
+    }
     if let Some(e) = state.error() {
         body["error"] = json!(e);
     }

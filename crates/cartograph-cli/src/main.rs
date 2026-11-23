@@ -155,9 +155,17 @@ enum Command {
     },
     /// Run the MCP server on stdio (for any MCP client or coding agent). stdout carries only
     /// the protocol; logs go to stderr. Indexes in the background and re-indexes on changes.
+    /// A folder with a cartograph-workspace.toml serves the whole workspace.
     Mcp {
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Serve the workspace of this cartograph-workspace.toml instead of PATH (from inside
+        /// a member: `--workspace ../cartograph-workspace.toml --member api`).
+        #[arg(long, value_name = "FILE")]
+        workspace: Option<PathBuf>,
+        /// In a workspace, look for plain paths in this member first.
+        #[arg(long, value_name = "NAME")]
+        member: Option<String>,
         #[command(flatten)]
         data: DataDirArg,
         /// Rules file to use instead of <PATH>/cartograph.toml.
@@ -301,6 +309,8 @@ fn main() -> ExitCode {
         Command::Doctor { path, data } => cmd_doctor(&path, &data),
         Command::Mcp {
             path,
+            workspace,
+            member,
             data,
             config,
             no_watch,
@@ -310,8 +320,13 @@ fn main() -> ExitCode {
             max_file_bytes,
             no_stats,
             notes_in_repo,
-        } => {
+        } => (|| {
+            let path = match workspace {
+                None => path,
+                Some(file) => workspace_root(&file)?,
+            };
             let opts = cartograph_mcp::Options {
+                member,
                 notes_in_repo,
                 stats: !no_stats && std::env::var_os("CARTOGRAPH_NO_STATS").is_none(),
                 max_file_bytes: size_limit(&path, &data, max_file_bytes),
@@ -326,7 +341,7 @@ fn main() -> ExitCode {
             cartograph_mcp::run_stdio(opts)
                 .map(|()| ExitCode::SUCCESS)
                 .map_err(|e| anyhow::anyhow!(e))
-        }
+        })(),
         Command::Eval {
             cases,
             filter,
@@ -407,6 +422,23 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The folder a `--workspace FILE` maps: the one holding it, which must be named
+/// `cartograph-workspace.toml` (a workspace is that file in the folder it maps).
+fn workspace_root(file: &Path) -> Result<PathBuf> {
+    if file.file_name().and_then(|n| n.to_str()) != Some(cartograph_core::WORKSPACE_FILE) {
+        bail!(
+            "--workspace {}: the file must be named {}",
+            file.display(),
+            cartograph_core::WORKSPACE_FILE
+        );
+    }
+    if !file.is_file() {
+        bail!("--workspace {}: no such file", file.display());
+    }
+    let abs = std::path::absolute(file)?;
+    Ok(abs.parent().map(Path::to_path_buf).unwrap_or(abs))
 }
 
 /// The size limit to index with: `--max-file-bytes` when given, else the limit the index in

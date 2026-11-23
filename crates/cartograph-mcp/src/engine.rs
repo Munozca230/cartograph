@@ -51,6 +51,8 @@ pub struct Options {
     /// `annotate` writes to `<root>/cartograph-notes.toml` even before the file exists
     /// (see [`crate::annotations`]).
     pub notes_in_repo: bool,
+    /// In a workspace, the member a plain path is looked for in first (`--member`).
+    pub member: Option<String>,
 }
 
 impl Options {
@@ -67,6 +69,7 @@ impl Options {
             max_concurrent: 4,
             stats: true,
             notes_in_repo: false,
+            member: None,
         }
     }
 }
@@ -94,6 +97,12 @@ pub struct Loaded {
 }
 
 impl Loaded {
+    /// In a workspace, the member plain paths are looked for in first (`--member`).
+    pub fn with_member(mut self, member: Option<String>) -> Loaded {
+        self.repo.set_default_member(member);
+        self
+    }
+
     pub fn build(
         graph: &Graph,
         symbols: &Symbols,
@@ -161,6 +170,8 @@ pub enum Ready {
 
 pub struct Engine {
     pub root: PathBuf,
+    /// The workspace `root` holds (`cartograph-workspace.toml`), if any.
+    pub workspace: Option<cartograph_core::Workspace>,
     pub data_dir: PathBuf,
     pub opts: Options,
     loaded: RwLock<Option<Arc<Loaded>>>,
@@ -241,6 +252,25 @@ impl Engine {
             return Err(format!("{} is not a directory", opts.root.display()));
         }
         let root = cartograph_server::normalize(&opts.root).map_err(|e| e.to_string())?;
+        let workspace = cartograph_core::Workspace::find(&root).map_err(|e| e.to_string())?;
+        if let Some(m) = &opts.member {
+            match &workspace {
+                None => {
+                    return Err(format!(
+                        "--member {m}: {} holds no {}",
+                        root.display(),
+                        cartograph_core::WORKSPACE_FILE
+                    ));
+                }
+                Some(ws) if ws.member(m).is_none() => {
+                    return Err(format!(
+                        "--member {m}: not a member of the workspace (members: {})",
+                        ws.names().join(", ")
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
         let data_dir = cartograph_index::data_dir(&root, opts.data_dir.as_deref());
         std::fs::create_dir_all(&data_dir)
             .map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
@@ -250,6 +280,7 @@ impl Engine {
         Ok(Arc::new(Engine {
             stats,
             _lock: take_lock(&data_dir),
+            workspace,
             root,
             data_dir,
             opts,
@@ -389,7 +420,8 @@ impl Engine {
                 0,
                 true,
                 SystemTime::UNIX_EPOCH,
-            ))
+            )
+            .with_member(self.opts.member.clone()))
         })();
         match res {
             Ok(l) => {
@@ -503,7 +535,8 @@ impl Engine {
             generation,
             false,
             started,
-        );
+        )
+        .with_member(self.opts.member.clone());
         Ok((loaded, out.graph, out.symbols))
     }
 
@@ -542,15 +575,18 @@ impl Engine {
                 Some(x) => x,
                 None => store.load_graph_and_symbols().map_err(|e| e.to_string())?,
             };
-            Ok(Some(Loaded::build(
-                &graph,
-                &symbols,
-                history,
-                eng.config(),
-                generation,
-                false,
-                started,
-            )))
+            Ok(Some(
+                Loaded::build(
+                    &graph,
+                    &symbols,
+                    history,
+                    eng.config(),
+                    generation,
+                    false,
+                    started,
+                )
+                .with_member(eng.opts.member.clone()),
+            ))
         })
         .await;
         let ms = t0.elapsed().as_millis() as u64;
@@ -622,9 +658,13 @@ impl Engine {
         }
         // 2. The files this request names.
         if let Some(l) = self.current() {
-            let root = self.root.clone();
+            let disk = DiskMap {
+                root: self.root.clone(),
+                workspace: self.workspace.clone(),
+                member: self.opts.member.clone(),
+            };
             let args = args.to_vec();
-            let stale = tokio::task::spawn_blocking(move || stale_paths(&root, &l, &args))
+            let stale = tokio::task::spawn_blocking(move || stale_paths(&disk, &l, &args))
                 .await
                 .unwrap_or_default();
             if !stale.is_empty() {
@@ -725,15 +765,55 @@ pub fn arg_path(arg: &str, known: impl Fn(&str) -> bool) -> Option<String> {
     (inside && !s.is_empty() && s != ".").then(|| s.to_string())
 }
 
+/// Where the paths of the index are on disk: below the root, or, in a workspace, below the
+/// folder of the member they start with.
+#[derive(Debug, Clone)]
+pub struct DiskMap {
+    pub root: PathBuf,
+    pub workspace: Option<cartograph_core::Workspace>,
+    /// The member a plain path is looked for in first.
+    pub member: Option<String>,
+}
+
+impl DiskMap {
+    pub fn to_disk(&self, path: &str) -> Option<PathBuf> {
+        match &self.workspace {
+            Some(ws) => ws.to_disk(path),
+            None => Some(self.root.join(path)),
+        }
+    }
+
+    /// `arg` (a path, `member:path`, or a path relative to a member) as a path of the
+    /// index, given the paths it knows: as [`cartograph_query::workspace::Members`] reads
+    /// it, an ambiguous one left as it was.
+    fn canonical(&self, arg: &str, known: impl Fn(&str) -> bool) -> String {
+        let Some(ws) = &self.workspace else {
+            return arg.to_string();
+        };
+        let members = cartograph_query::workspace::Members {
+            names: ws.members.iter().map(|m| m.name.clone()).collect(),
+            default: self.member.clone(),
+        };
+        members
+            .canonical(arg, |p| {
+                known(p) || ws.to_disk(p).is_some_and(|d| d.is_dir())
+            })
+            .unwrap_or_else(|_| arg.to_string())
+    }
+}
+
 /// Files named by `args` whose content differs from the index (edited, deleted, or new
 /// since the index run started).
-pub fn stale_paths(root: &Path, l: &Loaded, args: &[String]) -> Vec<String> {
+pub fn stale_paths(disk: &DiskMap, l: &Loaded, args: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for a in args {
-        let Some(p) = arg_path(a, |p| l.files.contains_key(p)) else {
+        let a = disk.canonical(a, |p| l.files.contains_key(p));
+        let Some(p) = arg_path(&a, |p| l.files.contains_key(p)) else {
             continue;
         };
-        let abs = root.join(&p);
+        let Some(abs) = disk.to_disk(&p) else {
+            continue;
+        };
         match l.files.get(&p) {
             Some((bytes, hash)) => {
                 let changed = match std::fs::metadata(&abs) {
