@@ -489,7 +489,7 @@ The suite is not part of `cargo test` (only the runner is, in
 a finding to fix, and it stays visible instead of being weakened to keep the build green.
 CI runs it in a job that may fail without failing the workflow.
 
-### Results (2026-11-23, 53 cases: 53 pass)
+### Results (2026-11-23, 58 cases: 58 pass)
 
 Every answer is within its budget. Since the first run below, cases were added for dense
 symbol listings, for workspaces (`ws-*` on `tests/fixtures/workspace-basic`: members as
