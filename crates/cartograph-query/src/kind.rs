@@ -161,6 +161,17 @@ fn integration_test(name: &str) -> bool {
     caps.is_empty() || !IT_WORDS.contains(&format!("{caps}IT").as_str())
 }
 
+/// Whether a file name is a test's (`a.test.ts`, `test_a.py`, `ATest.java`, `AIT.java`),
+/// wherever it is.
+pub(crate) fn test_named(name: &str) -> bool {
+    test_file(name) || integration_test(name)
+}
+
+/// Whether a file name is a Java/Kotlin/C# integration test's (`UserServiceIT`).
+pub(crate) fn integration_named(name: &str) -> bool {
+    integration_test(name)
+}
+
 /// The kind of a file from its repo-relative path (forward slashes).
 pub fn file_kind(path: &str) -> FileKind {
     let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();

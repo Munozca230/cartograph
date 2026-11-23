@@ -154,6 +154,19 @@ struct Entries {
     manifest: BTreeSet<String>,
 }
 
+/// A manifest of the repo (a Package node), as `impact` reads it to write test commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Manifest {
+    /// Folder of the manifest (`""` at the root).
+    pub dir: String,
+    /// `maven`, `gradle`, `npm`, `cargo`, `go-mod`, `pyproject`…
+    pub kind: String,
+    /// The package's name, when the manifest gives one.
+    pub name: Option<String>,
+    /// npm: the test runners it uses (`vitest`, `jest`, `playwright`…).
+    pub test_runners: Vec<String>,
+}
+
 pub struct RepoGraph {
     pub repo_name: String,
     pub files: Vec<FileNode>,
@@ -185,6 +198,8 @@ pub struct RepoGraph {
     /// The members of a workspace (top-level folders whose Dir node says so); none for a
     /// single repo.
     pub members: crate::workspace::Members,
+    /// Every manifest, by folder.
+    pub manifests: Vec<Manifest>,
 }
 
 fn parent_of(path: &str) -> &str {
@@ -246,10 +261,23 @@ impl RepoGraph {
         let mut entries = Entries::default();
         // `(package folder, entry as written)`.
         let mut manifest_raw: Vec<(&str, &str)> = Vec::new();
+        let mut manifests: Vec<Manifest> = Vec::new();
         for n in &graph.nodes {
             if n.kind == NodeKind::Package
                 && let Some(d) = n.meta["dir"].as_str()
             {
+                manifests.push(Manifest {
+                    dir: d.to_string(),
+                    kind: n.meta["manifest"].as_str().unwrap_or("").to_string(),
+                    name: (n.meta["named_in_manifest"].as_bool() == Some(true))
+                        .then(|| n.name.clone()),
+                    test_runners: n.meta["details"]["test_runners"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect(),
+                });
                 entries.package_dirs.insert(d.to_string());
                 if n.meta["manifest"].as_str() == Some("npm") {
                     entries.npm_dirs.insert(d.to_string());
@@ -568,6 +596,10 @@ impl RepoGraph {
             dir_ix,
             ext_ix,
             entries,
+            manifests: {
+                manifests.sort_by(|a, b| (&a.dir, &a.kind).cmp(&(&b.dir, &b.kind)));
+                manifests
+            },
         }
     }
 

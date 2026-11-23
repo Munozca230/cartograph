@@ -190,7 +190,54 @@ fn parse_npm(text: &str) -> Result<Parsed, String> {
             Value::Array(entries.into_iter().map(Value::String).collect()),
         );
     }
+    let runners = npm_test_runners(&v);
+    if !runners.is_empty() {
+        details.insert(
+            "test_runners".into(),
+            Value::Array(runners.into_iter().map(Value::String).collect()),
+        );
+    }
     Ok((name, Value::Object(details)))
+}
+
+/// Test runners a `package.json` uses (sorted): a dependency on one, or a script that runs
+/// it (`vitest run`, `jest --ci`, `npx playwright test`); `npm` when it has a `test` script
+/// besides. Read by `impact` to write the command that runs the tests it lists.
+fn npm_test_runners(v: &Value) -> Vec<String> {
+    const RUNNERS: &[(&str, &[&str])] = &[
+        ("vitest", &["vitest"]),
+        ("jest", &["jest", "ts-jest", "@jest/core"]),
+        ("mocha", &["mocha"]),
+        ("playwright", &["@playwright/test", "playwright"]),
+        ("cypress", &["cypress"]),
+    ];
+    let mut deps: Vec<&str> = Vec::new();
+    for key in ["dependencies", "devDependencies"] {
+        if let Some(o) = v.get(key).and_then(Value::as_object) {
+            deps.extend(o.keys().map(String::as_str));
+        }
+    }
+    // The commands of the scripts, word by word (`npx vitest run` → `npx`, `vitest`, `run`).
+    let words: Vec<&str> = v
+        .get("scripts")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|o| o.values())
+        .filter_map(Value::as_str)
+        .flat_map(|s| s.split(|c: char| c.is_whitespace() || matches!(c, '&' | ';' | '|')))
+        .collect();
+    let mut out: Vec<String> = RUNNERS
+        .iter()
+        .filter(|(name, packages)| {
+            packages.iter().any(|p| deps.contains(p)) || words.contains(name)
+        })
+        .map(|(name, _)| name.to_string())
+        .collect();
+    if v.get("scripts").and_then(|s| s.get("test")).is_some() {
+        out.push("npm".to_string());
+    }
+    out.sort();
+    out
 }
 
 /// Whether a `package.json` whose `main` is `main` describes a program rather than a
@@ -652,6 +699,40 @@ mod tests {
                 .get("entries")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn npm_test_runners_from_dependencies_and_scripts() {
+        let m = p(
+            "package.json",
+            r#"{"scripts":{"test":"vitest run","e2e":"playwright test"},
+                "devDependencies":{"@playwright/test":"1.0.0","vitest":"1.0.0"}}"#,
+        );
+        assert_eq!(
+            m.details["test_runners"],
+            json!(["npm", "playwright", "vitest"])
+        );
+        let m = p(
+            "package.json",
+            r#"{"scripts":{"test":"jest --ci"},"dependencies":{"react":"18"}}"#,
+        );
+        assert_eq!(m.details["test_runners"], json!(["jest", "npm"]));
+        let m = p("package.json", r#"{"scripts":{"test":"node --test"}}"#);
+        assert_eq!(m.details["test_runners"], json!(["npm"]));
+        let m = p(
+            "package.json",
+            r#"{"devDependencies":{"ts-jest":"29","cypress":"13","mocha":"10"}}"#,
+        );
+        assert_eq!(
+            m.details["test_runners"],
+            json!(["cypress", "jest", "mocha"])
+        );
+        // A script that only names a runner inside a path is not one.
+        let m = p(
+            "package.json",
+            r#"{"scripts":{"build":"tsc -p tsconfig.jest.json"}}"#,
+        );
+        assert!(m.details.get("test_runners").is_none());
     }
 
     #[test]

@@ -10,9 +10,9 @@ dependents (hops to the change):
   src/core/util.ts 2 (type)
   src/main.ts 2
   src/ui/app.ts 2
-tests to run: 3 of 3 in the repo (100%), 0 import it directly (hops to the change):
+tests to run: 3 of 3 in the repo (100%), 0 import it directly (closest first; hops to the change):
   src/core/service.test.ts 2
   src/ui/app.spec.ts 3
-  tests/e2e.test.ts 3
+  tests/e2e.test.ts 3 · slow: e2e (name)
 test folders: src/core/ 1, src/ui/ 1, tests/ 1
 entry points reached: scripts/seed.ts, src/main.ts

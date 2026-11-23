@@ -41,6 +41,7 @@ pub mod kind;
 pub mod list;
 pub mod overview;
 pub mod path;
+pub mod runnable;
 pub mod symbols;
 mod test_trees;
 mod text;

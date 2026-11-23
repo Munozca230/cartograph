@@ -1,7 +1,8 @@
 //! `impact(nodes[])`: what breaks if these change, within [`limits::IMPACT`]. Transitive
 //! dependents (tests apart), file by file when they all fit, else grouped by folder; the
 //! **tests to run** (test files that reach any of the nodes, directly or transitively;
-//! classified as in `kind.rs`), and the entry
+//! classified as in `kind.rs`), closest first, slow ones marked, with the commands that run
+//! them (see [`crate::runnable`]), and the entry
 //! points reached. Type-only dependencies (TypeScript `import type`…) count: changing a
 //! type still breaks the build. What is reached only through them is marked `type_only`.
 //! With git history, files that usually change with a target but are not reached through
@@ -40,6 +41,13 @@ pub struct TestHit {
     /// It reaches the targets only through type-only imports.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub type_only: bool,
+    /// A test: why it ranks where it does, when that is not its hops (`named after it`, or
+    /// `no test in it` for a helper of the test tree).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// A test: why it is slow (`@SpringBootTest`, `Playwright`, `integration folder`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slow: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,6 +81,14 @@ pub struct Impact {
     /// Folders holding the tests to run, most tests first (a test runner filter).
     pub test_folders: Vec<(String, usize)>,
     pub test_folders_more: usize,
+    /// Tests of a target's package that no import reaches (they may still exercise it).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub same_package: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub same_package_more: usize,
+    /// Commands that run the tests listed (not the helpers), fast ones first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<crate::runnable::TestCommand>,
     /// Entry points that reach a target.
     pub entries: Vec<String>,
     pub entries_more: usize,
@@ -204,6 +220,8 @@ pub fn impact(repo: &Repo, nodes: &[String]) -> Result<Answer<Impact>, QueryErro
         .collect();
     tests.sort();
     let tests_direct = tests.iter().filter(|t| t.0 <= 1).count();
+    let ranked = crate::runnable::rank(g, &start, &tests);
+    let same_package = crate::runnable::same_package(g, &start, |f| dist[f as usize] != u32::MAX);
     let tests_in_repo = g.files.iter().filter(|f| f.kind == FileKind::Test).count();
     let mut test_dirs: BTreeMap<DirIx, usize> = BTreeMap::new();
     for &(_, f) in &tests {
@@ -264,18 +282,22 @@ pub fn impact(repo: &Repo, nodes: &[String]) -> Result<Answer<Impact>, QueryErro
                         id: g.id(NodeRef::File(f)),
                         hops,
                         type_only: typed(f),
+                        note: None,
+                        slow: None,
                     })
                     .collect()
             } else {
                 Vec::new()
             },
-            tests: tests
+            tests: ranked
                 .iter()
                 .take(limit)
-                .map(|&(hops, f)| TestHit {
-                    id: g.id(NodeRef::File(f)),
-                    hops,
-                    type_only: typed(f),
+                .map(|t| TestHit {
+                    id: g.id(NodeRef::File(t.file)),
+                    hops: t.hops,
+                    type_only: typed(t.file),
+                    note: t.closeness.note().map(str::to_string),
+                    slow: t.slow.clone(),
                 })
                 .collect(),
             tests_more: tests.len().saturating_sub(limit),
@@ -287,6 +309,17 @@ pub fn impact(repo: &Repo, nodes: &[String]) -> Result<Answer<Impact>, QueryErro
                 .map(|&(n, d)| (g.id(NodeRef::Dir(d)), n))
                 .collect(),
             test_folders_more: test_dirs.len().saturating_sub(limit.min(8)),
+            same_package: same_package
+                .iter()
+                .take(limit.min(6))
+                .map(|&f| g.id(NodeRef::File(f)))
+                .collect(),
+            same_package_more: same_package.len().saturating_sub(limit.min(6)),
+            commands: crate::runnable::commands(
+                g,
+                &repo.symbols,
+                &ranked[..ranked.len().min(limit)],
+            ),
             entries: entries
                 .iter()
                 .take(limit.min(8))
@@ -429,13 +462,22 @@ fn render(r: &Impact) -> String {
             String::new()
         };
         s.push_str(&format!(
-            "tests to run: {total_tests}{share}, {} import it directly (hops to the change):\n",
+            "tests to run: {total_tests}{share}, {} import it directly (closest first; hops to the change):\n",
             r.tests_direct
         ));
         for t in &r.tests {
             let types = if t.type_only { " (type)" } else { "" };
+            let mut notes: Vec<String> = t.note.iter().cloned().collect();
+            if let Some(why) = &t.slow {
+                notes.push(format!("slow: {why}"));
+            }
+            let notes = if notes.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", notes.join(" · "))
+            };
             s.push_str(&format!(
-                "  {} {}{types}\n",
+                "  {} {}{types}{notes}\n",
                 clip(&short(&t.id), 140),
                 t.hops
             ));
@@ -452,6 +494,31 @@ fn render(r: &Impact) -> String {
             "test folders: {}{}\n",
             dirs.join(", "),
             crate::budget::more(r.test_folders_more)
+        ));
+    }
+    if !r.same_package.is_empty() {
+        let list: Vec<String> = r.same_package.iter().map(|t| short(t)).collect();
+        s.push_str(&format!(
+            "same package, no import reaches it: {}{}\n",
+            clip(&list.join(", "), 600),
+            crate::budget::more(r.same_package_more)
+        ));
+    }
+    for c in &r.commands {
+        let what = match (c.slow, r.tests_more > 0) {
+            (true, false) => "run the slow ones",
+            (true, true) => "run the slow ones listed",
+            (false, false) => "run",
+            (false, true) => "run the tests listed",
+        };
+        let at = match &c.member {
+            Some(m) => format!(", member {m}"),
+            None => String::new(),
+        };
+        s.push_str(&format!(
+            "{what} ({}{at}): {}\n",
+            c.framework,
+            clip(&c.command, 600)
         ));
     }
     if !r.entries.is_empty() {

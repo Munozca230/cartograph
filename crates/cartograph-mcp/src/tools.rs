@@ -442,7 +442,9 @@ impl Cartograph {
     #[tool(
         description = "Before editing files: everything that depends on them transitively (what \
             can break), grouped by folder, and the test files that reach them (the tests to \
-            run). `nodes`: the files or folders about to change, e.g. [\"src/model.rs\"].",
+            run), closest first, slow ones marked, with a ready command per build (Maven, \
+            Gradle, vitest/jest, pytest, go, cargo). `nodes`: the files or folders about to \
+            change, e.g. [\"src/model.rs\"].",
         annotations(read_only_hint = true)
     )]
     async fn impact(&self, Parameters(a): Parameters<ImpactArgs>) -> CallToolResult {

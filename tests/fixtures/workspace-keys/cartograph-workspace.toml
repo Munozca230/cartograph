@@ -1,0 +1,25 @@
+# String keys across members: a Java enum of action keys and a class of step-name
+# constants (core), a Spring component that binds every action key but one to code (server), a
+# switch that runs the steps (core), a UI catalog that lists every action key but
+# another one (ui), and an agent map of step names that lacks one (agent). The server is
+# a Maven reactor with a wrapper and one module; its tests mix unit tests, a Spring Boot
+# test, a Mongo slice inherited from a base class and a helper with no test. The UI runs
+# vitest and Playwright.
+[workspace]
+name = "keys"
+
+[[member]]
+name = "core"
+path = "core"
+
+[[member]]
+name = "server"
+path = "server"
+
+[[member]]
+name = "ui"
+path = "ui"
+
+[[member]]
+name = "agent"
+path = "agent"

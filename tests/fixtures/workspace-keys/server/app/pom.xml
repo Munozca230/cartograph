@@ -1,0 +1,16 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.acme</groupId>
+    <artifactId>server-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+  <artifactId>server-app</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>com.acme</groupId>
+      <artifactId>core</artifactId>
+      <version>1.0.0</version>
+    </dependency>
+  </dependencies>
+</project>

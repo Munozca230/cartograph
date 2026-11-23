@@ -47,6 +47,12 @@ fixture = "../tests/fixtures/workspace-basic"
 [repos.bridges]
 fixture = "../tests/fixtures/workspace-bridges"
 
+# String keys across members (an enum, a registry, a switch, catalogs), and runnable
+# tests: a Maven reactor with a wrapper (unit, Spring Boot and slice tests), vitest and
+# Playwright.
+[repos.keys]
+fixture = "../tests/fixtures/workspace-keys"
+
 # A layered app. main: an old cycle and an old ui -> db violation. Branch feature: a new
 # cycle (model <-> service) and a new core -> ui import. Uncommitted: an unresolved import.
 [repos.layered]
@@ -380,6 +386,31 @@ question = "I will make a field of CreateOrderDto required: which tests do I run
 tool = "impact"
 args = { nodes = ["src/main/java/com/acme/shop/order/dto/CreateOrderDto.java"] }
 contains = ["CreateOrderDtoValidationTest.java", "OrderServiceImplTest.java"]
+
+[[case]]
+id = "impact-runnable-maven-tests"
+repo = "keys"
+question = "I changed FileServiceImpl: which tests do I run first, which are slow, and with what command?"
+tool = "impact"
+args = { nodes = ["server:app/src/main/java/com/acme/server/files/FileServiceImpl.java"] }
+contains = [
+  "FileServiceImplTest.java 1 · named after it",
+  "slow: @SpringBootTest",
+  "same package, no import reaches it",
+  "FilePathsTest.java",
+  "./mvnw test -pl app -Dtest=FileServiceImplTest",
+  "run the slow ones",
+]
+in_order = true
+not_contains = ["TestFiles,", ",TestFiles"]
+
+[[case]]
+id = "impact-runnable-js-tests"
+repo = "keys"
+question = "I changed the UI action catalog: which tests do I run, and how?"
+tool = "impact"
+args = { nodes = ["ui:src/actions/catalog.ts"] }
+contains = ["npx vitest run src/actions/catalog.test.ts", "npx playwright test e2e/catalog.spec.ts"]
 
 # ---------------------------------------------------------------- find
 

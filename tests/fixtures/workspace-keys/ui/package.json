@@ -1,0 +1,12 @@
+{
+  "name": "@acme/ui",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.44.0",
+    "vitest": "1.6.0"
+  }
+}

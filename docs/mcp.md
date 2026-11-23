@@ -23,7 +23,7 @@ the model, *instead of* the text, which reads worse and costs about twice the to
 | `overview` | listing directories, reading READMEs | `path` (repo), `depth` 1-4 (1) | 1.5k tokens |
 | `explain` | opening a file to learn its role and neighbours | `node` | 1k |
 | `deps` | grepping import statements | `node`, `dir` out/in/both (out), `depth` 1-3 (1), `level` file/folder (file) | 1.5k |
-| `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder) | `nodes` (list) | 1.5k |
+| `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder; the tests closest first, slow ones marked, and the command that runs them: see [Tests to run](#tests-to-run)) | `nodes` (list) | 1.5k |
 | `find` | glob/grep for a name | `query`, `kind` file/dir/ext/sym (all but sym; symbols too when no path has it) | 0.8k |
 | `path` | tracing why A depends on B by hand | `from`, `to`, `bridges` (true: steps over an IPC channel or an exposed preload function count, and say so) | 0.8k |
 | `symbols` | reading a file for its outline (a line per definition; when that does not fit, the uncalled members of the biggest objects and classes by name, `api (150, pub): save, load, +148 more`, then the other symbols that do not fit) | `node` | 1k |
@@ -77,6 +77,45 @@ both.
 The server instructions (sent at initialization) say when to prefer cartograph over grep,
 so a client that defers tool schemas behind a tool search still knows when to reach for
 the tools. Every tool but `annotate` and `open_map` is marked read-only.
+
+### Tests to run
+
+`impact` lists the test files that reach the change through imports, and ranks them:
+
+1. a test named after a changed file (`FooTest`, `FooServiceTest` or `FooServiceImplIT`
+   for `FooServiceImpl`, `foo.test.ts`, `test_foo.py`, `foo_test.go`): `named after it`;
+2. tests that import it from its own package or folder (Java: the test tree's mirror of
+   it, `src/test/java/a` for `src/main/java/a`);
+3. the other tests that import it, then those that reach it through more files (the
+   number after each path is the hops);
+4. files of a test tree that hold no test (helpers, base classes): `no test in it`.
+
+Tests of a changed file's package that no import reaches are named apart (`same package,
+no import reaches it`): they may still exercise it.
+
+A test is marked `slow:` when it imports `@SpringBootTest`, a Spring test slice
+(`@DataMongoTest`, `@WebMvcTest`…), Testcontainers, Playwright or Cypress, itself or
+through a base class or helper of the test tree (`@DataMongoTest (via MongoSliceTest)`);
+when its name says so (`FooIT`, `FooIntegrationTest`, `a.e2e.ts`); or when it sits in an
+`integration`, `it` or `e2e` folder.
+
+Then one line per build root, the fast tests first and the slow ones in their own
+command (`run the slow ones`); helpers are in none. When the list ends in `+N more`,
+the line says `run the tests listed`: the command runs those only.
+
+| Build | Command (from the root it names) |
+|---|---|
+| Maven | `./mvnw test -Dtest=A,B` where the wrapper is (else `mvn`), from the top of the build; `-pl module` for a module of a multi-module build |
+| Gradle | `./gradlew :module:test --tests A --tests B` (else `gradle`) |
+| vitest, jest, mocha | `npx vitest run <paths>`, `npx jest <paths>`, `npx mocha <paths>`: the runner the `package.json` depends on or its scripts run, paths relative to it; `npm test -- <paths>` when only a `test` script is known; nothing when there is neither |
+| Playwright, Cypress | `npx playwright test <paths>`, `npx cypress run --spec <paths>`, for the tests that import them |
+| pytest | `pytest <paths>` from the folder of `pyproject.toml` (or `setup.py`, `requirements.txt`) |
+| Go | `go test ./pkg -run '^(TestA\|TestB)$'` from the module root |
+| Rust | `cargo test -p crate`, with `--test name` for files of the crate's `tests/` |
+
+In a workspace each line names its member (`run (maven, member api): ./mvnw test …`): the
+command runs from that member's root (with a `cd` first when the build is below it). The
+JSON (`commands`) has the same: framework, member, command, how many tests, slow.
 
 ### `open_map`: the visual map
 
@@ -247,7 +286,8 @@ the map instead of from grep:
    functions, classes, methods and types, with path:line). `explain(node)` instead of
    opening a file to learn its role, its imports, who imports it and which tests cover it.
 3. **Before editing a file**: `impact(nodes: [files])` lists what depends on it
-   transitively and the test files to run. Run those tests after the edit.
+   transitively and the test files to run, closest first, with the command that runs
+   them. Run those tests after the edit (the slow ones last).
 4. **Before changing a function, method or type**: `callers(symbol)`. Update every caller
    it lists; confirm the `heuristic` ones by reading them.
 5. **Dependencies**: `deps(node, dir: "in" | "out")`; `path(from, to)` explains why A

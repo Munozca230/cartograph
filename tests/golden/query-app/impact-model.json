@@ -92,7 +92,8 @@
     },
     {
       "id": "file:tests/e2e.test.ts",
-      "hops": 3
+      "hops": 3,
+      "slow": "e2e (name)"
     }
   ],
   "tests_more": 0,
