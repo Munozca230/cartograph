@@ -896,8 +896,8 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// `@Resource` asks for, the bean names of nested classes and generated mappers; 29:
 /// parameters given another value, names of repository interfaces, Cassandra and R2DBC
 /// repositories; 30: modifiers and parameters of Java methods, `super`
-/// calls.
-pub const REVISION: u32 = 30;
+/// calls; 31: `Outer.Inner x` is not typed again.
+pub const REVISION: u32 = 31;
 
 /// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
 /// `orderService`; `URLMaker`, two capitals first, stays as it is).

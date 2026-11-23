@@ -1598,16 +1598,6 @@ fn resolve_type(ctx: &Ctx<'_>, binds: &[Bindings<'_>], fi: usize, name: &str) ->
         return Some(match via_binding(ctx, binds, bd, name) {
             Out::Hit(s, c) if ctx.symbols[s as usize].kind.is_type() => Out::Hit(s, c),
             Out::Ambiguous => Out::Ambiguous,
-            // Java: a type nested in the class the import names (`import a.Outer.Inner`).
-            _ if fam == Fam::Java => {
-                let nested: Vec<Sid> = bd
-                    .files
-                    .iter()
-                    .flat_map(|&f| ctx.top_types(f, bd.imported.unwrap_or(name)))
-                    .collect();
-                ctx.decide(&nested, Confidence::Resolved)
-                    .unwrap_or(Out::Unresolved)
-            }
             _ => Out::Unresolved,
         });
     }

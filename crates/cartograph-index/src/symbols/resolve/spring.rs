@@ -53,10 +53,10 @@ fn stored(entities: &HashMap<Sid, Vec<Store>>, e: Sid, store: &str, class: &str)
     {
         return Some(st.clone());
     }
-    if store.is_empty() {
-        return said.and_then(|v| v.first().cloned());
+    if let Some(v) = said {
+        return v.first().cloned();
     }
-    Some(Store {
+    (!store.is_empty()).then(|| Store {
         store: store.to_string(),
         name: default_name(store, class),
         confidence: Confidence::Heuristic,

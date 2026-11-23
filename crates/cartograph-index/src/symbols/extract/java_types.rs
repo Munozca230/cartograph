@@ -225,15 +225,6 @@ fn declared(ty: Option<Node<'_>>, value: Option<Node<'_>>, src: &[u8]) -> Option
             JTy::Elems(held)
         });
     }
-    if ty.kind() == "scoped_type_identifier" {
-        // `Outer.Inner x`: the nested type (not `a.b.Type`, a package's).
-        let t = text(ty, src);
-        let (outer, name) = t.rsplit_once('.')?;
-        let outer = outer.rsplit('.').next().unwrap_or(outer);
-        return outer
-            .starts_with(char::is_uppercase)
-            .then(|| JTy::Plain(name.to_string()));
-    }
     if ty.kind() != "type_identifier" {
         return None;
     }
