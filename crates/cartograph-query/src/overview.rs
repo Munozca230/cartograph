@@ -218,20 +218,45 @@ pub fn overview(
         (rows, top_more)
     };
 
-    let mut entries: Vec<(u8, FileIx, &'static str)> = files
+    // Files a program starts in (a `main` the symbol layer found: a Java or C# `static
+    // main`, a Rust or Go `main`, a `package.json` `main`) come first, whatever their name;
+    // the one that uses the most files first, so the application's `main` leads a stray
+    // sample `Main.java`.
+    let mains: std::collections::HashSet<&str> = repo
+        .symbols
+        .entries
+        .iter()
+        .filter(|e| e.kind == cartograph_core::EntryKind::Main)
+        .map(|e| e.file.as_str())
+        .collect();
+    let mut entries: Vec<(u8, Option<std::cmp::Reverse<usize>>, FileIx, &'static str)> = files
         .iter()
         .filter_map(|&f| {
-            let why = root_entry(g, f, root)?;
-            Some((entry_rank(why), f, why))
+            let program = mains.contains(g.files[f as usize].path.as_str())
+                && g.files[f as usize].kind == FileKind::Code
+                && !in_test_tree(g, f, root);
+            let why = match root_entry(g, f, root) {
+                Some(why) => why,
+                None if program => "main",
+                None => return None,
+            };
+            let rank = if program { 0 } else { entry_rank(why) };
+            let uses = program.then(|| std::cmp::Reverse(g.out[f as usize].len()));
+            Some((rank, uses, f, why))
         })
         .collect();
     entries.sort_by(|a, b| {
-        (a.0, g.files[a.1 as usize].dir != ROOT, a.1).cmp(&(
+        (a.0, a.1, g.files[a.2 as usize].dir != ROOT, a.2).cmp(&(
             b.0,
-            g.files[b.1 as usize].dir != ROOT,
             b.1,
+            g.files[b.2 as usize].dir != ROOT,
+            b.2,
         ))
     });
+    let entries: Vec<(u8, FileIx, &'static str)> = entries
+        .into_iter()
+        .map(|(r, _, f, why)| (r, f, why))
+        .collect();
 
     let mut hubs: Vec<(usize, FileIx)> = files
         .iter()

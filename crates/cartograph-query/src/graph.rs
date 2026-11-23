@@ -122,6 +122,9 @@ pub enum NodeRef {
 struct Entries {
     godot: HashMap<String, &'static str>,
     package_dirs: BTreeSet<String>,
+    /// Folders of `package.json` files: a JS file at their top runs only if the manifest
+    /// names it.
+    npm_dirs: BTreeSet<String>,
     /// Files a manifest runs or exposes (`package.json` main, bin, exports, scripts).
     manifest: BTreeSet<String>,
 }
@@ -216,6 +219,9 @@ impl RepoGraph {
                 && let Some(d) = n.meta["dir"].as_str()
             {
                 entries.package_dirs.insert(d.to_string());
+                if n.meta["manifest"].as_str() == Some("npm") {
+                    entries.npm_dirs.insert(d.to_string());
+                }
                 for e in n.meta["details"]["entries"]
                     .as_array()
                     .into_iter()
@@ -741,6 +747,32 @@ fn dir_targets(files: &[FileNode], dir: &DirNode, lang: Option<&str>) -> Vec<Fil
     if non_test.is_empty() { pool } else { non_test }
 }
 
+/// First name parts of the files of JS tools at the top of a package
+/// (`vitest.scripts.ts`, `jest.setup.js`, `gulpfile.js`), loaded by the tool.
+const TOOL_STEMS: &[&str] = &[
+    "vitest",
+    "jest",
+    "playwright",
+    "cypress",
+    "karma",
+    "webpack",
+    "rollup",
+    "vite",
+    "babel",
+    "eslint",
+    "prettier",
+    "stylelint",
+    "postcss",
+    "tailwind",
+    "tsup",
+    "esbuild",
+    "commitlint",
+    "gulpfile",
+    "gruntfile",
+    "nodemon",
+    "ecosystem",
+];
+
 /// Names that mark a JS/TS/Python file as an entry point when nothing imports it.
 const ENTRY_STEMS: &[&str] = &[
     "main",
@@ -879,9 +911,21 @@ fn entry_reason(
             if package_root && PACKAGE_ENTRY_STEMS.contains(&stem) {
                 return Some("package entry");
             }
-            // A loose file at the top of a package (or the repo) is run directly.
-            if parent.is_empty() || package_root {
-                return Some("top-level script");
+            let top = parent.is_empty() || package_root;
+            // A tool's own file at the top (`vitest.workspace.ts`, `jest.setup.js`,
+            // `gulpfile.js`): the tool loads it.
+            if top && TOOL_STEMS.contains(&stem) {
+                return Some("tool entry");
+            }
+            // A loose file at the top of a package (or the repo) is run directly; at the top
+            // of an npm package, only if `package.json` names it (a "manifest entry",
+            // above) or its name is an entry name (`middleware.ts`, `sw.js`): any other JS
+            // file there is a one-off (`test-esm.js`, `try.mjs`).
+            if top {
+                let js = !matches!(lang, Some("python"));
+                let one_off =
+                    js && entries.npm_dirs.contains(parent) && !ENTRY_STEMS.contains(&stem);
+                return (!one_off).then_some("top-level script");
             }
             // Elsewhere the name says so too (Electron main/preload, Vite main.tsx, Python
             // __main__).

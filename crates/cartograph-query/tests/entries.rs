@@ -307,7 +307,47 @@ fn package_entry_is_reachable() {
     let g = &repo.graph;
     let entry = |p: &str| g.files[g.file_by_path(p).unwrap() as usize].entry;
     assert_eq!(entry("pkg/index.ts"), Some("package entry"));
-    assert_eq!(entry("pkg/other.ts"), Some("top-level script"));
+    // A loose file at the top of an npm package that the manifest does not name.
+    assert_eq!(entry("pkg/other.ts"), None);
+}
+
+/// Loose one-off scripts at the top of an npm package are not entry points; those its
+/// `package.json` runs, tool files and entry names are.
+#[test]
+fn loose_scripts_at_an_npm_root_are_not_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("p");
+    write(
+        &root,
+        "package.json",
+        r#"{"name":"p","bin":{"p":"dist/cli.js"},"scripts":{"smoke":"node smoke.mjs"}}"#,
+    );
+    for f in [
+        "test-esm.js",
+        "try.mjs",
+        "smoke.mjs",
+        "vitest.scripts.ts",
+        "jest.setup.js",
+        "middleware.ts",
+        "src/cli.ts",
+    ] {
+        write(&root, f, "export const a = 1;\n");
+    }
+    write(&root, "loose.py", "x = 1\n");
+    let repo = Repo::new(&index_dir(&root), Config::default());
+    let g = &repo.graph;
+    let entry = |p: &str| g.files[g.file_by_path(p).unwrap() as usize].entry;
+    assert_eq!(entry("test-esm.js"), None);
+    // A loose `.mjs` at the top is a script (listed nowhere, never an orphan).
+    assert_eq!(entry("try.mjs"), Some("script"));
+    assert_eq!(entry("smoke.mjs"), Some("manifest entry"));
+    assert_eq!(entry("vitest.scripts.ts"), Some("tool entry"));
+    assert_eq!(entry("jest.setup.js"), Some("config/data"));
+    assert_eq!(entry("middleware.ts"), Some("top-level script"));
+    // `bin` names the build output; its source is the entry.
+    assert_eq!(entry("src/cli.ts"), Some("manifest entry"));
+    // Python keeps its rule: a loose file at the top is run directly.
+    assert_eq!(entry("loose.py"), Some("top-level script"));
 }
 
 #[test]
