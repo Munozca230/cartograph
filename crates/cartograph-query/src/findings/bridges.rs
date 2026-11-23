@@ -1,9 +1,10 @@
 //! Findings about bridges (see [`crate::bridges`]), from the endpoints the indexer left
 //! unmatched: an IPC channel no handler serves, a renderer call to a function the preload
-//! does not expose, a handler nothing uses.
+//! does not expose, a handler nothing uses; an HTTP call no route serves or that uses the
+//! wrong method, a route no member calls.
 
 use super::{Ctx, Finding, FindingKind, Severity};
-use crate::bridges::{BridgeTable, UNEXPOSED, UNMATCHED, UNUSED};
+use crate::bridges::{BridgeTable, METHOD_MISMATCH, UNEXPOSED, UNMATCHED, UNUSED};
 use crate::graph::NodeRef;
 use cartograph_core::{BridgeEndpoint, BridgeKind, BridgeRole};
 use std::collections::BTreeMap;
@@ -125,6 +126,56 @@ pub(super) fn ipc_unused_handler(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> 
         Severity::Info,
         |e| ipc(e, BridgeRole::Provide, UNUSED),
         |key, _| format!("IPC handler of \"{key}\" is never invoked or sent to"),
+    )
+}
+
+fn http(e: &BridgeEndpoint, role: BridgeRole, detail: &str) -> bool {
+    e.kind == BridgeKind::Http && e.role == role && e.detail.as_deref() == Some(detail)
+}
+
+/// HTTP calls whose server is known that no route serves.
+pub(super) fn http_unmatched_call(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
+    per_key(
+        cx,
+        b,
+        FindingKind::HttpUnmatchedCall,
+        Severity::Warning,
+        |e| http(e, BridgeRole::Consume, UNMATCHED),
+        |key, n| {
+            format!(
+                "HTTP call {key} matches no route of its server ({})",
+                sites(n)
+            )
+        },
+    )
+}
+
+/// HTTP calls to a route that exists with another method.
+pub(super) fn http_method_mismatch(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
+    per_key(
+        cx,
+        b,
+        FindingKind::HttpMethodMismatch,
+        Severity::Warning,
+        |e| http(e, BridgeRole::Consume, METHOD_MISMATCH),
+        |key, n| {
+            format!(
+                "HTTP call {key}: the route exists with another method ({})",
+                sites(n)
+            )
+        },
+    )
+}
+
+/// Routes no member calls, in members other members do call.
+pub(super) fn http_unused_route(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
+    per_key(
+        cx,
+        b,
+        FindingKind::HttpUnusedRoute,
+        Severity::Info,
+        |e| http(e, BridgeRole::Provide, UNUSED),
+        |key, _| format!("route {key} is never called by the workspace"),
     )
 }
 

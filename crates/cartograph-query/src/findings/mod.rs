@@ -342,6 +342,15 @@ pub fn analyze_with(
     if on(FindingKind::UndeclaredMemberDependency) {
         out.extend(bridges::undeclared_member_dependency(&cx, bridged));
     }
+    if on(FindingKind::HttpUnmatchedCall) {
+        out.extend(bridges::http_unmatched_call(&cx, bridged));
+    }
+    if on(FindingKind::HttpMethodMismatch) {
+        out.extend(bridges::http_method_mismatch(&cx, bridged));
+    }
+    if on(FindingKind::HttpUnusedRoute) {
+        out.extend(bridges::http_unused_route(&cx, bridged));
+    }
     // Ids are unique: a repeated one gets `#2`, `#3`…
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     for f in &mut out {

@@ -9,6 +9,26 @@ pub const UNMATCHED: &str = "unmatched";
 pub const UNUSED: &str = "unused";
 pub const UNEXPOSED: &str = "unexposed";
 pub const DYNAMIC: &str = "dynamic";
+/// HTTP (see `cartograph_index::symbols::resolve::http`): a route of another method, a
+/// call whose base reaches no member, a foreign host, too many routes, a member nobody
+/// calls.
+pub const METHOD_MISMATCH: &str = "method_mismatch";
+pub const NO_SERVER: &str = "no_server";
+pub const EXTERNAL: &str = "external";
+pub const AMBIGUOUS: &str = "ambiguous";
+pub const NO_CLIENTS: &str = "no_clients";
+
+/// How much an endpoint left without its other side asks for attention: what is broken
+/// first (a call nothing serves, the wrong method, an unexposed function), then what is
+/// unused, then what is only counted.
+pub fn detail_rank(detail: &str) -> u8 {
+    match detail.split_whitespace().next().unwrap_or(detail) {
+        UNMATCHED | METHOD_MISMATCH | UNEXPOSED => 0,
+        UNUSED | "version_skew" => 1,
+        NO_SERVER | AMBIGUOUS => 2,
+        _ => 3,
+    }
+}
 
 /// The bridges of an index, indexed.
 #[derive(Debug, Default)]
@@ -252,7 +272,14 @@ pub fn bridges(repo: &Repo, q: &BridgeQuery) -> Result<Answer<BridgesResult>, Qu
         .filter(|e| kind_ok(e.kind) && e.detail.is_some() && in_scope(&e.file))
         .collect();
     left.sort_by(|a, b| {
-        (&a.detail, &a.key, &a.file, a.line).cmp(&(&b.detail, &b.key, &b.file, b.line))
+        let rank = |e: &BridgeEndpoint| detail_rank(e.detail.as_deref().unwrap_or(""));
+        (rank(a), &a.detail, &a.key, &a.file, a.line).cmp(&(
+            rank(b),
+            &b.detail,
+            &b.key,
+            &b.file,
+            b.line,
+        ))
     });
     let mut unmatched_counts: BTreeMap<String, usize> = BTreeMap::new();
     for e in &left {
@@ -454,6 +481,54 @@ pub fn links(t: &BridgeTable, paths: &BTreeSet<String>, out: bool, inn: bool) ->
         (a.dir, a.confidence, &a.key, &a.there).cmp(&(b.dir, b.confidence, &b.key, &b.there))
     });
     v
+}
+
+/// The endpoints of the files `paths` left without the other side that need attention
+/// (see [`detail_rank`]): an HTTP call no route serves or with the wrong method, an IPC
+/// channel no handler serves, a call the preload does not expose.
+pub fn left(t: &BridgeTable, paths: &BTreeSet<String>) -> Vec<EndpointRow> {
+    let mut v: Vec<&BridgeEndpoint> = paths
+        .iter()
+        .flat_map(|p| t.endpoints_of(p))
+        .filter(|e| {
+            e.role == BridgeRole::Consume
+                && e.detail.as_deref().is_some_and(|d| detail_rank(d) == 0)
+        })
+        .collect();
+    v.sort_by(|a, b| (&a.file, a.line, &a.key).cmp(&(&b.file, b.line, &b.key)));
+    v.into_iter()
+        .map(|e| EndpointRow {
+            kind: e.kind,
+            role: e.role,
+            key: clip(&e.key, 160),
+            label: clip(&e.label, 80),
+            at: at(&e.file, e.line),
+            symbol: e.symbol.clone(),
+            detail: e.detail.clone().unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// The lines of [`left`] for an answer.
+pub fn render_left(s: &mut String, left: &[EndpointRow], more: usize) {
+    if left.is_empty() {
+        return;
+    }
+    s.push_str("left without the other side:\n");
+    for e in left {
+        s.push_str(&format!(
+            "  {} \"{}\" at {}{} ({}): {}\n",
+            kind_label(e.kind),
+            e.key,
+            clip(&e.at, 160),
+            sym_name(&e.symbol),
+            e.label,
+            e.detail
+        ));
+    }
+    if more > 0 {
+        s.push_str(&format!("  +{more} more (see `bridges` with unmatched)\n"));
+    }
 }
 
 /// The lines of [`links`] for an answer: `out ipc invoke "users:get" → path:line Name`.

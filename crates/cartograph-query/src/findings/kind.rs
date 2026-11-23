@@ -37,10 +37,17 @@ pub enum FindingKind {
     UndeclaredMemberDependency,
     /// A member depends on another member's package at another version than it has.
     VersionSkew,
+    /// An HTTP call whose server is known (a member, a declared host, a base whose other
+    /// calls reach routes) that no route serves.
+    HttpUnmatchedCall,
+    /// An HTTP call to a route that exists with another method.
+    HttpMethodMismatch,
+    /// A route no member calls, in a member other members do call.
+    HttpUnusedRoute,
 }
 
 impl FindingKind {
-    pub const ALL: [FindingKind; 15] = [
+    pub const ALL: [FindingKind; 18] = [
         FindingKind::LayerViolation,
         FindingKind::FanOutLimit,
         FindingKind::Cycle,
@@ -56,6 +63,9 @@ impl FindingKind {
         FindingKind::IpcUnusedHandler,
         FindingKind::UndeclaredMemberDependency,
         FindingKind::VersionSkew,
+        FindingKind::HttpUnmatchedCall,
+        FindingKind::HttpMethodMismatch,
+        FindingKind::HttpUnusedRoute,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -75,6 +85,9 @@ impl FindingKind {
             FindingKind::IpcUnusedHandler => "ipc_unused_handler",
             FindingKind::UndeclaredMemberDependency => "undeclared_member_dependency",
             FindingKind::VersionSkew => "version_skew",
+            FindingKind::HttpUnmatchedCall => "http_unmatched_call",
+            FindingKind::HttpMethodMismatch => "http_method_mismatch",
+            FindingKind::HttpUnusedRoute => "http_unused_route",
         }
     }
 }

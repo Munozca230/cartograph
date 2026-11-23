@@ -280,3 +280,82 @@ fn ignored_manifests_and_members_leave_package_findings() {
         "{ids:?}"
     );
 }
+
+/// `callers` of a controller method lists the client sites that reach it over HTTP, the
+/// one awaited with type arguments and the one through an axios instance included.
+#[test]
+fn callers_of_a_route_handler_come_over_http() {
+    let r = repo();
+    let a = symbols::callers(&r, "UserController.get").unwrap();
+    for want in [
+        "over HTTP \"GET /api/users/{}\" (wrapper) from desktop/src/main/http/UsersApi.ts:11 UsersApi.getUser()",
+        "over HTTP \"GET /api/users/{}\" (axios) from web/src/users.ts:4 loadUser()",
+    ] {
+        assert!(a.text.contains(want), "{want}\n{}", a.text);
+    }
+    // `/users/me` is its own route, not `/users/{id}`.
+    assert!(!a.text.contains("UsersApi.me()"), "{}", a.text);
+}
+
+#[test]
+fn http_findings_report_what_is_broken_not_what_is_unknown() {
+    let r = repo();
+    let ids: Vec<(&str, FindingKind)> = r
+        .findings()
+        .iter()
+        .map(|f| (f.id.as_str(), f.kind))
+        .collect();
+    for (id, kind) in [
+        (
+            "http_unmatched_call:desktop:POST /api/reports/generate",
+            FindingKind::HttpUnmatchedCall,
+        ),
+        (
+            "http_method_mismatch:web:PUT /api/users/me",
+            FindingKind::HttpMethodMismatch,
+        ),
+        (
+            "http_unused_route:api:DELETE /api/users/{}",
+            FindingKind::HttpUnusedRoute,
+        ),
+        (
+            "http_unused_route:gateway:POST /v2/jobs/{}",
+            FindingKind::HttpUnusedRoute,
+        ),
+    ] {
+        assert!(ids.contains(&(id, kind)), "{id}: {ids:?}");
+    }
+    // A foreign host and a URL built at run time are counted, never reported.
+    assert!(
+        !ids.iter()
+            .any(|(id, _)| id.contains("audit.example.com") || id.ends_with(':')),
+        "{ids:?}"
+    );
+}
+
+#[test]
+fn explain_lists_the_calls_no_route_serves() {
+    let r = repo();
+    let e = explain::explain(&r, "desktop:src/main/http/UsersApi.ts").unwrap();
+    assert!(
+        e.text.contains("left without the other side:")
+            && e.text.contains(
+                "HTTP \"POST /api/reports/generate\" at desktop/src/main/http/UsersApi.ts:24"
+            ),
+        "{}",
+        e.text
+    );
+    assert!(
+        e.text.contains("HTTP wrapper \"GET /api/users/me\""),
+        "{}",
+        e.text
+    );
+}
+
+#[test]
+fn entries_count_the_callers_of_a_route_over_http() {
+    let r = repo();
+    let a = symbols::entries(&r, None, Some("api:src"), false).unwrap();
+    assert!(a.text.contains(" · 2 over HTTP"), "{}", a.text);
+    assert!(a.text.contains("no caller over HTTP"), "{}", a.text);
+}

@@ -488,25 +488,31 @@ pub struct EntryRow {
     /// has IPC bridges.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub over_ipc: Option<usize>,
+    /// An HTTP route: the call sites that reach it over HTTP, when the index has HTTP
+    /// bridges.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub over_http: Option<usize>,
 }
 
 impl EntryRow {
     fn of(e: &EntryPoint, t: &SymbolTable) -> EntryRow {
-        let ipc = cartograph_core::BridgeKind::Ipc;
-        let over_ipc = (e.kind == EntryKind::Ipc
-            && t.bridges.bridges.iter().any(|b| b.kind == ipc))
-        .then(|| {
-            t.bridges
-                .into_file(&e.file)
-                .filter(|b| b.kind == ipc && b.dst_line == e.line)
-                .count()
-        });
+        let over = |entry: EntryKind, kind: cartograph_core::BridgeKind| {
+            (e.kind == entry && t.bridges.bridges.iter().any(|b| b.kind == kind)).then(|| {
+                t.bridges
+                    .into_file(&e.file)
+                    .filter(|b| b.kind == kind && b.dst_line == e.line)
+                    .count()
+            })
+        };
+        let over_ipc = over(EntryKind::Ipc, cartograph_core::BridgeKind::Ipc);
+        let over_http = over(EntryKind::Http, cartograph_core::BridgeKind::Http);
         EntryRow {
             kind: e.kind,
             name: clip(&e.name, 120),
             at: format!("{}:{}", e.file, e.line),
             target: e.target.as_ref().map(|t| clip(t, 200)),
             over_ipc,
+            over_http,
         }
     }
 
@@ -515,10 +521,12 @@ impl EntryRow {
             .target
             .as_deref()
             .map_or(String::new(), |t| format!(" → {}", short_target(t)));
-        let over = match self.over_ipc {
-            Some(0) => " · no caller over IPC".to_string(),
-            Some(n) => format!(" · {n} over IPC"),
-            None => String::new(),
+        let over = match (self.over_ipc, self.over_http) {
+            (Some(0), _) => " · no caller over IPC".to_string(),
+            (Some(n), _) => format!(" · {n} over IPC"),
+            (_, Some(0)) => " · no caller over HTTP".to_string(),
+            (_, Some(n)) => format!(" · {n} over HTTP"),
+            _ => String::new(),
         };
         format!(
             "{} {}{target} ({}){over}",

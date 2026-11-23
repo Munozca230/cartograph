@@ -129,6 +129,13 @@ pub struct Explain {
     pub bridges: Vec<crate::bridges::Link>,
     #[serde(skip_serializing_if = "crate::explain::is_zero")]
     pub bridges_more: usize,
+    /// Its bridge endpoints left without the other side that need attention: an HTTP call
+    /// no route serves or with the wrong method, an IPC channel no handler serves, a call
+    /// the preload does not expose.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bridges_left: Vec<crate::bridges::EndpointRow>,
+    #[serde(skip_serializing_if = "crate::explain::is_zero")]
+    pub bridges_left_more: usize,
 }
 
 pub(crate) fn is_zero(n: &usize) -> bool {
@@ -186,6 +193,17 @@ pub fn explain_with(
                 .map(|f| g.path(f).to_string())
                 .collect();
             crate::bridges::links(&repo.symbols.bridges, &paths, true, true)
+        }
+    };
+    let left = match n {
+        NodeRef::Ext(_) => Vec::new(),
+        _ => {
+            let paths: std::collections::BTreeSet<String> = g
+                .files_of(n)
+                .into_iter()
+                .map(|f| g.path(f).to_string())
+                .collect();
+            crate::bridges::left(&repo.symbols.bridges, &paths)
         }
     };
     let findings: Vec<FindingRef> = repo
@@ -318,6 +336,8 @@ pub fn explain_with(
             annotation: annotation.clone(),
             bridges: links.iter().take(limit.min(6)).cloned().collect(),
             bridges_more: links.len().saturating_sub(limit.min(6)),
+            bridges_left: left.iter().take(limit.min(4)).cloned().collect(),
+            bridges_left_more: left.len().saturating_sub(limit.min(4)),
         },
         render,
     ))
@@ -568,6 +588,7 @@ fn render(e: &Explain) -> String {
             s.push_str(&format!("  +{} more\n", e.findings_more));
         }
     }
+    crate::bridges::render_left(&mut s, &e.bridges_left, e.bridges_left_more);
     crate::bridges::render_links(&mut s, &e.bridges, e.bridges_more);
     if e.node != "external" {
         s.push_str(&crate::symbols::explain_line(&e.id, e.symbols.as_ref()));
