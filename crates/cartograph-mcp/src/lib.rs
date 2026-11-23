@@ -42,13 +42,15 @@ pub fn run_stdio(opts: Options) -> Result<(), String> {
     let res = rt.block_on(async {
         engine.start();
         tracing::info!(root = %engine.root.display(), data = %engine.data_dir.display(), "cartograph mcp ready");
-        let service = Cartograph::new(engine.clone())
+        let server = Cartograph::new(engine.clone());
+        let map = server.map.clone();
+        let service = server
             .serve(rmcp::transport::stdio())
             .await
             .map_err(|e| format!("MCP handshake failed: {e}"))?;
         let reason = service.waiting().await;
         tracing::info!(?reason, "client gone; stopping");
-        engine.map.stop().await;
+        map.stop().await;
         Ok(())
     });
     // A running index stops at its next check; a blocked stdin read or a query thread is

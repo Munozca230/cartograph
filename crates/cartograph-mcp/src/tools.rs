@@ -188,6 +188,8 @@ pub struct AnnotateArgs {
 #[derive(Clone)]
 pub struct Cartograph {
     pub engine: Arc<Engine>,
+    /// The web map that `open_map` starts on demand (see [`crate::map`]).
+    pub map: Arc<crate::map::Map>,
     guard: Guard,
 }
 
@@ -233,7 +235,11 @@ fn query_error(e: &QueryError, structured: bool) -> CallToolResult {
 impl Cartograph {
     pub fn new(engine: Arc<Engine>) -> Cartograph {
         let guard = Guard::new(engine.opts.max_concurrent, engine.opts.tool_timeout);
-        Cartograph { engine, guard }
+        Cartograph {
+            engine,
+            map: Arc::default(),
+            guard,
+        }
     }
 
     /// A tool argument as the query crate wants it: an absolute path inside the repo
@@ -661,7 +667,7 @@ impl Cartograph {
             Ok(x) => x,
             Err(r) => return r,
         };
-        let base = match self.engine.map.ensure(&self.engine).await {
+        let base = match self.map.ensure(&self.engine).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::error!(error = %e, "web map failed");

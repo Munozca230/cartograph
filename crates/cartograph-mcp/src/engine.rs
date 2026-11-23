@@ -168,8 +168,6 @@ pub struct Engine {
     pub notes_lock: Mutex<()>,
     /// Usage stats, unless turned off.
     pub stats: Option<crate::stats::Recorder>,
-    /// The web map that `open_map` starts on demand (see [`crate::map`]).
-    pub map: crate::map::Map,
     /// Held for the server's lifetime (released by the OS when the process dies).
     _lock: Option<File>,
     _watcher: Mutex<Option<cartograph_server::watch::Watcher>>,
@@ -257,7 +255,6 @@ impl Engine {
             status: Mutex::new(Status::default()),
             generation,
             notes_lock: Mutex::new(()),
-            map: crate::map::Map::default(),
             _watcher: Mutex::new(None),
         }))
     }
