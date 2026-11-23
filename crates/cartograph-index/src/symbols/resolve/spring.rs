@@ -171,6 +171,21 @@ pub(super) fn run(
             else {
                 continue;
             };
+            // Calls on the field or parameter itself, inside the receiving class.
+            let od = &f.code.defs[(owner - f.first) as usize];
+            let mut uses: Vec<u32> = f
+                .code
+                .calls
+                .iter()
+                .filter(|c| c.form == Form::Member && (od.start..=od.end).contains(&c.line))
+                .filter(|c| {
+                    c.qualifier.as_deref() == Some(i.member.as_str())
+                        || c.field.as_deref() == Some(i.member.as_str())
+                })
+                .map(|c| c.line)
+                .collect();
+            uses.sort_unstable();
+            uses.dedup();
             injections.push(SpringInjection {
                 owner: id(owner),
                 how: i.how.clone(),
@@ -180,6 +195,7 @@ pub(super) fn run(
                 qualifier: i.qualifier.clone(),
                 file: path.to_string(),
                 line: i.line,
+                uses,
             });
         }
         let calls_of = callables(ctx, fi);

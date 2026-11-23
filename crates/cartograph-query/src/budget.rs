@@ -17,6 +17,9 @@ pub mod limits {
     /// `find` of a string key: its trace (definitions, runners, catalogs, missing, uses).
     pub const TRACE: usize = 1500;
     pub const PATH: usize = 800;
+    /// `path` to a client whose calls cross a bridge, continued past it down to the data
+    /// (see `crate::slice`).
+    pub const SLICE: usize = 1500;
     pub const FINDINGS: usize = 1500;
     pub const CHECK: usize = 1000;
     pub const SYMBOLS: usize = 1000;

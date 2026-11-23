@@ -48,36 +48,76 @@ pub struct PathResult {
     /// When A does not reach B: a path from B to A, if there is one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reverse: Option<Vec<Step>>,
+    /// When B calls out over HTTP or IPC: the calls from A's functions to B's, continued
+    /// past B down to the data (see [`crate::slice`]); those shown in full first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub slice: Vec<crate::slice::Chain>,
+    /// Of `slice`, how many are shown in full (the rest in one line each).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub slice_full: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub slice_more: usize,
 }
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// How much of a path with a slice an answer shows: alternative paths, crossings, chains
+/// in full, chains in one line, continuations per chain.
+const SLICE_STEPS: [(usize, usize, usize, usize, usize); 8] = [
+    (3, 10, 3, 6, 2),
+    (1, 6, 3, 6, 2),
+    (1, 4, 2, 6, 2),
+    (1, 3, 2, 4, 1),
+    (1, 3, 1, 4, 1),
+    (1, 2, 1, 2, 1),
+    (1, 1, 1, 1, 1),
+    (1, 1, 1, 0, 1),
+];
 
 /// An importing file and the line of its import.
 type Source = (FileIx, Option<u32>, bool);
 
 fn steps(repo: &Repo, p: &[FileIx]) -> Vec<Step> {
+    steps_along(repo, p, &[])
+}
+
+/// [`steps`], each bridge step by a bridge of `prefer` (step labels) when one fits: the
+/// bridges a slice crosses, so the path and the slice tell one story.
+fn steps_along(repo: &Repo, p: &[FileIx], prefer: &[String]) -> Vec<Step> {
     let g = &repo.graph;
+    let pick = |f: FileIx, n: FileIx| {
+        let mut all = repo.symbols.bridges.between(g.path(f), g.path(n));
+        let first = all.next()?;
+        Some(
+            std::iter::once(first)
+                .chain(all)
+                .find(|b| prefer.contains(&crate::bridges::step_label(b)))
+                .unwrap_or(first),
+        )
+    };
     p.iter()
         .enumerate()
         .map(|(i, &f)| {
             let next = p.get(i + 1).copied();
             // A bridge only where no dependency explains the step.
-            let bridge = next.filter(|&n| g.dep(f, n).is_none()).and_then(|n| {
-                repo.symbols
-                    .bridges
-                    .between(g.path(f), g.path(n))
-                    .next()
-                    .map(crate::bridges::step_label)
-                    .or_else(|| g.bridge(f, n).map(|_| "bridge".to_string()))
-            });
+            let crossed = next
+                .filter(|&n| g.dep(f, n).is_none())
+                .and_then(|n| pick(f, n));
+            let bridge = match (crossed, next) {
+                (Some(b), _) => Some(crate::bridges::step_label(b)),
+                (None, Some(n)) if g.dep(f, n).is_none() => {
+                    g.bridge(f, n).map(|_| "bridge".to_string())
+                }
+                _ => None,
+            };
             Step {
                 id: g.id(NodeRef::File(f)),
-                line: match &bridge {
-                    Some(_) => repo
-                        .symbols
-                        .bridges
-                        .between(g.path(f), next.map_or("", |n| g.path(n)))
-                        .next()
-                        .map(|b| b.src_line),
-                    None => next.and_then(|n| g.site(f, n)).map(|s| s.line),
+                line: match (&bridge, crossed) {
+                    (Some(_), Some(b)) => Some(b.src_line),
+                    (Some(_), None) => None,
+                    (None, _) => next.and_then(|n| g.site(f, n)).map(|s| s.line),
                 },
                 type_only: next.is_some_and(|n| g.type_only(f, n)),
                 bridge,
@@ -210,46 +250,94 @@ pub fn path_with(
     let mut crossings: Vec<(FileIx, Vec<Source>)> = by_target.into_iter().collect();
     crossings.sort_by(|x, y| y.1.len().cmp(&x.1.len()).then(x.0.cmp(&y.0)));
 
-    Ok(fit(
-        limits::PATH,
-        &[10, 8, 6, 5, 4, 3, 2, 1],
-        |limit| PathResult {
-            from: g.id(na),
-            to: g.id(nb),
-            direct,
-            crossings: crossings
-                .iter()
-                .take(limit)
-                .map(|(t, srcs)| Crossing {
-                    target: g.id(NodeRef::File(*t)),
-                    count: srcs.len(),
-                    from: srcs
+    // B calls out over a bridge: the slice past it.
+    let to_paths: BTreeSet<String> = fb.iter().map(|&f| g.path(f).to_string()).collect();
+    let chains = if bridges && !paths.is_empty() && crate::slice::crosses(&repo.symbols, &to_paths)
+    {
+        let from_paths: BTreeSet<String> = fa.iter().map(|&f| g.path(f).to_string()).collect();
+        crate::slice::chains(&repo.symbols, &from_paths, &to_paths)
+    } else {
+        Vec::new()
+    };
+    let base = |limit: usize| PathResult {
+        from: g.id(na),
+        to: g.id(nb),
+        direct,
+        crossings: crossings
+            .iter()
+            .take(limit)
+            .map(|(t, srcs)| Crossing {
+                target: g.id(NodeRef::File(*t)),
+                count: srcs.len(),
+                from: srcs
+                    .iter()
+                    .take((limit / 3).max(1))
+                    .map(|&(s, line, type_only)| {
+                        let at = match line {
+                            Some(l) => format!("{}:{l}", g.path(s)),
+                            None => g.path(s).to_string(),
+                        };
+                        if type_only {
+                            format!("{at} (type)")
+                        } else {
+                            at
+                        }
+                    })
+                    .collect(),
+            })
+            .collect(),
+        crossings_more: crossings.len().saturating_sub(limit),
+        paths: paths
+            .iter()
+            .take(if limit >= 3 { 3 } else { 1 })
+            .map(|p| steps(repo, p))
+            .collect(),
+        reverse: reverse.as_ref().map(|p| steps(repo, p)),
+        slice: Vec::new(),
+        slice_full: 0,
+        slice_more: 0,
+    };
+    if !chains.is_empty() {
+        let prefer: Vec<String> = chains[0]
+            .hops
+            .iter()
+            .filter_map(|h| h.via.clone())
+            .collect();
+        let idx: Vec<usize> = (0..SLICE_STEPS.len()).collect();
+        return Ok(fit(
+            limits::SLICE,
+            &idx,
+            |k| {
+                let (alts, limit, full, brief, conts) = SLICE_STEPS[k];
+                PathResult {
+                    paths: paths
                         .iter()
-                        .take((limit / 3).max(1))
-                        .map(|&(s, line, type_only)| {
-                            let at = match line {
-                                Some(l) => format!("{}:{l}", g.path(s)),
-                                None => g.path(s).to_string(),
-                            };
-                            if type_only {
-                                format!("{at} (type)")
-                            } else {
-                                at
-                            }
+                        .take(alts)
+                        .map(|p| steps_along(repo, p, &prefer))
+                        .collect(),
+                    slice: chains
+                        .iter()
+                        .take(full + brief)
+                        .enumerate()
+                        .map(|(i, c)| crate::slice::Chain {
+                            hops: c.hops.clone(),
+                            continues: c
+                                .continues
+                                .iter()
+                                .take(if i < full { conts } else { 1 })
+                                .cloned()
+                                .collect(),
                         })
                         .collect(),
-                })
-                .collect(),
-            crossings_more: crossings.len().saturating_sub(limit),
-            paths: paths
-                .iter()
-                .take(if limit >= 3 { 3 } else { 1 })
-                .map(|p| steps(repo, p))
-                .collect(),
-            reverse: reverse.as_ref().map(|p| steps(repo, p)),
-        },
-        render,
-    ))
+                    slice_full: full.min(chains.len()),
+                    slice_more: chains.len().saturating_sub(full + brief),
+                    ..base(limit)
+                }
+            },
+            render,
+        ));
+    }
+    Ok(fit(limits::PATH, &[10, 8, 6, 5, 4, 3, 2, 1], base, render))
 }
 
 fn render_path(s: &mut String, p: &[Step]) {
@@ -319,5 +407,89 @@ fn render(r: &PathResult) -> String {
             render_path(&mut s, p);
         }
     }
+    render_slice(&mut s, r, &b);
     s
+}
+
+/// The chains of a slice: the first ones a step per line (the file only when it changes),
+/// the rest in one line each.
+fn render_slice(s: &mut String, r: &PathResult, b: &str) {
+    use crate::slice::{Continuation, Hop};
+    if r.slice.is_empty() {
+        return;
+    }
+    let to_name = b.rsplit('/').next().unwrap_or(b);
+    let step = |s: &mut String, h: &Hop, last: &mut String, first: bool| {
+        let at = if h.file == *last {
+            format!(":{}", h.line)
+        } else {
+            format!("{}:{}", clip(&h.file, 160), h.line)
+        };
+        *last = h.file.clone();
+        let via = h
+            .via
+            .as_deref()
+            .map_or(String::new(), |v| format!(" ({})", clip(v, 100)));
+        let arrow = if first { "" } else { "→ " };
+        s.push_str(&format!("    {arrow}{at} {}{via}\n", clip(&h.symbol, 100)));
+    };
+    let sink_text = |c: &Continuation| {
+        c.sink.as_ref().map(|k| {
+            let via = k
+                .entity
+                .as_deref()
+                .map_or(String::new(), |e| format!(", via {e}"));
+            format!("collection {} ({}{via})", clip(&k.name, 80), k.store)
+        })
+    };
+    s.push_str(&format!(
+        "calls from {} into {to_name} and past it (path:line = where the next step is called):\n",
+        short(&r.from)
+    ));
+    for (i, c) in r.slice.iter().enumerate() {
+        if i < r.slice_full {
+            s.push_str(&format!("  {}.\n", i + 1));
+            let mut last = String::new();
+            for (j, h) in c.hops.iter().enumerate() {
+                step(s, h, &mut last, j == 0);
+            }
+            for k in &c.continues {
+                s.push_str(&format!(
+                    "    continues past {to_name} over {}:\n",
+                    clip(&k.key, 100)
+                ));
+                for h in &k.hops {
+                    step(s, h, &mut last, false);
+                }
+                if let Some(t) = sink_text(k) {
+                    s.push_str(&format!("    → {t}\n"));
+                }
+                if !k.other_sinks.is_empty() {
+                    let more = if k.other_sinks_more > 0 {
+                        format!(", +{} more", k.other_sinks_more)
+                    } else {
+                        String::new()
+                    };
+                    s.push_str(&format!(
+                        "    also reaches: {}{more}\n",
+                        clip(&k.other_sinks.join(", "), 200)
+                    ));
+                }
+            }
+            continue;
+        }
+        // One line: the functions only.
+        let mut names: Vec<String> = c.hops.iter().map(|h| clip(&h.symbol, 60)).collect();
+        for k in c.continues.iter().take(1) {
+            names.push(clip(&k.key, 60));
+            names.extend(k.hops.iter().map(|h| clip(&h.symbol, 60)));
+            if let Some(t) = sink_text(k) {
+                names.push(t);
+            }
+        }
+        s.push_str(&format!("  {}. {}\n", i + 1, names.join(" → ")));
+    }
+    if r.slice_more > 0 {
+        s.push_str(&format!("  +{} more chains\n", r.slice_more));
+    }
 }

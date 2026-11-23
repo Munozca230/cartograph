@@ -46,6 +46,9 @@ pub struct SpringInjection {
     pub qualifier: Option<String>,
     pub file: String,
     pub line: u32,
+    /// Lines of the calls made on the field or parameter itself (`gateway.charge()`,
+    /// `this.gateway.charge()`), in the receiving class.
+    pub uses: Vec<u32>,
 }
 
 impl SpringInjection {
@@ -119,6 +122,7 @@ mod tests {
             qualifier: None,
             file: "A.java".into(),
             line: 3,
+            uses: vec![5],
         };
         assert!(i.takes_all());
         i.wrapper = "ObjectProvider".into();

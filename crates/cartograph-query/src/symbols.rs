@@ -49,6 +49,8 @@ pub struct SymbolTable {
     pub bridges: crate::bridges::BridgeTable,
     /// String keys: where each is defined, run, listed and used.
     pub keys: crate::keys::KeyTable,
+    /// Spring beans, injection points and data sinks.
+    pub spring: crate::spring::SpringTable,
 }
 
 impl SymbolTable {
@@ -93,6 +95,7 @@ impl SymbolTable {
         t.scip = s.scip.stats.clone();
         t.bridges = crate::bridges::BridgeTable::build(s);
         t.keys = crate::keys::KeyTable::build(s);
+        t.spring = crate::spring::SpringTable::build(s);
         t
     }
 
@@ -1128,6 +1131,58 @@ pub struct CallersResult {
     pub bridged: Vec<BridgedCaller>,
     #[serde(skip_serializing_if = "is_zero")]
     pub bridged_more: usize,
+    /// Spring: where the beans of the method's type are injected, and which beans each
+    /// place receives.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spring: Option<SpringCallers>,
+}
+
+/// The Spring side of `callers`: the injection points of the method's type (or, for a
+/// bean's own method, those of its supertypes that receive the bean).
+#[derive(Debug, Clone, Serialize)]
+pub struct SpringCallers {
+    /// The type (`PriceRule`).
+    #[serde(rename = "type")]
+    pub ty: String,
+    /// Beans of the type (its own and its subtypes').
+    pub beans: usize,
+    /// Their labels, when no injection point lists them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bean_names: Vec<String>,
+    pub points: Vec<SpringPoint>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub points_more: usize,
+    /// Calls through a supertype's declaration left out because Spring gives the calling
+    /// field or parameter other beans: `(Type.m, count)`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub other_beans: Vec<(String, usize)>,
+}
+
+/// One injection point and what it receives.
+#[derive(Debug, Clone, Serialize)]
+pub struct SpringPoint {
+    /// The receiving class.
+    pub owner: String,
+    /// `constructor`, `field rules`, `setter setLedger`…
+    pub how: String,
+    /// `List<PriceRule>`, `PaymentGateway @Qualifier("wire")`.
+    pub declared: String,
+    /// `path:line`.
+    pub at: String,
+    /// `all`, `qualified`, `only`, `primary`, `by name`, `ambiguous`, `none`.
+    pub why: String,
+    /// Beans it receives.
+    pub count: usize,
+    /// Their labels (some of them, `+N more` for the rest); empty when they are the same
+    /// as the point before.
+    pub names: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub names_more: usize,
+    /// The same beans as the point before.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub same: bool,
+    /// Of the beans of its type.
+    pub of: usize,
 }
 
 /// The callers of `id` over a bridge, each with who reaches its own caller over one more
@@ -1175,7 +1230,7 @@ fn bridged_callers(t: &SymbolTable, id: &str) -> Vec<(BridgedCaller, Vec<Bridged
 }
 
 /// A call site of `callers`, with the supertype declaration it went through (`Type.m`).
-type Site<'t> = (&'t SymbolCall, Option<&'t str>);
+type Site<'t> = (&'t SymbolCall, Option<String>);
 
 /// Hops of supertypes `callers` looks through (as `hierarchy`).
 const SUPER_HOPS: usize = 5;
@@ -1283,29 +1338,67 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
     // purpose (`super.m()` in the override): not a call that may run the override.
     let own = split_symbol_id(&id)
         .and_then(|(p, q)| q.rsplit_once('.').map(|(ty, _)| format!("sym:{p}#{ty}.")));
+    // Spring: a call through a supertype's declaration made on an injected field or
+    // parameter reaches the beans Spring gives it, and no other implementation.
+    let own_ty = crate::spring::type_of_method(t, &id);
+    let mut other_beans: Vec<(String, usize)> = Vec::new();
     for (d, name) in &decls {
         let before = calls.len();
-        calls.extend(
-            t.callers_of(d)
-                .iter()
-                .map(|&i| (&t.calls[i], Some(name.as_str())))
-                .filter(|(c, _)| {
-                    !own.as_ref().is_some_and(|o| {
-                        c.caller
-                            .as_deref()
-                            .is_some_and(|x| x.starts_with(o.as_str()))
-                    })
-                }),
-        );
+        let decl_ty = crate::spring::type_of_method(t, d);
+        let mut others = 0;
+        for &i in t.callers_of(d) {
+            let c = &t.calls[i];
+            let mine = own.as_ref().is_some_and(|o| {
+                c.caller
+                    .as_deref()
+                    .is_some_and(|x| x.starts_with(o.as_str()))
+            });
+            if mine {
+                continue;
+            }
+            let spring = decl_ty.as_deref().and_then(|dt| {
+                crate::spring::reaching(t, c.caller.as_deref(), &c.file, c.line, dt)
+            });
+            match spring {
+                Some(beans) if beans.iter().any(|b| Some(&b.ty) == own_ty.as_ref()) => {
+                    calls.push((c, Some(format!("{name} (Spring bean)"))));
+                }
+                Some(_) => others += 1,
+                None => calls.push((c, Some(name.clone()))),
+            }
+        }
         if calls.len() > before {
             through_decls.push(clip(name, 120));
         }
+        if others > 0 {
+            other_beans.push((clip(name, 120), others));
+        }
     }
+    let spring = match spring_callers(t, own_ty.as_deref(), &decls, &calls) {
+        Some(mut sp) => {
+            sp.other_beans = other_beans;
+            Some(sp)
+        }
+        None if !other_beans.is_empty() => Some(SpringCallers {
+            ty: own_ty
+                .as_deref()
+                .map_or(String::new(), |x| clip(crate::spring::leaf(x), 80)),
+            beans: 0,
+            bean_names: Vec::new(),
+            points: Vec::new(),
+            points_more: 0,
+            other_beans,
+        }),
+        None => None,
+    };
     let through = calls.iter().filter(|c| c.1.is_some()).count();
     let bridged = bridged_callers(t, &id);
     let mut by_file: BTreeMap<&str, Vec<Site<'_>>> = BTreeMap::new();
     for c in &calls {
-        by_file.entry(c.0.file.as_str()).or_default().push(*c);
+        by_file
+            .entry(c.0.file.as_str())
+            .or_default()
+            .push((c.0, c.1.clone()));
     }
     // A symbol of a test or fixture tree is called from there: nothing to set apart.
     let g = &repo.graph;
@@ -1374,12 +1467,12 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                             sites: cs
                                 .iter()
                                 .take(per)
-                                .map(|&(c, via)| CallSiteRow {
+                                .map(|(c, via)| CallSiteRow {
                                     line: c.line,
                                     caller: c.caller.as_ref().map(|x| clip(x, 240)),
                                     confidence: c.confidence,
                                     scip: t.from_scip(c),
-                                    via: via.map(|v| clip(v, 120)),
+                                    via: via.as_deref().map(|v| clip(v, 140)),
                                 })
                                 .collect(),
                             more: if per == 0 {
@@ -1404,6 +1497,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                     })
                     .collect(),
                 bridged_more: bridged.len().saturating_sub(max_files),
+                spring: spring.as_ref().map(|sp| sp.shrink(k)),
             }
         },
         render_callers,
@@ -1430,6 +1524,7 @@ fn render_callers(r: &CallersResult) -> String {
             " · no resolved call sites (calls that did not resolve are only counted; see `symbols` of the calling folder)\n",
         );
         render_bridged(r, &mut s);
+        render_spring(r, &mut s);
         return s;
     }
     let mut conf = Vec::new();
@@ -1474,8 +1569,15 @@ fn render_callers(r: &CallersResult) -> String {
             clip(&short(&gr.file), 140),
             gr.count
         ));
+        // Java has no code outside its classes: a call outside any method is in a
+        // constructor or an initializer (constructors are not symbols).
+        let outside = if gr.file.ends_with(".java") {
+            "(constructor or initializer)"
+        } else {
+            "(top level)"
+        };
         for c in &gr.sites {
-            let who = c.caller.as_deref().map_or("(top level)".to_string(), |x| {
+            let who = c.caller.as_deref().map_or(outside.to_string(), |x| {
                 split_symbol_id(x).map_or(x.to_string(), |(_, n)| format!("{}()", clip(n, 80)))
             });
             let scip = if c.scip { ", scip" } else { "" };
@@ -1493,6 +1595,7 @@ fn render_callers(r: &CallersResult) -> String {
         }
     }
     render_bridged(r, &mut s);
+    render_spring(r, &mut s);
     if r.groups_more > 0 {
         let shown_tests = r.groups.iter().filter(|g| g.test).count();
         let more_tests = r.test_files.saturating_sub(shown_tests);
@@ -1508,6 +1611,230 @@ fn render_callers(r: &CallersResult) -> String {
         }
     }
     s
+}
+
+/// Bean labels shown per injection point, by step of [`callers`]'s fit.
+const SPRING_NAMES: [usize; 10] = [32, 24, 21, 16, 12, 10, 8, 6, 4, 3];
+/// Injection points shown, by step.
+const SPRING_POINTS: [usize; 10] = [8, 8, 6, 6, 5, 4, 3, 3, 2, 1];
+
+impl SpringCallers {
+    /// Within step `k` of the fit: fewer points and labels.
+    fn shrink(&self, k: usize) -> SpringCallers {
+        let names = SPRING_NAMES[k.min(SPRING_NAMES.len() - 1)];
+        let points = SPRING_POINTS[k.min(SPRING_POINTS.len() - 1)];
+        let cut = |v: &[String]| v.iter().take(names).cloned().collect::<Vec<_>>();
+        SpringCallers {
+            bean_names: cut(&self.bean_names),
+            points: self
+                .points
+                .iter()
+                .take(points)
+                .map(|p| SpringPoint {
+                    names: cut(&p.names),
+                    names_more: p.names_more + p.names.len().saturating_sub(names),
+                    ..p.clone()
+                })
+                .collect(),
+            points_more: self.points_more + self.points.len().saturating_sub(points),
+            ..self.clone()
+        }
+    }
+}
+
+/// The Spring side of `callers` for a method of type `ty` (see [`SpringCallers`]):
+/// the injection points of `ty`, those in the calling classes first; for a bean whose type
+/// has none, those of its supertypes (`decls`) that receive it.
+fn spring_callers(
+    t: &SymbolTable,
+    ty: Option<&str>,
+    decls: &[(String, String)],
+    calls: &[Site<'_>],
+) -> Option<SpringCallers> {
+    use crate::spring::{Why, bean_label, beans_of, declared, leaf, pick};
+    let ty = ty?;
+    if t.spring.is_empty() {
+        return None;
+    }
+    let own_beans = beans_of(t, ty);
+    let mut points: Vec<(&cartograph_core::SpringInjection, String)> = t
+        .spring
+        .injections_of(ty)
+        .map(|i| (i, ty.to_string()))
+        .collect();
+    let is_bean = own_beans.iter().any(|b| b.ty == ty);
+    if points.is_empty() && is_bean {
+        for (d, _) in decls {
+            let Some(dt) = crate::spring::type_of_method(t, d) else {
+                continue;
+            };
+            let all = beans_of(t, &dt);
+            for i in t.spring.injections_of(&dt) {
+                if pick(i, &all).0.iter().any(|b| b.ty == ty) {
+                    points.push((i, dt.clone()));
+                }
+            }
+        }
+    }
+    let callers: HashSet<String> = calls
+        .iter()
+        .flat_map(|(c, _)| crate::spring::caller_classes(t, c.caller.as_deref(), &c.file))
+        .collect();
+    points.sort_by(|a, b| {
+        (!callers.contains(&a.0.owner), &a.0.file, a.0.line).cmp(&(
+            !callers.contains(&b.0.owner),
+            &b.0.file,
+            b.0.line,
+        ))
+    });
+    points.dedup_by(|a, b| std::ptr::eq(a.0, b.0));
+    // A type nobody injects and no bean implements: nothing Spring adds.
+    let implementors: Vec<&cartograph_core::SpringBean> =
+        own_beans.iter().copied().filter(|b| b.ty != ty).collect();
+    if points.is_empty() && implementors.is_empty() {
+        return None;
+    }
+    let mut last: Option<Vec<String>> = None;
+    let rows: Vec<SpringPoint> = points
+        .iter()
+        .map(|(i, pty)| {
+            let all = beans_of(t, pty);
+            let (got, why) = pick(i, &all);
+            let names: Vec<String> = got.iter().map(|b| bean_label(b)).collect();
+            let same = last.as_ref() == Some(&names) && names.len() > 1;
+            last = Some(names.clone());
+            let how = match i.how.as_str() {
+                "constructor" | "bean" => i.how.clone(),
+                h => format!("{h} {}", i.member),
+            };
+            let declared = match &i.qualifier {
+                Some(q) => format!("{} @Qualifier(\"{}\")", declared(i), clip(q, 60)),
+                None => declared(i),
+            };
+            SpringPoint {
+                owner: clip(leaf(&i.owner), 80),
+                how,
+                declared: clip(&declared, 120),
+                at: format!("{}:{}", clip(&i.file, 200), i.line),
+                why: match why {
+                    Why::All => "all",
+                    Why::Qualifier => "qualified",
+                    Why::Only => "only",
+                    Why::Primary => "primary",
+                    Why::Name => "by name",
+                    Why::Ambiguous => "ambiguous",
+                    Why::None => "none",
+                }
+                .to_string(),
+                count: got.len(),
+                names: if same {
+                    Vec::new()
+                } else {
+                    names.iter().map(|n| clip(n, 80)).collect()
+                },
+                names_more: 0,
+                same,
+                of: all.len(),
+            }
+        })
+        .collect();
+    Some(SpringCallers {
+        ty: clip(leaf(ty), 80),
+        beans: implementors.len(),
+        bean_names: if rows.is_empty() {
+            implementors
+                .iter()
+                .map(|b| clip(&bean_label(b), 80))
+                .collect()
+        } else {
+            Vec::new()
+        },
+        points: rows,
+        points_more: 0,
+        other_beans: Vec::new(),
+    })
+}
+
+/// `CouponRule, SeasonRule, +2 more`.
+fn spring_names(names: &[String], more: usize) -> String {
+    let mut s = names.join(", ");
+    if more > 0 {
+        s.push_str(&format!(", +{more} more"));
+    }
+    s
+}
+
+/// `Spring: injected into X (constructor, List<I>) path:line: N beans: A, B`, one line per
+/// injection point; calls left out because they reach other beans.
+fn render_spring(r: &CallersResult, s: &mut String) {
+    let Some(sp) = &r.spring else {
+        return;
+    };
+    for (decl, n) in &sp.other_beans {
+        s.push_str(&format!(
+            "{n} call{} through {decl} reach{} {} (Spring injects {} there)\n",
+            if *n == 1 { "" } else { "s" },
+            if *n == 1 { "es" } else { "" },
+            if *n == 1 {
+                "another bean"
+            } else {
+                "other beans"
+            },
+            if *n == 1 { "it" } else { "them" },
+        ));
+    }
+    if sp.points.is_empty() {
+        if sp.beans > 0 {
+            s.push_str(&format!(
+                "Spring: {} bean{} implement{} {}: {}; injected nowhere in the repo\n",
+                sp.beans,
+                if sp.beans == 1 { "" } else { "s" },
+                if sp.beans == 1 { "s" } else { "" },
+                sp.ty,
+                spring_names(&sp.bean_names, sp.beans.saturating_sub(sp.bean_names.len()))
+            ));
+        }
+        return;
+    }
+    if sp.beans == 0 {
+        // A bean's own method: where its supertypes are injected with it.
+        s.push_str(&format!("Spring: the {} bean\n", sp.ty));
+    } else {
+        s.push_str(&format!(
+            "Spring: {} bean{} of {}\n",
+            sp.beans,
+            if sp.beans == 1 { "" } else { "s" },
+            sp.ty
+        ));
+    }
+    for p in &sp.points {
+        let got = match p.why.as_str() {
+            _ if p.same => format!("the same {} beans", p.count),
+            "all" => format!(
+                "{} bean{}: {}",
+                p.count,
+                if p.count == 1 { "" } else { "s" },
+                spring_names(&p.names, p.names_more)
+            ),
+            "qualified" => format!("{} (qualified)", spring_names(&p.names, p.names_more)),
+            "only" => format!("{} (the only bean)", spring_names(&p.names, p.names_more)),
+            "primary" => format!("{} (@Primary, of {})", spring_names(&p.names, 0), p.of),
+            "by name" => format!("{} (by name, of {})", spring_names(&p.names, 0), p.of),
+            "ambiguous" => format!(
+                "ambiguous, {} fit: {}",
+                p.count,
+                spring_names(&p.names, p.names_more)
+            ),
+            _ => "no bean of the type in the repo".to_string(),
+        };
+        s.push_str(&format!(
+            "  injected into {} ({}, {}) {}: {got}\n",
+            p.owner, p.how, p.declared, p.at
+        ));
+    }
+    if sp.points_more > 0 {
+        s.push_str(&format!("  +{} more injection points\n", sp.points_more));
+    }
 }
 
 /// The callers over a bridge: `over IPC "docs:save" (invoke) from path:line f()`, then

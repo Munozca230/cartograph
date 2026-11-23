@@ -299,7 +299,8 @@ const MIGRATIONS: &[&str] = &[
         ty        TEXT NOT NULL,
         qualifier TEXT,
         file      TEXT NOT NULL,
-        line      INTEGER NOT NULL
+        line      INTEGER NOT NULL,
+        uses      TEXT NOT NULL
     );
     CREATE TABLE data_sinks (
         store      TEXT NOT NULL,
@@ -1523,8 +1524,8 @@ fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
     }
     let mut stmt = tx.prepare(
         "INSERT INTO spring_injections
-         (owner, how, member, wrapper, ty, qualifier, file, line)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (owner, how, member, wrapper, ty, qualifier, file, line, uses)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )?;
     for i in &s.injections {
         stmt.execute(params![
@@ -1535,7 +1536,8 @@ fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
             i.ty,
             i.qualifier,
             i.file,
-            i.line
+            i.line,
+            serde_json::to_string(&i.uses)?
         ])?;
     }
     let mut stmt = tx.prepare(
@@ -1592,21 +1594,30 @@ fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
         });
     }
     let mut stmt = conn.prepare(
-        "SELECT owner, how, member, wrapper, ty, qualifier, file, line FROM spring_injections",
+        "SELECT owner, how, member, wrapper, ty, qualifier, file, line, uses
+         FROM spring_injections",
     )?;
     let rows = stmt.query_map([], |r| {
-        Ok(crate::spring::SpringInjection {
-            owner: r.get(0)?,
-            how: r.get(1)?,
-            member: r.get(2)?,
-            wrapper: r.get(3)?,
-            ty: r.get(4)?,
-            qualifier: r.get(5)?,
-            file: r.get(6)?,
-            line: r.get(7)?,
-        })
+        Ok((
+            crate::spring::SpringInjection {
+                owner: r.get(0)?,
+                how: r.get(1)?,
+                member: r.get(2)?,
+                wrapper: r.get(3)?,
+                ty: r.get(4)?,
+                qualifier: r.get(5)?,
+                file: r.get(6)?,
+                line: r.get(7)?,
+                uses: Vec::new(),
+            },
+            r.get::<_, String>(8)?,
+        ))
     })?;
-    out.injections = rows.collect::<rusqlite::Result<_>>()?;
+    for row in rows {
+        let (mut i, uses) = row?;
+        i.uses = serde_json::from_str(&uses)?;
+        out.injections.push(i);
+    }
     let mut stmt = conn.prepare(
         "SELECT store, name, entity, symbol, via, file, line, confidence FROM data_sinks",
     )?;
@@ -2433,6 +2444,7 @@ mod tests {
                 qualifier: None,
                 file: "src/Checkout.java".into(),
                 line: 9,
+                uses: vec![12, 14],
             }],
             sinks: vec![crate::DataSink {
                 store: "mongo".into(),

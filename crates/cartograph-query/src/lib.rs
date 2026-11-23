@@ -43,6 +43,8 @@ pub mod list;
 pub mod overview;
 pub mod path;
 pub mod runnable;
+pub mod slice;
+pub mod spring;
 pub mod symbols;
 mod test_trees;
 mod text;
