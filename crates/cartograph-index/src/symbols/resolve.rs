@@ -862,10 +862,7 @@ pub fn bridges_only(
         && files
             .iter()
             .any(|f| !f.code.ipc.is_empty() || !f.code.exposes.is_empty());
-    let http = bridges.http
-        && files
-            .iter()
-            .any(|f| !f.code.clients.is_empty() || !f.code.routes.is_empty());
+    let http = bridges.http && http::has_inputs(files.iter().map(|f| f.code));
     if !ipc && !http {
         return Symbols::default();
     }

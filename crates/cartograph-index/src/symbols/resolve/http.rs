@@ -587,6 +587,16 @@ impl Cx<'_, '_> {
     }
 }
 
+/// Whether some file has something HTTP to match: a client, a route, or the HTTP entry of
+/// another framework (a FastAPI or Nest route is one only as an entry).
+pub(super) fn has_inputs<'c>(mut codes: impl Iterator<Item = &'c crate::symbols::Code>) -> bool {
+    codes.any(|c| {
+        !c.clients.is_empty()
+            || !c.routes.is_empty()
+            || c.entries.iter().any(|e| e.kind == EntryKind::Http)
+    })
+}
+
 /// Match the HTTP bridges of a repo or workspace.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
@@ -599,9 +609,7 @@ pub(super) fn run(
     servers: &HttpServers,
     found: &mut Found,
 ) {
-    if !ctx.files.iter().any(|f| {
-        !f.code.clients.is_empty() || !f.code.routes.is_empty() || !f.code.entries.is_empty()
-    }) {
+    if !has_inputs(ctx.files.iter().map(|f| f.code)) {
         return;
     }
     let members: HashSet<&str> = graph
@@ -1485,6 +1493,26 @@ fn matching(routes: &[Route], sites: &[Site], servers: &HttpServers, found: &mut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A FastAPI-only repo has routes only as entries: they are HTTP to match, in the base
+    /// of a diff too.
+    #[test]
+    fn http_entries_are_http_inputs() {
+        use crate::symbols::{Code, RawEntry};
+        let entry = |kind| Code {
+            entries: vec![RawEntry {
+                line: 1,
+                kind,
+                name: "GET /items".into(),
+                handler: None,
+                def: None,
+                gate: Some("py-http".into()),
+            }],
+            ..Code::default()
+        };
+        assert!(has_inputs([entry(EntryKind::Http)].iter()));
+        assert!(!has_inputs([entry(EntryKind::Cli), Code::default()].iter()));
+    }
 
     fn lit(s: &str) -> RPart {
         RPart::Lit(s.into())
