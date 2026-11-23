@@ -491,6 +491,14 @@ pub struct Call {
     /// function the parameters belong to (see [`HttpClient::frame`]).
     #[serde(rename = "e", default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<u32>,
+    /// With [`Call::args`], how many arguments the call passes (the last ones that are not
+    /// string-like are left out of `args`, not missing).
+    #[serde(rename = "k", default, skip_serializing_if = "is_zero")]
+    pub argc: u8,
+}
+
+fn is_zero(n: &u8) -> bool {
+    *n == 0
 }
 
 /// What an import binds.
@@ -619,8 +627,10 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// only as `webContents.ipc`; 22: `await x.f<T>()` is a call of `x.f` (the grammar reads
 /// `await x.f` as the function of a call with type arguments); 23: HTTP routes, clients,
 /// mounts and instances, [`Call::opts`], call arguments of Java and Python, parameters of
-/// the definition around (locals read through).
-pub const REVISION: u32 = 23;
+/// the definition around (locals read through); 24: [`Call::argc`], options of a local
+/// object, `${base}/${path}` wrappers, Flask variables, `String.format` placeholders, the
+/// parameters of an object's functions inside a callback.
+pub const REVISION: u32 = 24;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

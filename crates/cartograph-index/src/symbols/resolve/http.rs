@@ -522,7 +522,8 @@ fn substitute(consts: &Consts<'_, '_>, fi: usize, w: &Wrap, c: &Call) -> (Url, M
                         _ => MethodExpr::Unknown,
                     },
                     // Nothing passed there: the client's default.
-                    None if c.args.len() <= *i as usize => MethodExpr::Lit("GET".into()),
+                    // Nothing passed there (not a value left out of `args`): the default.
+                    None if (c.argc as usize) <= *i as usize => MethodExpr::Lit("GET".into()),
                     _ => MethodExpr::Unknown,
                 }
             }
@@ -991,7 +992,23 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
             });
         }
     }
-    let mut seen: HashSet<(usize, u32, Sid)> = HashSet::new();
+    // A call is read once per wrapper shape: two calls on one line are two sites, and a
+    // wrapper that gains a level in a later round is read again for it.
+    let mut seen: HashSet<(usize, usize, String)> = HashSet::new();
+    // Route and mount registrations (`app.get("/x", h)`): never a client call.
+    let registrations: HashSet<(usize, u32)> = ctx
+        .files
+        .iter()
+        .enumerate()
+        .flat_map(|(fi, f)| {
+            f.code
+                .routes
+                .iter()
+                .map(|r| r.line)
+                .chain(f.code.mounts.iter().map(|m| m.line))
+                .map(move |l| (fi, l))
+        })
+        .collect();
     for _ in 1..MAX_ROUNDS {
         if fresh.is_empty() {
             break;
@@ -1011,7 +1028,7 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
         }
         let mut next: HashMap<Sid, Vec<Wrap>> = HashMap::new();
         for (fi, f) in ctx.files.iter().enumerate() {
-            for c in &f.code.calls {
+            for (ci, c) in f.code.calls.iter().enumerate() {
                 if !names.contains(c.name.as_str()) {
                     continue;
                 }
@@ -1031,6 +1048,7 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                         // and a literal where the URL goes. Not through an import (a
                         // library's `http.post(…)`): the resolver had its chance there.
                         if !matches!(c.form, Form::Member)
+                            || registrations.contains(&(fi, c.line))
                             || c.qualifier
                                 .as_deref()
                                 .is_some_and(|q| cx.binds[fi].by_name.contains_key(q))
@@ -1047,10 +1065,10 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                     }
                 };
                 let Some(ws) = fresh.get(&sid) else { continue };
-                if !seen.insert((fi, c.line, sid)) {
-                    continue;
-                }
                 for w in ws {
+                    if !seen.insert((fi, ci, format!("{sid} {:?} {:?}", w.url.parts, w.method))) {
+                        continue;
+                    }
                     // Tied by name: the URL argument must read as a path (a literal or a
                     // constant holding one).
                     let path_arg = |i: u8| {

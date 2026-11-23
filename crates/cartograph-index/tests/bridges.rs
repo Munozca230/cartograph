@@ -332,3 +332,133 @@ fn a_single_repo_matches_http_when_asked() {
         vec!["src/client.ts:2 GET /api/items/{} -> - [exact]"]
     );
 }
+
+/// A single repo with `[bridges] http = true`, an Express server and `files`.
+fn http_repo(files: &[(&str, &str)]) -> Symbols {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("app");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("cartograph.toml"), "[bridges]\nhttp = true\n").unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        r#"{ "name": "app", "dependencies": { "express": "4" } }"#,
+    )
+    .unwrap();
+    for (path, text) in files {
+        let p = root.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    index(&root, &IndexOptions::default()).unwrap().symbols
+}
+
+const SERVER: &str = "import express from 'express';
+const app = express();
+function h() {}
+app.get('/api/users', h);
+app.get('/api/jobs', h);
+app.post('/api/items', h);
+app.put('/api/items', h);
+app.listen(3000);
+";
+
+/// `key file:line` of the HTTP bridges, sorted.
+fn http_keys(s: &Symbols) -> Vec<String> {
+    let mut v: Vec<String> = s
+        .bridges
+        .iter()
+        .filter(|b| b.kind == BridgeKind::Http)
+        .map(|b| format!("{} {}:{}", b.key, b.src_file, b.src_line))
+        .collect();
+    v.sort();
+    v
+}
+
+/// Two calls of one wrapper on one line are two sites.
+#[test]
+fn two_wrapper_calls_on_one_line_are_two_sites() {
+    let s = http_repo(&[
+        ("src/server.ts", SERVER),
+        (
+            "src/api.ts",
+            "export class Api {
+  constructor(private readonly base: string) {}
+  get(path: string) {
+    return fetch(`${this.base}${path}`);
+  }
+}
+export class Svc {
+  constructor(private readonly api: Api) {}
+  all() {
+    return Promise.all([this.api.get('/api/users'), this.api.get('/api/jobs')]);
+  }
+}
+",
+        ),
+    ]);
+    assert_eq!(
+        http_keys(&s),
+        vec![
+            "GET /api/jobs src/api.ts:10",
+            "GET /api/users src/api.ts:10"
+        ]
+    );
+}
+
+/// The options a wrapper hands on may be a local object (`const init = { method }`) or
+/// something not read (`makeInit("PUT")`): the method is its `method`, or not known; never
+/// the `GET` of a call that passes no options.
+#[test]
+fn options_passed_on_but_not_written_inline_are_no_get() {
+    let s = http_repo(&[
+        ("src/server.ts", SERVER),
+        (
+            "src/api.ts",
+            "function makeInit(m: string): RequestInit { return { method: m }; }
+export class Api {
+  constructor(private readonly base: string) {}
+  private send(url: string, init: RequestInit) {
+    return fetch(url, { ...init });
+  }
+  request(method: string, path: string) {
+    const init = { method };
+    return this.send(`${this.base}${path}`, init);
+  }
+  put(path: string) {
+    return this.send(`${this.base}${path}`, makeInit('PUT'));
+  }
+  post(path: string) {
+    return this.request('POST', path);
+  }
+}
+export class Svc {
+  constructor(private readonly api: Api) {}
+  make() { return this.api.post('/api/items'); }
+  users() { return this.api.request('GET', '/api/users'); }
+  update() { return this.api.put('/api/items'); }
+}
+",
+        ),
+    ]);
+    let left: Vec<String> = s
+        .endpoints
+        .iter()
+        .filter(|e| e.kind == BridgeKind::Http && e.detail.as_deref() == Some("method_mismatch"))
+        .map(|e| format!("{} {}", e.key, e.line))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    let keys = http_keys(&s);
+    assert!(
+        keys.contains(&"POST /api/items src/api.ts:20".to_string()),
+        "{keys:?}"
+    );
+    assert!(
+        keys.contains(&"GET /api/users src/api.ts:21".to_string()),
+        "{keys:?}"
+    );
+    // A method not known matches the path with either method.
+    assert!(
+        keys.contains(&"PUT /api/items src/api.ts:22".to_string()),
+        "{keys:?}"
+    );
+}

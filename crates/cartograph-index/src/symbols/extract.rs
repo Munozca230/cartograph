@@ -729,6 +729,7 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
                     call.handler = a.handler.map(Box::new);
                     call.opts = a.opts;
                     call.frame = a.frame;
+                    call.argc = a.argc;
                 }
             }
             code.calls.push(call);
@@ -1432,6 +1433,7 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         handler: None,
         opts: Vec::new(),
         frame: None,
+        argc: 0,
     })
 }
 
@@ -2444,6 +2446,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             handler: None,
             opts: Vec::new(),
             frame: None,
+            argc: 0,
         }),
         "member_expression"
         | "selector_expression"
@@ -2487,6 +2490,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 handler: None,
                 opts: Vec::new(),
                 frame: None,
+                argc: 0,
             })
         }
         "argument" => n.named_child(0).and_then(|c| handler_ref(lang, c, src)),
@@ -2508,6 +2512,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 handler: None,
                 opts: Vec::new(),
                 frame: None,
+                argc: 0,
             })
         }
         _ => None,

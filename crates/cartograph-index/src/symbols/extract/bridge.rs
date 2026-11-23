@@ -567,6 +567,8 @@ fn unescape(s: &str) -> String {
 /// What [`call_args`] reads of a call's arguments.
 pub(super) struct CallArgs {
     pub args: Vec<Option<StrExpr>>,
+    /// How many arguments the call passes (up to 255).
+    pub argc: u8,
     pub handler: Option<Call>,
     pub opts: Vec<OptArg>,
     pub frame: Option<u32>,
@@ -597,6 +599,14 @@ pub(super) fn call_args(lang: Lang, args: Node<'_>, src: &[u8]) -> CallArgs {
                 object_opts(inner, i as u8, src, &mut opts);
                 return None;
             }
+            // `const init = { method }; send(url, init)`: the local object's options.
+            if lang == Lang::Js
+                && inner.kind() == "identifier"
+                && let Some(obj) = local_object(inner, src)
+            {
+                object_opts(obj, i as u8, src, &mut opts);
+                return None;
+            }
             let e = str_expr(lang, *a, src);
             (e.is_stringish() || e.has_param()).then_some(e)
         })
@@ -617,10 +627,33 @@ pub(super) fn call_args(lang: Lang, args: Node<'_>, src: &[u8]) -> CallArgs {
     };
     CallArgs {
         args: out,
+        argc: list.len().min(u8::MAX as usize) as u8,
         handler,
         opts,
         frame,
     }
+}
+
+/// The object literal a local name of the definition around `n` is declared with
+/// (`const init = { method };`), when it is one.
+fn local_object<'t>(n: Node<'t>, src: &[u8]) -> Option<Node<'t>> {
+    let name = text(n, src);
+    let mut child = n;
+    let mut cur = n.parent();
+    while let Some(p) = cur {
+        if is_function(Lang::Js, p)
+            && (is_frame(Lang::Js, p) || params_of(Lang::Js, p, src).contains(&name))
+        {
+            return None;
+        }
+        if let Some(v) = local_value(Lang::Js, p, child, &name, src) {
+            let v = unwrap_expr(v);
+            return (v.kind() == "object").then_some(v);
+        }
+        child = p;
+        cur = p.parent();
+    }
+    None
 }
 
 /// `method` and `url` of an object literal, and what it spreads (`{ ...init }`).
