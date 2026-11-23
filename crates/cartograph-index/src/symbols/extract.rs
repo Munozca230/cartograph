@@ -691,8 +691,16 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
 
     let mut call_list: Vec<CallCap<'_>> = calls.into_values().collect();
     call_list.sort_by_key(|c| (c.name.start_byte(), c.name.id()));
+    let recv_types = if lang == Lang::Java {
+        java_receiver_types(tree.root_node(), src)
+    } else {
+        HashMap::new()
+    };
     for c in &call_list {
-        if let Some(call) = call_of(lang, c, src) {
+        if let Some(mut call) = call_of(lang, c, src) {
+            if call.form == Form::Member && call.qualifier.is_some() {
+                call.recv_type = recv_types.get(&c.node.id()).cloned();
+            }
             code.calls.push(call);
         }
     }
@@ -1368,6 +1376,7 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         path,
         scope,
         field,
+        recv_type: None,
     })
 }
 
@@ -1402,6 +1411,221 @@ fn self_field(lang: Lang, r: Node<'_>, src: &[u8]) -> Option<String> {
         "field_identifier" | "property_identifier" | "private_property_identifier" | "identifier"
     );
     (this && plain).then(|| text(field, src))
+}
+
+/// Java `x.m()` calls whose receiver `x` has one declared type where the call is (see
+/// [`Call::recv_type`]), by `method_invocation` node id. One walk of the file, keeping the
+/// path from the root; inside out from each call: the member around it (a method,
+/// constructor, initializer or field), when it declares `x` anywhere (a parameter, a
+/// local, a lambda, catch or pattern variable: shadowing is decided for the whole member,
+/// which can only lose a type, never pick a wrong one); else the fields of the class body
+/// around it; else the same one level out (a local or anonymous class sees the enclosing
+/// method's locals, an inner class the outer class's fields). What each scope declares is
+/// read once.
+fn java_receiver_types(root: Node<'_>, src: &[u8]) -> HashMap<usize, String> {
+    let mut decls: HashMap<usize, HashMap<String, Option<String>>> = HashMap::new();
+    let mut out = HashMap::new();
+    let mut path: Vec<Node<'_>> = Vec::new();
+    let mut cursor = root.walk();
+    loop {
+        let n = cursor.node();
+        if n.kind() == "method_invocation"
+            && let Some(obj) = n.child_by_field_name("object")
+            && obj.kind() == "identifier"
+        {
+            let name = text(obj, src);
+            let mut cur = n;
+            for &p in path.iter().rev() {
+                if matches!(
+                    p.kind(),
+                    "class_body" | "interface_body" | "enum_body_declarations"
+                ) {
+                    if !JAVA_TYPE_DECLS.contains(&cur.kind()) {
+                        let member = decls
+                            .entry(cur.id())
+                            .or_insert_with(|| java_decls(cur, src));
+                        if let Some(t) = member.get(&name) {
+                            out.extend(t.clone().map(|t| (n.id(), t)));
+                            break;
+                        }
+                    }
+                    let fields = decls.entry(p.id()).or_insert_with(|| java_fields(p, src));
+                    if let Some(t) = fields.get(&name) {
+                        out.extend(t.clone().map(|t| (n.id(), t)));
+                        break;
+                    }
+                }
+                cur = p;
+            }
+        }
+        if cursor.goto_first_child() {
+            path.push(n);
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return out;
+            }
+            path.pop();
+        }
+    }
+}
+
+const JAVA_TYPE_DECLS: &[&str] = &[
+    "class_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "record_declaration",
+    "annotation_type_declaration",
+];
+
+/// Record a declaration of `name` with type `ty` (two different types: unknown).
+fn declare(
+    out: &mut HashMap<String, Option<String>>,
+    name: Option<Node<'_>>,
+    ty: Option<String>,
+    src: &[u8],
+) {
+    let Some(n) = name.filter(|n| n.kind() == "identifier") else {
+        return;
+    };
+    match out.entry(text(n, src)) {
+        std::collections::hash_map::Entry::Vacant(e) => {
+            e.insert(ty);
+        }
+        std::collections::hash_map::Entry::Occupied(mut e) => {
+            if e.get() != &ty {
+                e.insert(None);
+            }
+        }
+    }
+}
+
+/// The one type name a Java declaration stands for: `T` as written, or `var x = new T(…)`.
+fn java_plain(ty: Option<Node<'_>>, value: Option<Node<'_>>, src: &[u8]) -> Option<String> {
+    let ty = ty.filter(|t| t.kind() == "type_identifier")?;
+    let t = text(ty, src);
+    if t != "var" {
+        return Some(t);
+    }
+    let v = value.filter(|v| {
+        v.kind() == "object_creation_expression" && !has_child_kind(*v, &["class_body"])
+    })?;
+    v.child_by_field_name("type")
+        .filter(|t| t.kind() == "type_identifier")
+        .map(|t| text(t, src))
+}
+
+/// Variables of a `field_declaration` or `local_variable_declaration`.
+fn java_declarators(n: Node<'_>, src: &[u8], out: &mut HashMap<String, Option<String>>) {
+    let ty = n.child_by_field_name("type");
+    let mut c = n.walk();
+    for d in n.children_by_field_name("declarator", &mut c) {
+        let t = if d.child_by_field_name("dimensions").is_some() {
+            None
+        } else {
+            java_plain(ty, d.child_by_field_name("value"), src)
+        };
+        declare(out, d.child_by_field_name("name"), t, src);
+    }
+}
+
+/// Every name declared anywhere in a Java member: parameters, locals, resources, loop,
+/// catch, lambda and pattern variables (nested classes included).
+fn java_decls(member: Node<'_>, src: &[u8]) -> HashMap<String, Option<String>> {
+    let mut out = HashMap::new();
+    let mut stack = vec![member];
+    while let Some(n) = stack.pop() {
+        match n.kind() {
+            "local_variable_declaration" | "field_declaration" => {
+                java_declarators(n, src, &mut out)
+            }
+            "formal_parameter" | "resource" | "enhanced_for_statement" => {
+                java_param(n, src, &mut out)
+            }
+            "catch_formal_parameter" => {
+                let mut c = n.walk();
+                let t = n
+                    .named_children(&mut c)
+                    .find(|x| x.kind() == "catch_type")
+                    .filter(|ct| ct.named_child_count() == 1)
+                    .and_then(|ct| java_plain(ct.named_child(0), None, src));
+                declare(&mut out, n.child_by_field_name("name"), t, src);
+            }
+            "spread_parameter" => {
+                let mut c = n.walk();
+                let d = n
+                    .named_children(&mut c)
+                    .find(|x| x.kind() == "variable_declarator");
+                declare(
+                    &mut out,
+                    d.and_then(|d| d.child_by_field_name("name")),
+                    None,
+                    src,
+                );
+            }
+            "lambda_expression" => match n.child_by_field_name("parameters") {
+                Some(p) if p.kind() == "identifier" => declare(&mut out, Some(p), None, src),
+                Some(p) if p.kind() == "inferred_parameters" => {
+                    let mut c = p.walk();
+                    for id in p.named_children(&mut c) {
+                        declare(&mut out, Some(id), None, src);
+                    }
+                }
+                _ => {}
+            },
+            "instanceof_expression" => {
+                let t = java_plain(n.child_by_field_name("right"), None, src);
+                declare(&mut out, n.child_by_field_name("name"), t, src);
+            }
+            "type_pattern" | "record_pattern_component" => {
+                let mut c = n.walk();
+                let kids: Vec<Node<'_>> = n.named_children(&mut c).collect();
+                if let [ty, name] = kids.as_slice() {
+                    declare(&mut out, Some(*name), java_plain(Some(*ty), None, src), src);
+                } else if let Some(name) = kids.last() {
+                    declare(&mut out, Some(*name), None, src);
+                }
+            }
+            _ => {}
+        }
+        let mut c = n.walk();
+        stack.extend(n.named_children(&mut c));
+    }
+    out
+}
+
+/// The fields a Java class, interface, enum or record body declares itself (and a record's
+/// components).
+fn java_fields(body: Node<'_>, src: &[u8]) -> HashMap<String, Option<String>> {
+    let mut out = HashMap::new();
+    let mut c = body.walk();
+    for m in body.named_children(&mut c) {
+        if m.kind() == "field_declaration" || m.kind() == "constant_declaration" {
+            java_declarators(m, src, &mut out);
+        }
+    }
+    if let Some(rec) = body.parent().filter(|r| r.kind() == "record_declaration")
+        && let Some(params) = rec.child_by_field_name("parameters")
+    {
+        let mut c = params.walk();
+        for p in params.named_children(&mut c) {
+            if p.kind() == "formal_parameter" {
+                java_param(p, src, &mut out);
+            }
+        }
+    }
+    out
+}
+
+/// A parameter-like declaration with `name`, `type` and maybe `dimensions` fields.
+fn java_param(n: Node<'_>, src: &[u8], out: &mut HashMap<String, Option<String>>) {
+    let t = if n.child_by_field_name("dimensions").is_some() {
+        None
+    } else {
+        java_plain(n.child_by_field_name("type"), None, src)
+    };
+    declare(out, n.child_by_field_name("name"), t, src);
 }
 
 /// Declared field types of the structs and classes of a file (see [`FieldType`]): Rust
@@ -2092,6 +2316,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             path: Vec::new(),
             scope: Vec::new(),
             field: None,
+            recv_type: None,
         }),
         "member_expression"
         | "selector_expression"
@@ -2130,6 +2355,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 path: Vec::new(),
                 scope: Vec::new(),
                 field: obj.and_then(|o| self_field(lang, o, src)),
+                recv_type: None,
             })
         }
         "argument" => n.named_child(0).and_then(|c| handler_ref(lang, c, src)),
@@ -2146,6 +2372,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 path,
                 scope,
                 field: None,
+                recv_type: None,
             })
         }
         _ => None,

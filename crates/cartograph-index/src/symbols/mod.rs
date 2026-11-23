@@ -229,6 +229,13 @@ pub struct Call {
     /// its declared type ([`Code::fields`]).
     #[serde(rename = "v", default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
+    /// Java `x.f()` ([`Form::Member`], `qualifier` `x`): the one named type `x` is declared
+    /// with where the call is: a parameter, a local variable (`var x = new T()` included)
+    /// or a field of an enclosing class (`private final T x;`, the Spring injection idiom).
+    /// `None` when `x` is declared otherwise (a generic or array type, `var`, an untyped
+    /// lambda parameter) or not at all: the other rules decide.
+    #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
+    pub recv_type: Option<String>,
 }
 
 /// What an import binds.
@@ -343,8 +350,9 @@ pub const QUERIES: [&str; 11] = [
 /// the script); 16: methods and function properties of named JS object literals
 /// (module-level `const x = {…}`, `export default {…}`, `module.exports = {…}`,
 /// `exposeInMainWorld("api", {…})`) as `x.prop`; 17: Electron `ipcMain.handle` / `on`
-/// entries ([`cartograph_core::EntryKind::Ipc`]).
-pub const REVISION: u32 = 17;
+/// entries ([`cartograph_core::EntryKind::Ipc`]); 18: [`Call::recv_type`] (Java receivers
+/// typed by their declaration).
+pub const REVISION: u32 = 18;
 
 /// Query source for a grammar.
 pub fn query_source(grammar: Grammar) -> &'static str {

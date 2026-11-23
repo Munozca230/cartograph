@@ -22,7 +22,10 @@
 //!    neither defines nor inherits such a method (see below), the call is unresolved: the
 //!    method may come from a base outside the repo, and a same-named method elsewhere would
 //!    be a guess. When it is an interface, a trait, an alias, a TS abstract or ambient
-//!    (`declare`) class, or not a type of the repo, the other rules decide.
+//!    (`declare`) class, or not a type of the repo, the other rules decide. The same for
+//!    Java `x.m()` where `x` is a parameter, a local or a field of an enclosing class
+//!    declared with one named type ([`crate::symbols::Call::recv_type`]): a field typed
+//!    with an interface resolves to the interface's declaration of `m`.
 //!    A Rust type's method may be in an `impl` block of another file: one in the type's
 //!    folder or below, else anywhere in its crate (`heuristic`); with none, a default method
 //!    of a trait the type implements; else the other rules decide (a trait outside the
@@ -265,7 +268,8 @@ struct Bindings<'a> {
     by_name: HashMap<&'a str, Bound<'a>>,
     /// Files whose names are all in scope (glob imports, includes).
     globs: Vec<usize>,
-    /// Files of the same package (Go) or folder (Java, C#).
+    /// Files of the same package (Go) or folder (Java, C#), and for Java the files of its
+    /// package elsewhere that it uses (see [`GraphIx::uses`]).
     scope: Vec<usize>,
     /// Files this file depends on (imports, dir imports expanded).
     deps: HashSet<usize>,
@@ -630,14 +634,23 @@ impl<'a> Ctx<'a> {
         }
         match f.fam {
             Fam::Go | Fam::Java | Fam::Cs => {
+                // Java: also the files of its package in other folders that it uses (a
+                // test next to the class it tests, under `src/test/`).
+                let used = match f.fam {
+                    Fam::Java => g.uses.get(f.path).map_or(&[][..], Vec::as_slice),
+                    _ => &[],
+                };
                 out.scope = g
                     .dir_files
                     .get(f.dir)
                     .into_iter()
                     .flatten()
+                    .chain(used)
                     .filter_map(|p| self.by_path.get(p).copied())
                     .filter(|&i| i != fi && self.files[i].fam == f.fam)
                     .collect();
+                out.scope.sort_unstable();
+                out.scope.dedup();
             }
             Fam::C => {
                 // Included files and the source file next to each included header.
@@ -728,6 +741,9 @@ struct GraphIx<'a> {
     /// Every import site of a file.
     sites_of: HashMap<&'a str, Vec<(&'a str, &'a str)>>,
     dir_files: HashMap<&'a str, Vec<&'a str>>,
+    /// `Uses` edges between files: a Java type of the file's own package it names without
+    /// an import (or a SCIP reference).
+    uses: HashMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> GraphIx<'a> {
@@ -736,7 +752,13 @@ impl<'a> GraphIx<'a> {
             sites: HashMap::new(),
             sites_of: HashMap::new(),
             dir_files: HashMap::new(),
+            uses: HashMap::new(),
         };
+        for e in graph.edges.iter().filter(|e| e.kind == EdgeKind::Uses) {
+            if let (Some(a), Some(b)) = (e.src.strip_prefix("file:"), e.dst.strip_prefix("file:")) {
+                g.uses.entry(a).or_default().push(b);
+            }
+        }
         for s in &graph.imports {
             g.sites
                 .entry((s.file.as_str(), s.line))
@@ -1246,10 +1268,11 @@ fn resolve_call_by_rules(
 }
 
 /// `self.field.name()` through the declared type of `field` in `container`, the caller's
-/// type (see the module docs). `None` when the field or its type is unknown here, or the
-/// type is an interface, a trait, an alias or a TS abstract or ambient class that defines
-/// no such method, or a Rust type with no `impl` of it in its crate: the other rules
-/// decide. Another class, struct or enum without it: unresolved.
+/// type, or Java `x.name()` through the declared type of `x` (see the module docs). `None`
+/// when the field or its type is unknown here, or the type is an interface, a trait, an
+/// alias or a TS abstract or ambient class that defines no such method, or a Rust type with
+/// no `impl` of it in its crate: the other rules decide. Another class, struct or enum
+/// without it: unresolved.
 fn via_field(
     ctx: &Ctx<'_>,
     binds: &[Bindings<'_>],
@@ -1258,16 +1281,20 @@ fn via_field(
     c: &Call,
     container: Option<&str>,
 ) -> Option<Out> {
-    let field = c.field.as_deref()?;
-    let container = container?;
     let f = &ctx.files[fi];
-    let ty = f
-        .code
-        .fields
-        .iter()
-        .find(|x| x.container == container && x.name == field)?
-        .ty
-        .as_str();
+    let ty = match c.recv_type.as_deref() {
+        Some(t) => t,
+        None => {
+            let field = c.field.as_deref()?;
+            let container = container?;
+            f.code
+                .fields
+                .iter()
+                .find(|x| x.container == container && x.name == field)?
+                .ty
+                .as_str()
+        }
+    };
     let (t, conf) = match resolve_type(ctx, binds, fi, ty)? {
         Out::Hit(t, conf) => (t, conf),
         Out::Ambiguous => return Some(Out::Ambiguous),

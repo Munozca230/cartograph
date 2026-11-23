@@ -151,7 +151,7 @@ fn none_at(s: &Symbols, at: &str) -> bool {
     !s.calls.iter().any(|c| c.file == file && c.line == line)
 }
 
-const FIXTURES: [&str; 18] = [
+const FIXTURES: [&str; 19] = [
     "symbols-ts",
     "symbols-py",
     "symbols-rust",
@@ -170,6 +170,7 @@ const FIXTURES: [&str; 18] = [
     "inherit-cpp",
     "inherit-gd",
     "electron-app",
+    "spring-java",
 ];
 
 #[test]
@@ -1457,4 +1458,66 @@ fn a_library_main_is_not_a_program_entry() {
     );
     let s = index(&root, &IndexOptions::default()).unwrap().symbols;
     assert_eq!(s.entries.len(), 1, "{:?}", s.entries);
+}
+
+#[test]
+fn java_calls_through_injected_fields_parameters_and_locals() {
+    let s = symbols_of("spring-java");
+    use Confidence::*;
+    let main = "src/main/java/com/acme/shop/order";
+    let ctl = format!("{main}/controller/OrderController.java");
+    let admin = format!("{main}/controller/AdminController.java");
+    let svc = |m: &str| format!("sym:{main}/service/OrderService.java#OrderService.{m}");
+    let report = format!("sym:{main}/controller/OrderReport.java#OrderReport.print");
+    // A `private final` field (Lombok constructor) typed with the interface: its method.
+    assert_eq!(
+        call(&s, &format!("{ctl}:18"), &svc("create")),
+        Some(Resolved)
+    );
+    // A local typed with the interface.
+    assert_eq!(call(&s, &format!("{ctl}:24"), &svc("find")), Some(Resolved));
+    // An untyped lambda parameter shadows the field: never the field's type.
+    assert_eq!(call(&s, &format!("{ctl}:30"), &svc("cancel")), None);
+    // A parameter shadows the field with its own type.
+    assert_eq!(call(&s, &format!("{ctl}:36"), &report), Some(Resolved));
+    // A constructor parameter; an `@Autowired` field of a class of the same package.
+    assert_eq!(
+        call(&s, &format!("{admin}:18"), &svc("warmUp")),
+        Some(Resolved)
+    );
+    assert_eq!(call(&s, &format!("{admin}:23"), &report), Some(Resolved));
+    assert_eq!(
+        call(&s, &format!("{admin}:24"), &svc("purge")),
+        Some(Resolved)
+    );
+    // A package-private class of the same package; a repository method inherited from a
+    // library interface stays unresolved.
+    let imp = format!("{main}/service/impl/OrderServiceImpl.java");
+    assert_eq!(
+        call(
+            &s,
+            &format!("{imp}:19"),
+            &format!("sym:{main}/service/impl/OrderValidator.java#OrderValidator.check")
+        ),
+        Some(Resolved)
+    );
+    assert!(none_at(&s, &format!("{imp}:31")));
+    // A test of the same package under `src/test/`: its classes resolve like the folder's.
+    let t = "src/test/java/com/acme/shop/order/service/impl/OrderServiceImplTest.java";
+    assert_eq!(
+        call(
+            &s,
+            &format!("{t}:14"),
+            &format!("sym:{imp}#OrderServiceImpl.create")
+        ),
+        Some(Resolved)
+    );
+    assert_eq!(
+        call(
+            &s,
+            &format!("{t}:13"),
+            &format!("sym:{main}/service/impl/OrderValidator.java#OrderValidator.lenient")
+        ),
+        Some(Resolved)
+    );
 }
