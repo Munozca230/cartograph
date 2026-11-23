@@ -26,7 +26,7 @@ the model, *instead of* the text, which reads worse and costs about twice the to
 | `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder) | `nodes` (list) | 1.5k |
 | `find` | glob/grep for a name | `query`, `kind` file/dir/ext/sym (all but sym; symbols too when no path has it) | 0.8k |
 | `path` | tracing why A depends on B by hand | `from`, `to` | 0.8k |
-| `symbols` | reading a file for its outline | `node` | 1k |
+| `symbols` | reading a file for its outline (a line per definition; when that does not fit, the members of the biggest objects and classes by name, `api (150): save, load, …`, then the other symbols that do not fit) | `node` | 1k |
 | `callers` | grepping a function name before changing it | `symbol` | 1k |
 | `hierarchy` | grepping `extends` / `implements` / `impl … for` | `symbol` (a type, or a method of one) | 0.8k |
 | `entries` | searching for main, routes, commands, IPC handlers | `kind`, `within` | 1k |

@@ -16,7 +16,7 @@
       "total": 8,
       "symbols": [
         {
-          "id": "sym:src/model.rs#LIMIT",
+          "name": "LIMIT",
           "kind": "const",
           "line": 3,
           "end_line": 3,
@@ -24,7 +24,7 @@
           "callers": 0
         },
         {
-          "id": "sym:src/model.rs#Store",
+          "name": "Store",
           "kind": "struct",
           "line": 5,
           "end_line": 7,
@@ -32,7 +32,7 @@
           "callers": 0
         },
         {
-          "id": "sym:src/model.rs#Store.new",
+          "name": "Store.new",
           "kind": "method",
           "line": 10,
           "end_line": 13,
@@ -40,14 +40,14 @@
           "callers": 1
         },
         {
-          "id": "sym:src/model.rs#Store.init_log",
+          "name": "Store.init_log",
           "kind": "method",
           "line": 15,
           "end_line": 15,
           "callers": 1
         },
         {
-          "id": "sym:src/model.rs#Store.persist_all",
+          "name": "Store.persist_all",
           "kind": "method",
           "line": 17,
           "end_line": 19,
@@ -55,14 +55,14 @@
           "callers": 1
         },
         {
-          "id": "sym:src/model.rs#Store.flush_now",
+          "name": "Store.flush_now",
           "kind": "method",
           "line": 21,
           "end_line": 23,
           "callers": 1
         },
         {
-          "id": "sym:src/model.rs#Store.fmt",
+          "name": "Store.fmt",
           "kind": "method",
           "line": 27,
           "end_line": 29,
@@ -70,7 +70,7 @@
           "callers": 0
         },
         {
-          "id": "sym:src/model.rs#shared",
+          "name": "shared",
           "kind": "function",
           "line": 32,
           "end_line": 34,
@@ -85,21 +85,21 @@
       "total": 3,
       "symbols": [
         {
-          "id": "sym:src/main.rs#Command",
+          "name": "Command",
           "kind": "enum",
           "line": 9,
           "end_line": 12,
           "callers": 0
         },
         {
-          "id": "sym:src/main.rs#main",
+          "name": "main",
           "kind": "function",
           "line": 14,
           "end_line": 21,
           "callers": 0
         },
         {
-          "id": "sym:src/main.rs#helper",
+          "name": "helper",
           "kind": "function",
           "line": 23,
           "end_line": 23,
@@ -113,7 +113,7 @@
       "total": 2,
       "symbols": [
         {
-          "id": "sym:src/routes.rs#router",
+          "name": "router",
           "kind": "function",
           "line": 5,
           "end_line": 7,
@@ -121,7 +121,7 @@
           "callers": 1
         },
         {
-          "id": "sym:src/routes.rs#health",
+          "name": "health",
           "kind": "function",
           "line": 9,
           "end_line": 11,
@@ -135,7 +135,7 @@
       "total": 1,
       "symbols": [
         {
-          "id": "sym:src/util.rs#format_name",
+          "name": "format_name",
           "kind": "function",
           "line": 1,
           "end_line": 3,

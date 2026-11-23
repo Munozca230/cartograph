@@ -16,7 +16,7 @@
       "total": 2,
       "symbols": [
         {
-          "id": "sym:src/core/repo.ts#save",
+          "name": "save",
           "kind": "function",
           "line": 3,
           "end_line": 5,
@@ -24,7 +24,7 @@
           "callers": 1
         },
         {
-          "id": "sym:src/core/repo.ts#load",
+          "name": "load",
           "kind": "function",
           "line": 6,
           "end_line": 8,

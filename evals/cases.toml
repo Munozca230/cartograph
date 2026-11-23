@@ -28,6 +28,9 @@ fixture = "../tests/fixtures/symbols-ts"
 [repos.inherit-ts]
 fixture = "../tests/fixtures/inherit-ts"
 
+[repos.dense-symbols]
+fixture = "../tests/fixtures/dense-symbols"
+
 [repos.godot]
 fixture = "../tests/fixtures/godot-basic"
 
@@ -415,6 +418,15 @@ question = "What does the MCP guard module define?"
 tool = "symbols"
 args = { node = "crates/cartograph-mcp/src/guard.rs" }
 contains = ["enum GuardError", "struct Guard", "Guard.new", "Guard.run"]
+
+# An Electron preload exposing an object with 150 functions: every name fits the budget.
+[[case]]
+id = "symbols-dense-preload"
+repo = "dense-symbols"
+question = "Which functions does the preload expose to the renderer?"
+tool = "symbols"
+args = { node = "src/electron/preload.ts" }
+contains = ["appAPI (150, pub)", "saveInvoice", "generateCoupon", "fetchReview"]
 
 [[case]]
 id = "callers-index-to-store"

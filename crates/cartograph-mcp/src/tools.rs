@@ -466,8 +466,10 @@ impl Cartograph {
 
     #[tool(
         description = "Outline of a file (or of a folder's files): functions, classes, methods \
-            and types with line numbers, exported flag and how often each is called. Use it \
-            instead of reading a whole file to see what it defines. `node`: file or folder.",
+            and types with line numbers, exported flag and how often each is called; when a \
+            file has too many for a line each, the members of its biggest objects and classes \
+            come by name (`api (150): save, load, …`), then the rest. Use it instead of reading a whole file \
+            to see what it defines. `node`: file or folder.",
         annotations(read_only_hint = true)
     )]
     async fn symbols(&self, Parameters(a): Parameters<NodeArgs>) -> CallToolResult {

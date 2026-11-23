@@ -406,11 +406,56 @@ impl CallCounts {
     }
 }
 
+/// A symbol in a file's listing: its id is `sym:<path of the file>#<name>`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ListedSymbol {
+    /// Qualified name in the file (`Class.method`, `api.save`).
+    pub name: String,
+    pub kind: SymbolKind,
+    pub line: u32,
+    pub end_line: u32,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub exported: bool,
+    /// Call sites that reach it.
+    pub callers: usize,
+    /// `scip` for a definition only an imported SCIP index found (N2 did not).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<&'static str>,
+}
+
+/// The members of one container (an object's functions, a class's methods) listed by name
+/// only, when listing each with its lines does not fit: `api (150): save, load, …`. A
+/// member's id is `sym:<path of the file>#<container>.<name>`.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemberGroup {
+    pub container: String,
+    /// Line of its first member.
+    pub line: u32,
+    /// Members of the container (types aside).
+    pub total: usize,
+    /// Of them, those exported.
+    pub exported: usize,
+    /// The names listed, in line order.
+    pub names: Vec<String>,
+    /// Members left out.
+    pub more: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FileSymbols {
     pub file: String,
     pub total: usize,
-    pub symbols: Vec<SymRow>,
+    /// Symbols listed one per line, with kind and lines.
+    pub symbols: Vec<ListedSymbol>,
+    /// Members listed by name only, grouped by container (only for a file).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberGroup>,
+    /// Other symbols without a line of their own, listed by qualified name (only for a
+    /// file).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub others: Vec<String>,
+    /// Symbols left out: neither on a line, in `others` nor in a group (a group counts its
+    /// own).
     pub more: usize,
 }
 
@@ -496,21 +541,66 @@ fn row(t: &SymbolTable, i: usize) -> SymRow {
 
 /// The `n` most telling symbols of a list (exported, most called, types), in line order.
 fn top_rows(t: &SymbolTable, list: &[usize], n: usize) -> Vec<SymRow> {
-    let mut v: Vec<SymRow> = list.iter().map(|&i| row(t, i)).collect();
+    pick(t, list, n).into_iter().map(|i| row(t, i)).collect()
+}
+
+/// The `n` most telling of `list` (exported, most called, types), in line order.
+fn pick(t: &SymbolTable, list: &[usize], n: usize) -> Vec<usize> {
+    let mut v: Vec<(usize, usize, String)> = list
+        .iter()
+        .map(|&i| {
+            let id = t.symbols[i].id();
+            (i, t.callers_of(&id).len(), id)
+        })
+        .collect();
     if v.len() > n {
+        let key = |(i, callers, _): &(usize, usize, String)| {
+            let x = &t.symbols[*i];
+            (x.exported, *callers, x.kind.is_type())
+        };
         v.sort_by(|a, b| {
-            (b.exported, b.callers, b.kind.is_type())
-                .cmp(&(a.exported, a.callers, a.kind.is_type()))
-                .then(a.line.cmp(&b.line))
+            key(b)
+                .cmp(&key(a))
+                .then(t.symbols[a.0].line.cmp(&t.symbols[b.0].line))
         });
         v.truncate(n);
     }
-    v.sort_by(|a, b| a.line.cmp(&b.line).then(a.id.cmp(&b.id)));
-    v
+    v.sort_by(|a, b| {
+        t.symbols[a.0]
+            .line
+            .cmp(&t.symbols[b.0].line)
+            .then(a.2.cmp(&b.2))
+    });
+    v.into_iter().map(|x| x.0).collect()
+}
+
+fn listed(t: &SymbolTable, i: usize) -> ListedSymbol {
+    let r = row(t, i);
+    ListedSymbol {
+        name: clip(&t.symbols[i].qualified(), 200),
+        kind: r.kind,
+        line: r.line,
+        end_line: r.end_line,
+        exported: r.exported,
+        callers: r.callers,
+        source: r.source,
+    }
 }
 
 fn sym_text(r: &SymRow) -> String {
     let name = split_symbol_id(&r.id).map_or(r.id.as_str(), |(_, n)| n);
+    listed_text(&ListedSymbol {
+        name: name.to_string(),
+        kind: r.kind,
+        line: r.line,
+        end_line: r.end_line,
+        exported: r.exported,
+        callers: r.callers,
+        source: r.source,
+    })
+}
+
+fn listed_text(r: &ListedSymbol) -> String {
     let lines = if r.end_line > r.line {
         format!("L{}-{}", r.line, r.end_line)
     } else {
@@ -519,7 +609,7 @@ fn sym_text(r: &SymRow) -> String {
     format!(
         "{} {} {lines}{}{}{}",
         r.kind.as_str(),
-        clip(name, 100),
+        clip(&r.name, 100),
         if r.exported { " pub" } else { "" },
         if r.callers > 0 {
             format!(" ←{}", r.callers)
@@ -528,6 +618,131 @@ fn sym_text(r: &SymRow) -> String {
         },
         r.source.map_or(String::new(), |s| format!(" ({s})"))
     )
+}
+
+fn group_text(g: &MemberGroup) -> String {
+    let mut names = g.names.join(", ");
+    if g.more > 0 {
+        names.push_str(&format!(", +{} more", g.more));
+    }
+    let exported = match g.exported {
+        0 => String::new(),
+        n if n == g.total => ", pub".to_string(),
+        n => format!(", {n} pub"),
+    };
+    format!(
+        "{} ({}{exported}): {names}",
+        clip(&g.container, 100),
+        g.total
+    )
+}
+
+/// How a file is listed: containers with at least `group_min` members (not types) list
+/// them by name only, at most `names` per container; at most `rows` other symbols get a
+/// line each, and at most `names` of the rest are listed by name.
+#[derive(Debug, Clone, Copy)]
+struct Plan {
+    group_min: usize,
+    rows: usize,
+    names: usize,
+}
+
+const ALL: usize = usize::MAX;
+
+impl Plan {
+    const fn rows(rows: usize) -> Plan {
+        Plan {
+            group_min: ALL,
+            rows,
+            names: 0,
+        }
+    }
+
+    const fn grouped(group_min: usize, rows: usize, names: usize) -> Plan {
+        Plan {
+            group_min,
+            rows,
+            names,
+        }
+    }
+}
+
+/// Plans tried for one file, most detailed first: every symbol on its own line (as long as
+/// that fits, nothing changes), then the members of the biggest containers as names, then
+/// every container's, then fewer lines (the symbols left without one by name) and names.
+const FILE_PLANS: &[Plan] = &[
+    Plan::rows(ALL),
+    Plan::grouped(40, ALL, ALL),
+    Plan::grouped(16, ALL, ALL),
+    Plan::grouped(6, ALL, ALL),
+    Plan::grouped(2, ALL, ALL),
+    Plan::grouped(2, 80, 400),
+    Plan::grouped(2, 60, 300),
+    Plan::grouped(2, 40, 200),
+    Plan::grouped(2, 30, 150),
+    Plan::grouped(2, 20, 100),
+    Plan::grouped(2, 14, 60),
+    Plan::grouped(2, 10, 40),
+    Plan::grouped(2, 6, 20),
+    Plan::grouped(2, 3, 10),
+    Plan::grouped(2, 1, 4),
+];
+
+/// The listing of one file under `plan`.
+fn file_listing(t: &SymbolTable, path: &str, list: &[usize], plan: Plan) -> FileSymbols {
+    let mut members: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for &i in list {
+        let x = &t.symbols[i];
+        if let Some(c) = &x.container
+            && !x.kind.is_type()
+        {
+            members.entry(c.as_str()).or_default().push(i);
+        }
+    }
+    members.retain(|_, v| v.len() >= plan.group_min);
+    let grouped: HashSet<usize> = members.values().flatten().copied().collect();
+    let rest: Vec<usize> = list
+        .iter()
+        .copied()
+        .filter(|i| !grouped.contains(i))
+        .collect();
+    let rows = pick(t, &rest, plan.rows);
+    let shown: HashSet<usize> = rows.iter().copied().collect();
+    let unlisted: Vec<usize> = rest
+        .iter()
+        .copied()
+        .filter(|i| !shown.contains(i))
+        .collect();
+    let others: Vec<String> = pick(t, &unlisted, plan.names)
+        .into_iter()
+        .map(|i| clip(&t.symbols[i].qualified(), 100))
+        .collect();
+    let mut groups: Vec<MemberGroup> = members
+        .into_iter()
+        .map(|(c, v)| {
+            let names: Vec<String> = pick(t, &v, plan.names)
+                .into_iter()
+                .map(|i| clip(&t.symbols[i].name, 100))
+                .collect();
+            MemberGroup {
+                container: clip(c, 200),
+                line: v.iter().map(|&i| t.symbols[i].line).min().unwrap_or(0),
+                total: v.len(),
+                exported: v.iter().filter(|&&i| t.symbols[i].exported).count(),
+                more: v.len() - names.len(),
+                names,
+            }
+        })
+        .collect();
+    groups.sort_by(|a, b| a.line.cmp(&b.line).then(a.container.cmp(&b.container)));
+    FileSymbols {
+        file: format!("file:{}", clip(path, 240)),
+        total: list.len(),
+        more: unlisted.len() - others.len(),
+        symbols: rows.into_iter().map(|i| listed(t, i)).collect(),
+        members: groups,
+        others,
+    }
 }
 
 /// `symbols(file|dir)`, within [`limits::SYMBOLS`]: definitions with kind, lines, whether
@@ -583,20 +798,12 @@ pub fn symbols(repo: &Repo, node: &str) -> Result<Answer<SymbolsResult>, QueryEr
             NodeRef::Ext(_) => false,
         })
         .collect();
-    let steps: &[(usize, usize)] = if single {
-        &[
-            (1, 80),
-            (1, 60),
-            (1, 40),
-            (1, 30),
-            (1, 20),
-            (1, 14),
-            (1, 10),
-            (1, 6),
-            (1, 3),
-        ]
+    // A file: [`FILE_PLANS`]. A folder: the files with most call sites reaching them, a few
+    // symbols each.
+    let steps: Vec<(usize, Plan)> = if single {
+        FILE_PLANS.iter().map(|&p| (1, p)).collect()
     } else {
-        &[
+        [
             (14, 8),
             (12, 6),
             (10, 5),
@@ -608,14 +815,17 @@ pub fn symbols(repo: &Repo, node: &str) -> Result<Answer<SymbolsResult>, QueryEr
             (2, 1),
             (1, 1),
         ]
+        .into_iter()
+        .map(|(files, per)| (files, Plan::rows(per)))
+        .collect()
     };
     let idx: Vec<usize> = (0..steps.len()).collect();
     Ok(fit(
         limits::SYMBOLS,
         &idx,
         |k| {
-            let (max_files, per) = steps[k.min(steps.len() - 1)];
-            let max_entries = (per * 2).clamp(2, 12);
+            let (max_files, plan) = steps[k.min(steps.len() - 1)];
+            let max_entries = plan.rows.saturating_mul(2).clamp(2, 12);
             SymbolsResult {
                 node: g.id(n),
                 files: with.len(),
@@ -625,15 +835,7 @@ pub fn symbols(repo: &Repo, node: &str) -> Result<Answer<SymbolsResult>, QueryEr
                 groups: with
                     .iter()
                     .take(max_files)
-                    .map(|&(_, path, list)| {
-                        let rows = top_rows(t, list, per);
-                        FileSymbols {
-                            file: format!("file:{}", clip(path, 240)),
-                            total: list.len(),
-                            more: list.len() - rows.len(),
-                            symbols: rows,
-                        }
-                    })
+                    .map(|&(_, path, list)| file_listing(t, path, list, plan))
                     .collect(),
                 groups_more: with.len().saturating_sub(max_files),
                 entries: entries
@@ -655,8 +857,13 @@ fn render_symbols(r: &SymbolsResult) -> String {
     if r.total == 0 {
         s.push_str(&format!("no symbols in {where_}\n"));
     } else {
+        let grouped = if r.groups.iter().any(|g| !g.members.is_empty()) {
+            ", X (N): a, b = the N members of X by name"
+        } else {
+            ""
+        };
         s.push_str(&format!(
-            "symbols in {where_} · {} in {} (exported {}) · pub = exported, ←N = call sites reaching it\n",
+            "symbols in {where_} · {} in {} (exported {}) · pub = exported, ←N = call sites reaching it{grouped}\n",
             r.total,
             crate::text::files(r.files),
             r.exported
@@ -680,15 +887,36 @@ fn render_symbols(r: &SymbolsResult) -> String {
             s.push_str(&format!("{} ({})\n", clip(&short(&gr.file), 120), gr.total));
             "  "
         };
-        for x in &gr.symbols {
-            let nested = if x.kind == SymbolKind::Method {
-                "  "
-            } else {
-                ""
+        // Lines and member groups in line order (a group at its first member).
+        let (mut rows, mut groups) = (gr.symbols.iter().peekable(), gr.members.iter().peekable());
+        loop {
+            let row_first = match (rows.peek(), groups.peek()) {
+                (Some(x), Some(m)) => x.line <= m.line,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
             };
-            s.push_str(&format!("{indent}{nested}{}\n", sym_text(x)));
+            if row_first && let Some(x) = rows.next() {
+                let nested = if x.kind == SymbolKind::Method {
+                    "  "
+                } else {
+                    ""
+                };
+                s.push_str(&format!("{indent}{nested}{}\n", listed_text(x)));
+            } else if let Some(m) = groups.next() {
+                s.push_str(&format!("{indent}  {}\n", group_text(m)));
+            }
         }
-        if gr.more > 0 {
+        if !gr.others.is_empty() {
+            let mut names = gr.others.join(", ");
+            if gr.more > 0 {
+                names.push_str(&format!(", +{} more", gr.more));
+            }
+            s.push_str(&format!(
+                "{indent}others by name ({}): {names}\n",
+                gr.others.len() + gr.more
+            ));
+        } else if gr.more > 0 {
             s.push_str(&format!("{indent}+{} more\n", gr.more));
         }
     }

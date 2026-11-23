@@ -16,7 +16,7 @@
       "total": 1,
       "symbols": [
         {
-          "id": "sym:src/core/model.ts#Model",
+          "name": "Model",
           "kind": "class",
           "line": 3,
           "end_line": 5,
@@ -31,7 +31,7 @@
       "total": 2,
       "symbols": [
         {
-          "id": "sym:src/core/repo.ts#save",
+          "name": "save",
           "kind": "function",
           "line": 3,
           "end_line": 5,
@@ -39,7 +39,7 @@
           "callers": 1
         },
         {
-          "id": "sym:src/core/repo.ts#load",
+          "name": "load",
           "kind": "function",
           "line": 6,
           "end_line": 8,
@@ -54,7 +54,7 @@
       "total": 1,
       "symbols": [
         {
-          "id": "sym:src/core/service.ts#run",
+          "name": "run",
           "kind": "function",
           "line": 4,
           "end_line": 6,
@@ -69,7 +69,7 @@
       "total": 1,
       "symbols": [
         {
-          "id": "sym:src/core/util.ts#util",
+          "name": "util",
           "kind": "const",
           "line": 3,
           "end_line": 3,
