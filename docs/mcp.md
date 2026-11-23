@@ -25,9 +25,9 @@ the model, *instead of* the text, which reads worse and costs about twice the to
 | `deps` | grepping import statements | `node`, `dir` out/in/both (out), `depth` 1-3 (1), `level` file/folder (file) | 1.5k |
 | `impact` | guessing what an edit breaks and which tests to run (dependents file by file when they fit, else by folder; the tests closest first, slow ones marked, and the command that runs them: see [Tests to run](#tests-to-run)) | `nodes` (list) | 1.5k |
 | `find` | glob/grep for a name, or for a string key across repos | `query`, `kind` file/dir/ext/sym/key (all but sym; symbols too when no path has it; a string key's trace when the query is one and no path has it: see [String keys](#string-keys)) | 0.8k (1.5k for a key) |
-| `path` | tracing why A depends on B by hand | `from`, `to`, `bridges` (true: steps over an IPC channel or an exposed preload function count, and say so) | 0.8k |
+| `path` | tracing why A depends on B by hand, or a request from a screen down to the data | `from`, `to`, `bridges` (true: steps over an IPC channel or an exposed preload function count, and say so; when `to` calls out over HTTP or IPC, the calls go on past it down to the collection or table: see [Slices](#slices)) | 0.8k (1.5k with a slice) |
 | `symbols` | reading a file for its outline (a line per definition; when that does not fit, the uncalled members of the biggest objects and classes by name, `api (150, pub): save, load, +148 more`, then the other symbols that do not fit) | `node` | 1k |
-| `callers` | grepping a function name before changing it | `symbol` | 1k |
+| `callers` | grepping a function name before changing it (for an interface method, also where Spring injects its beans and which: see [spring.md](spring.md)) | `symbol` | 1k |
 | `hierarchy` | grepping `extends` / `implements` / `impl … for` | `symbol` (a type, or a method of one) | 0.8k |
 | `bridges` | grepping IPC channel names, `exposeInMainWorld`, manifests, API paths and route annotations | `node`, `kind` ipc/http/package, `member`, `unmatched` (false: the bridges; true: what has no other side) | 1k |
 | `entries` | searching for main, routes, commands, IPC handlers | `kind`, `within` | 1k |
@@ -168,6 +168,40 @@ the line says `run the tests listed`: the command runs those only.
 In a workspace each line names its member (`run (maven, member api): ./mvnw test …`): the
 command runs from that member's root (with a `cd` first when the build is below it). The
 JSON (`commands`) has the same: framework, member, command, how many tests, slow.
+
+### Slices
+
+`path(from, to)` where `to` calls out over HTTP or IPC (an API client, a preload) adds
+the calls behind the file path, then continues past `to`:
+
+```
+calls from desktop/src/renderer/views/OrderView.tsx into OrderClient.ts and past it (path:line = where the next step is called):
+  1.
+    desktop/src/renderer/views/OrderView.tsx:3 OrderView
+    → desktop/src/preload/preload.ts:5 shopApi.saveOrder (ipc expose window.shopApi.saveOrder)
+    → desktop/src/main/modules/OrderModule.ts:10 OrderModule.register (ipc invoke order:save)
+    → :21 OrderModule.onSave
+    → desktop/src/main/api/OrderClient.ts:9 OrderClient.saveOrder
+    continues past OrderClient.ts over POST /api/orders:
+    → api/src/main/java/com/shop/api/order/OrderController.java:15 OrderController.create (http axios POST /api/orders)
+    → api/src/main/java/com/shop/api/order/OrderServiceImpl.java:13 OrderServiceImpl.create (Spring bean of OrderService)
+    → :26 OrderServiceImpl.persist
+    → store/src/main/java/com/shop/store/OrderStore.java:11 OrderStore.save
+    → collection orders (Mongo, via Order)
+    also reaches: counters (Mongo)
+```
+
+Each chain starts at a function of `from` and reaches a function of `to` over calls and
+bridges (a handler written inline in a function that registers several follows only its
+own lines). Past `to`, each of its bridges (up to four per function) leads to the handler
+on the other side; from there the walk follows calls, a call to an interface method goes
+on to the Spring bean injected there, and it stops at the nearest method that writes a
+collection or table (for a `GET`, that reads one); the other collections reached are
+named. Chains that write come first, then the other requests that are not a `GET`, then
+reads; the first ones are shown a step per line, the rest a line each, and the
+alternative file paths are the first thing dropped to stay within 1.5k tokens.
+`bridges: false` keeps the answer to imports, with no slice. The data sinks it knows
+are listed in [spring.md](spring.md).
 
 ### `open_map`: the visual map
 
@@ -348,7 +382,8 @@ the map instead of from grep:
    bridge: `bridges(node)` lists them, and `callers`, `deps`, `impact` and `path` show
    them apart from imports. `callers` of a controller method lists the client sites that
    reach it over HTTP; `bridges(kind: "http", unmatched: true)` lists calls no route
-   serves.
+   serves. `path` from a view to its API client follows the request on to the collection
+   it writes.
 6. **Before finishing**: `check` (the rules of `cartograph.toml`; with `base: "main"`
    only what the change introduces fails) and `findings(within: <folder you changed>)` for
    new cycles or violations. `diff` shows what the change does to the architecture.
@@ -581,7 +616,7 @@ The suite is not part of `cargo test` (only the runner is, in
 a finding to fix, and it stays visible instead of being weakened to keep the build green.
 CI runs it in a job that may fail without failing the workflow.
 
-### Results (2026-11-23, 63 cases: 63 pass)
+### Results (2026-11-23, 67 cases: 67 pass)
 
 Every answer is within its budget. Since the first run below, cases were added for dense
 symbol listings, for workspaces (`ws-*` on `tests/fixtures/workspace-basic`: members as
@@ -596,7 +631,10 @@ controller), and on `tests/fixtures/workspace-keys` for string keys (`find-key-*
 missing from the registry that holds its siblings, a step name traced by its constant to
 the switch case that runs it, a key every list holds) and for runnable tests
 (`impact-runnable-*`: Maven tests closest first with the slow ones apart, vitest and
-Playwright commands).
+Playwright commands), and on `tests/fixtures/workspace-slice` for Spring and slices
+(`spring-*`: the beans a list injects into a constructor and a field, a `@Primary` and a
+qualified gateway, a bean's callers through its interface; `slice-view-to-collection`: a
+path from a view to its API client continued to the Mongo collection).
 
 The first run (2026-11-21, 34 cases) is kept below for its defects. Two cases on the `inherit-ts` fixture cover inheritance:
 `callers` of a base method lists the calls made through subclasses that inherit it (and

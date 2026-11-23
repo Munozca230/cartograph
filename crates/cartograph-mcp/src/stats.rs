@@ -41,18 +41,28 @@ pub const UNKNOWN_TOOL: &str = "unknown";
 /// trace's, and the other `find` answers keep theirs.
 pub const FIND_TRACE: &str = "find:trace";
 
+/// What a `path` that goes on past a client down to the data is recorded as (its budget is
+/// the slice's).
+pub const PATH_SLICE: &str = "path:slice";
+
 /// The name a call is recorded under: [`FIND_TRACE`] for a `find` whose answer is a key's
-/// trace (its header `key "…":`), else the tool's.
+/// trace (its header `key "…":`), [`PATH_SLICE`] for a `path` with a slice (its line
+/// `calls from … and past it`), else the tool's.
 pub fn stats_tool<'t>(tool: &'t str, text: &str) -> &'t str {
     let traced = text
         .lines()
         .take(3)
         .any(|l| l.starts_with("key \"") && l.ends_with(':'));
     if tool == "find" && traced {
-        FIND_TRACE
-    } else {
-        tool
+        return FIND_TRACE;
     }
+    let sliced = text
+        .lines()
+        .any(|l| l.starts_with("calls from ") && l.contains(" and past it"));
+    if tool == "path" && sliced {
+        return PATH_SLICE;
+    }
+    tool
 }
 
 /// Who wrote a record.
@@ -343,6 +353,7 @@ pub fn budget_of(tool: &str) -> Option<usize> {
         // A `find` that answers with a string key's trace (see `stats_tool`).
         FIND_TRACE => TRACE,
         "path" => PATH,
+        PATH_SLICE => SLICE,
         "findings" => FINDINGS,
         "check" => CHECK,
         "symbols" => SYMBOLS,
@@ -534,6 +545,19 @@ mod tests {
         assert_eq!(stats_tool("find", variant), FIND_TRACE);
         assert_eq!(stats_tool("find", "src/key.rs  12 LOC\n"), "find");
         assert_eq!(stats_tool("impact", trace), "impact");
+        let slice = "a.ts → b.ts: shortest path 2 steps
+calls from a.ts into b.ts and past it (…):
+";
+        assert_eq!(stats_tool("path", slice), PATH_SLICE);
+        assert_eq!(
+            stats_tool(
+                "path",
+                "a.ts → b.ts: shortest path 2 steps
+"
+            ),
+            "path"
+        );
+        assert_eq!(budget_of(PATH_SLICE), Some(budget::limits::SLICE));
         assert_eq!(budget_of("find"), Some(budget::limits::FIND));
         assert_eq!(budget_of(FIND_TRACE), Some(budget::limits::TRACE));
     }

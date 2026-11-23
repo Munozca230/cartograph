@@ -53,6 +53,10 @@ fixture = "../tests/fixtures/workspace-bridges"
 [repos.keys]
 fixture = "../tests/fixtures/workspace-keys"
 
+# Spring DI and a slice from a view to a Mongo collection across three members.
+[repos.slice]
+fixture = "../tests/fixtures/workspace-slice"
+
 # A layered app. main: an old cycle and an old ui -> db violation. Branch feature: a new
 # cycle (model <-> service) and a new core -> ui import. Uncommitted: an unresolved import.
 [repos.layered]
@@ -844,3 +848,53 @@ question = "How does the web app reach the gateway's jobs router?"
 tool = "path"
 args = { from = "web:src/users.ts", to = "gateway:src/jobs.ts" }
 contains = ["http fetch POST /v1/jobs/{}", "gateway/src/jobs.ts"]
+
+# ---------------------------------------------------------------- Spring DI and slices
+
+[[case]]
+id = "spring-callers-interface-list"
+repo = "slice"
+question = "Who calls PriceRule.discounts, and which beans does Spring inject there?"
+tool = "callers"
+args = { symbol = "PriceRule.discounts" }
+contains = ["PricingEngine.java", "DiscountBoard.java", "List<PriceRule>", "CouponRule", "SeasonRule", "VolumeRule"]
+not_contains = ["LegacyRule"]
+budget = 1000
+
+[[case]]
+id = "spring-callers-primary-and-qualifier"
+repo = "slice"
+question = "Which payment gateway does the checkout use?"
+tool = "callers"
+args = { symbol = "PaymentGateway.charge" }
+contains = ["CardGateway (@Primary, of 2)", "WireGateway (qualified)"]
+budget = 1000
+
+[[case]]
+id = "spring-callers-bean-through-interface"
+repo = "slice"
+question = "Who reaches WireGateway.charge?"
+tool = "callers"
+args = { symbol = "WireGateway.charge" }
+contains = ["CheckoutService.java", "via PaymentGateway.charge (Spring bean)", "reaches another bean"]
+budget = 1000
+
+[[case]]
+id = "slice-view-to-collection"
+repo = "slice"
+question = "Show the whole path of saving an order, from the view to the Mongo collection."
+tool = "path"
+args = { from = "desktop:src/renderer/views/OrderView.tsx", to = "desktop:src/main/api/OrderClient.ts" }
+contains = [
+  "OrderView.tsx",
+  "desktop/src/preload/preload.ts",
+  "OrderModule.ts",
+  "OrderClient.ts",
+  "POST /api/orders",
+  "OrderController.java",
+  "OrderServiceImpl.java",
+  "OrderStore.java",
+  "collection orders (Mongo, via Order)",
+]
+in_order = true
+budget = 1500

@@ -183,10 +183,10 @@ exact versions (`workspace:`, `file:` and `*` are not judged).
 | `callers` | `over IPC "save" (invoke) from src/preload.ts:12 api.save()`, then the renderer sites that reach that function; `over HTTP "POST /api/users" (wrapper) from web/src/users.ts:14 createUser()` for a route handler |
 | `deps`, `explain` | a block "over bridges (not imports)" with the other end and the key; `explain` lists first the file's calls left without the other side (a route no server has, the wrong method) |
 | `impact` | "reached over bridges": what reaches the change over one or two bridges, and what imports that |
-| `path` | follows bridges (`bridges: false` keeps imports only); a step over one says so |
+| `path` | follows bridges (`bridges: false` keeps imports only); a step over one says so; to a client that calls out over HTTP or IPC, the calls go on past it down to the data (see [spring.md](spring.md) and [mcp.md](mcp.md#slices)) |
 | `entries` | an IPC handler says how many sites reach it over IPC, a route how many call it over HTTP |
 | `diff` | bridges the change adds and removes (both sides are indexed with the same settings) |
-| web map | `GET /api/bridges`, a `bridges` array in `/api/graph` (apart from `edges`), a toolbar toggle that draws them dashed over the plan, the file panel, dashed edges in flows |
+| web map | `GET /api/bridges`, a `bridges` array in `/api/graph` (apart from `edges`), a toolbar toggle that draws them dashed over the plan, the file panel, dashed edges in flows (and from an interface method to the Spring beans that implement it) |
 
 Bridges never count as imports: cycles, folder cycles, stable dependencies, hubs, god
 modules, chains, orphans and fan-in leave them out. Layer rules ignore them unless

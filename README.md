@@ -44,6 +44,13 @@ offline, and writes nothing inside the analyzed repository unless you let it.
   `callers`, `deps`, `impact`, `path` and the map follow them; channels without a handler,
   calls no route serves, unused routes and undeclared or skewed dependencies are
   findings. See [docs/bridges.md](docs/bridges.md).
+- **Spring and slices.** Spring beans and injection points read from the annotations
+  (`javax.*` and `jakarta.*` alike): `callers` of an interface method lists where its
+  type is injected and which beans each place receives (a list gets them all; one bean by
+  qualifier, `@Primary` or name), and `path` from a view to an HTTP client goes on past
+  the client to the controller, the service bean, the repository and the collection or
+  table it writes (`→ collection orders (Mongo, via Order)`). See
+  [docs/spring.md](docs/spring.md).
 - **String keys and tests to run.** `find` of a string key (an action or step name, a
   channel, a registry key) traces it across repositories: where it is defined, what runs
   it, which catalogs list it and where it is missing. `impact` ranks the tests to run by
@@ -195,6 +202,8 @@ base. See [docs/workspace.md](docs/workspace.md).
 - [docs/workspace.md](docs/workspace.md): several repositories as one map.
 - [docs/bridges.md](docs/bridges.md): IPC channels, HTTP routes and packages between files
   and repositories.
+- [docs/spring.md](docs/spring.md): Spring beans, injection points and slices down to the
+  data.
 - [docs/api-f2.md](docs/api-f2.md): the HTTP API behind the web UI.
 - [docs/release.md](docs/release.md): building release archives and publishing to npm.
 - [web/README.md](web/README.md) and [web/DESIGN.md](web/DESIGN.md): the web UI.

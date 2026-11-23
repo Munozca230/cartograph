@@ -486,7 +486,7 @@ impl Cartograph {
         description = "Why does A depend on B: the shortest import chain from `from` to `to` \
             (files or folders), each step with its import line, plus alternatives; a step over \
             a bridge (IPC channel, exposed preload function, HTTP route) says so (`bridges: false` keeps \
-            imports only). Use it to explain an unexpected dependency or a layer violation.",
+            imports only). When `to` calls out over HTTP or IPC (an API client), the answer goes             on past it: the calls from `from`'s functions into `to`, then over the route to the             controller, through Spring beans, down to the collection or table written (1.5k             tokens). Use it to explain an unexpected dependency or a layer violation, or to see             a request end to end, from a screen to the data.",
         annotations(read_only_hint = true)
     )]
     async fn path(&self, Parameters(a): Parameters<PathArgs>) -> CallToolResult {
@@ -520,7 +520,7 @@ impl Cartograph {
             tests come last, summed up per file. `symbol`: \
             sym:src/a.rs#name, src/a.rs#Type.method, Class.method or a bare name (an ambiguous \
             name lists the candidates; part of a name is completed when one symbol has it, \
-            and the answer says so).",
+            and the answer says so). For an interface method, also where Spring injects its             type and which beans each place receives.",
         annotations(read_only_hint = true)
     )]
     async fn callers(&self, Parameters(a): Parameters<CallersArgs>) -> CallToolResult {
