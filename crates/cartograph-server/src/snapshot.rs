@@ -178,6 +178,8 @@ pub struct Snapshot {
     pub flows: Option<FlowLayer>,
     /// `/api/meta`'s `workspace`, for a workspace index: its members (see [`workspace_meta`]).
     pub workspace: Option<Value>,
+    /// Member names of a workspace index, to read the alias `member:path` in ids.
+    members: Vec<String>,
 }
 
 /// The members of a workspace index, from its run metadata (`None` for a single repo):
@@ -676,9 +678,19 @@ impl Snapshot {
             root.name = repo_name.clone();
         }
         let workspace = workspace_meta(meta);
+        let members = workspace
+            .as_ref()
+            .and_then(|w| w["members"].as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|m| m["name"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Snapshot {
             workspace,
+            members,
             generation,
             repo_name,
             indexed_at,
@@ -709,8 +721,16 @@ impl Snapshot {
     }
 
     /// Resolve an API (or store) id to a dir.
+    /// `id` with a workspace alias spelled canonically (`dir:api:src` → `dir:api/src`).
+    fn canonical<'i>(&self, id: &'i str) -> std::borrow::Cow<'i, str> {
+        match cartograph_core::expand_alias(id, &self.members) {
+            Some(x) => std::borrow::Cow::Owned(x),
+            None => std::borrow::Cow::Borrowed(id),
+        }
+    }
+
     pub fn dir_of_id(&self, id: &str) -> Option<DirIx> {
-        let id = store_id(id);
+        let id = store_id(&self.canonical(id));
         if id == "repo:" {
             return Some(ROOT);
         }
@@ -720,7 +740,8 @@ impl Snapshot {
     }
 
     pub fn file_of_id(&self, id: &str) -> Option<FileIx> {
-        id.strip_prefix("file:")
+        self.canonical(id)
+            .strip_prefix("file:")
             .and_then(|p| self.file_ix.get(p))
             .copied()
     }

@@ -156,6 +156,26 @@ fn one_mcp_server_for_the_workspace() {
     let r = c.call("explain", json!({"node": "package.json"}), T);
     assert_eq!(r["isError"], true, "{r}");
     assert!(text(&r).contains("desktop:package.json"), "{}", text(&r));
+    // Freshness without a watcher: a request naming a member file edited on disk (in its
+    // folder, named otherwise) re-indexes it first.
+    let client = ws
+        .root
+        .join("backend-api/src/main/java/com/acme/api/ReportClient.java");
+    let source = std::fs::read_to_string(&client).unwrap().replace(
+        "import org.springframework",
+        "import com.acme.lib.Money;\nimport org.springframework",
+    );
+    std::fs::write(&client, source).unwrap();
+    let r = c.call(
+        "explain",
+        json!({"node": "api:src/main/java/com/acme/api/ReportClient.java"}),
+        T,
+    );
+    assert!(
+        text(&r).contains("lib/src/main/java/com/acme/lib/"),
+        "{}",
+        text(&r)
+    );
     // open_map takes the alias and focuses the canonical id.
     let r = c.call(
         "open_map",

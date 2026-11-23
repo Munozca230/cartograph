@@ -27,6 +27,14 @@ Este contrato lo comparten el backend (`crates/cartograph-server`) y el frontend
 ```
 `status` puede ser `"indexing"` (con `progress: { "done": 80, "total": 120 }`), `"ready"` o `"error"` (con `"error": "..."`).
 
+En un workspace (ver [workspace.md](workspace.md)) agrega `workspace`; en un repo solo no aparece:
+```json
+"workspace": { "members": [
+  { "name": "api", "path": "backend-api", "root": "C:/src/system/backend-api",
+    "git": "ok", "branch": "main", "head": "1a2b…", "detached": false } ] }
+```
+`git` es el estado de la última pasada de git del miembro (`null` antes de la primera). Los ids de todos los endpoints aceptan también el alias `miembro:ruta` (`file:api:src/a.ts`, `dir:api:src`); las respuestas usan siempre el id canónico (`file:api/src/a.ts`).
+
 ## GET /api/tree?root=<dir-id>&depth=<n>
 Devuelve la jerarquía canónica, que es el árbol de directorios. Los paquetes no forman parte de este árbol: van como overlay en `/api/packages`. Sin parámetros devuelve el árbol completo. `depth` limita la profundidad y los nodos recortados traen `"truncated": true`.
 ```json
