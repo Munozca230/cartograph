@@ -33,6 +33,8 @@ const REACH_VISITS: usize = 20_000;
 const SINK_DEPTH: usize = 8;
 /// Most functions the walk to the data visits.
 const SINK_VISITS: usize = 5_000;
+/// Most functions of `to` continued past it; the rest are counted.
+const MAX_TARGETS: usize = 60;
 /// Most bridges followed past one function of `to`.
 const BRIDGES_PER_TARGET: usize = 4;
 /// Most other sinks named.
@@ -399,9 +401,12 @@ fn writes(d: &DataSink, method: &str) -> bool {
 /// method, sink, writes)`.
 type Found<'t> = ((bool, u8, usize, usize, u32), Node, &'t DataSink, bool);
 
+/// The hops to a data sink, the sink, and the other collections reached.
+type Data = (Vec<Hop>, Option<SinkRow>, Vec<String>);
+
 /// From a handler: the nearest data sink (writes first unless `read`), and the other
 /// collections reached.
-fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow>, Vec<String>) {
+fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> Data {
     let t = g.t;
     let mut parent: HashMap<Node, (Node, Edge)> = HashMap::new();
     let mut seen: HashSet<Node> = HashSet::from([start.clone()]);
@@ -491,7 +496,11 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
 /// The chains from the functions of `from` to those of `to`, each continued past `to`
 /// over its bridges (see the module docs). Those that reach data first, then those of
 /// requests that change it, then by where they start.
-pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -> Vec<Chain> {
+pub fn chains(
+    t: &SymbolTable,
+    from: &BTreeSet<String>,
+    to: &BTreeSet<String>,
+) -> (Vec<Chain>, usize) {
     let g = Graph::build(t);
     // Start: every function of `from`.
     let mut starts: Vec<Node> = Vec::new();
@@ -503,6 +512,7 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
             }
         }
     }
+    let first: HashSet<Node> = starts.iter().cloned().collect();
     let in_to = |id: &str| split_symbol_id(id).is_some_and(|(p, _)| to.contains(p));
     let mut parent: HashMap<Node, (Node, Edge)> = HashMap::new();
     let mut seen: HashSet<Node> = starts.iter().cloned().collect();
@@ -524,7 +534,7 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
         }
         for e in g.edges(&n, false) {
             // Only steps that leave `from`'s file once: the start is any of its functions.
-            if starts.contains(&e.to) {
+            if first.contains(&e.to) {
                 continue;
             }
             if seen.insert(e.to.clone()) {
@@ -534,7 +544,9 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
         }
     }
     let mut out: Vec<(u8, u8, u32, Chain)> = Vec::new();
-    for target in &targets {
+    let mut data: HashMap<(Node, bool), Data> = HashMap::new();
+    let more = targets.len().saturating_sub(MAX_TARGETS);
+    for target in targets.iter().take(MAX_TARGETS) {
         let hops = hops_to(&g, &parent, target, None);
         let start_line = hops.first().map_or(0, |h| h.line);
         // Its own bridges, else those of the functions of its file it calls.
@@ -566,7 +578,10 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
         for b in over.into_iter().take(BRIDGES_PER_TARGET) {
             let Some(start) = g.landing(b) else { continue };
             let read = b.kind == BridgeKind::Http && b.key.starts_with("GET ");
-            let (mut hops, sink, others) = to_data(&g, &start, read);
+            let (mut hops, sink, others) = data
+                .entry((start.clone(), read))
+                .or_insert_with(|| to_data(&g, &start, read))
+                .clone();
             if hops.is_empty() {
                 hops.push(Hop {
                     file: g.file_of(&start.id),
@@ -628,5 +643,5 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
         out.push((u8::from(!chain.has_sink()), kind, start_line, chain));
     }
     out.sort_by_key(|a| (a.0, a.1, a.2));
-    out.into_iter().map(|x| x.3).collect()
+    (out.into_iter().map(|x| x.3).collect(), more)
 }

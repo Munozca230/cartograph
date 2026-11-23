@@ -254,13 +254,13 @@ pub fn path_with(
 
     // B calls out over a bridge: the slice past it.
     let to_paths: BTreeSet<String> = fb.iter().map(|&f| g.path(f).to_string()).collect();
-    let chains = if bridges && !paths.is_empty() && crate::slice::crosses(&repo.symbols, &to_paths)
-    {
-        let from_paths: BTreeSet<String> = fa.iter().map(|&f| g.path(f).to_string()).collect();
-        crate::slice::chains(&repo.symbols, &from_paths, &to_paths)
-    } else {
-        Vec::new()
-    };
+    let (chains, beyond) =
+        if bridges && !paths.is_empty() && crate::slice::crosses(&repo.symbols, &to_paths) {
+            let from_paths: BTreeSet<String> = fa.iter().map(|&f| g.path(f).to_string()).collect();
+            crate::slice::chains(&repo.symbols, &from_paths, &to_paths)
+        } else {
+            (Vec::new(), 0)
+        };
     let base = |limit: usize| PathResult {
         from: g.id(na),
         to: g.id(nb),
@@ -334,7 +334,7 @@ pub fn path_with(
                         })
                         .collect(),
                     slice_full: full.min(chains.len()),
-                    slice_more: chains.len().saturating_sub(full + brief),
+                    slice_more: beyond + chains.len().saturating_sub(full + brief),
                     ..base(limit)
                 }
             },
