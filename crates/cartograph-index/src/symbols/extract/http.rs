@@ -1034,6 +1034,23 @@ export class Client {
         );
     }
 
+    /// An encoded value inside a path is a hole there, not a base: the function is a
+    /// client site of its own, not a wrapper.
+    #[test]
+    fn an_encoded_value_is_a_hole_not_a_base() {
+        let c = code(
+            "typescript",
+            "export function history(id: string) {
+  return fetch(`/chat/${encodeURIComponent(id)}/items`);
+}
+",
+        );
+        assert_eq!(
+            clients(&c),
+            vec!["fetch GET '/chat/' <encodeURIComponent(id)> '/items' L2"]
+        );
+    }
+
     #[test]
     fn spring_routes_with_constants_arrays_and_methods() {
         let c = code(

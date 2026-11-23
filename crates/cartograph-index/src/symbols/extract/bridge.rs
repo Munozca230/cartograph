@@ -371,10 +371,12 @@ fn url_helper(
     out: &mut StrExpr,
     depth: u8,
 ) -> bool {
+    // `encodeURIComponent(id)` encodes a value: a hole, not a base.
+    let encodes = lower.starts_with("encode") || lower.starts_with("escape");
     let urlish = ["url", "uri", "path", "endpoint", "route"]
         .iter()
         .any(|w| lower.contains(w));
-    if !urlish {
+    if !urlish || encodes {
         return false;
     }
     for a in list {
