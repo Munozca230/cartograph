@@ -678,15 +678,15 @@ fn sinks(calls: &[CallCap<'_>], recv_types: &HashMap<usize, String>, src: &[u8])
         } else if mongo_recv && MONGO_CALLS.contains(&name.as_str()) {
             let coll = args
                 .iter()
+                .rev()
                 .filter(|a| matches!(a.kind(), "string_literal" | "identifier" | "field_access"))
-                .filter(|a| {
+                .find(|a| {
                     a.kind() == "string_literal" || {
                         let t = text(**a, src);
                         let last = t.rsplit('.').next().unwrap_or(&t);
                         crate::symbols::strexpr::looks_constant(last)
                     }
                 })
-                .last()
                 .and_then(named);
             if coll.is_none() && entity.is_none() {
                 continue;

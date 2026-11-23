@@ -349,6 +349,9 @@ fn writes(name: &str) -> bool {
         .any(|w| n.starts_with(w) || n.contains(&format!("_{w}")))
 }
 
+/// A data sink the walk found: `((rank, depth, order), method, sink, writes)`.
+type Found<'t> = ((u8, usize, usize), Node, &'t DataSink, bool);
+
 /// From a handler: the nearest data sink (writes first unless `read`), and the other
 /// collections reached.
 fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow>, Vec<String>) {
@@ -356,8 +359,7 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
     let mut parent: HashMap<Node, (Node, Edge)> = HashMap::new();
     let mut seen: HashSet<Node> = HashSet::from([start.clone()]);
     let mut queue: VecDeque<(Node, usize)> = VecDeque::from([(start.clone(), 0)]);
-    // ((rank, depth, order), node, sink, writes)
-    let mut found: Vec<((u8, usize, usize), Node, &DataSink, bool)> = Vec::new();
+    let mut found: Vec<Found<'_>> = Vec::new();
     let mut visits = 0;
     while let Some((n, depth)) = queue.pop_front() {
         visits += 1;
@@ -557,6 +559,6 @@ pub fn chains(t: &SymbolTable, from: &BTreeSet<String>, to: &BTreeSet<String>) -
         });
         out.push((u8::from(!chain.has_sink()), kind, start_line, chain));
     }
-    out.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    out.sort_by_key(|a| (a.0, a.1, a.2));
     out.into_iter().map(|x| x.3).collect()
 }
