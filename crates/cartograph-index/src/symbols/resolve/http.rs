@@ -513,6 +513,7 @@ impl Cx<'_, '_> {
 }
 
 /// Match the HTTP bridges of a repo or workspace.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     ctx: &Ctx<'_>,
     binds: &[Bindings<'_>],
@@ -740,12 +741,15 @@ fn route_symbol(
     cx.caller(fi, line).map(|(_, s)| cx.sym(s))
 }
 
+/// A router: the file and the receiver its routes are registered on.
+type Router = (usize, String);
+
 /// The prefixes each router (`(file, receiver)`) is mounted under: `app.use("/v1", r)`,
 /// through imports, chains of up to three mounts; a router mounted twice has two.
 fn mount_prefixes(cx: &Cx<'_, '_>) -> HashMap<(usize, String), Vec<Url>> {
     let ctx = cx.ctx;
     // (mounting file, receiver) → (prefix, (target file, target receiver)).
-    let mut edges: Vec<((usize, String), Url, (usize, String))> = Vec::new();
+    let mut edges: Vec<(Router, Url, Router)> = Vec::new();
     for (fi, f) in ctx.files.iter().enumerate() {
         for m in &f.code.mounts {
             let prefix = expand(&cx.consts, fi, &m.prefix, 0);
@@ -1059,7 +1063,7 @@ fn site(cx: &Cx<'_, '_>, r: &Raw) -> Site {
             other => other.clone(),
         })
         .collect();
-    let (base, path) = split_base(&parts, &member, cx.ctx, &cx.hosts);
+    let (base, path) = split_base(&parts, &member, cx.ctx, cx.hosts);
     let (segs, _) = segments(&path);
     let literal = segs.iter().filter(|s| matches!(s, Seg::Lit(_))).count();
     let dynamic = literal == 0 || matches!(&base, Base::Unknown(b) if b.is_empty());

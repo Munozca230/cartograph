@@ -284,9 +284,9 @@ fn http_bridges_cross_members_through_wrappers_instances_and_mounts() {
         vec![" desktop/src/main/http/UsersApi.ts:30"]
     );
     let unused = http_left(s, "unused");
-    assert!(unused.contains(&format!(
-        "DELETE /api/users/{{}} api/src/main/java/com/acme/api/UserController.java:31"
-    )));
+    assert!(unused.contains(
+        &"DELETE /api/users/{} api/src/main/java/com/acme/api/UserController.java:31".to_string()
+    ));
     // The router is mounted under /v1 and /v2; only /v1 is called.
     assert!(unused.contains(&"POST /v2/jobs/{} gateway/src/jobs.ts:5".to_string()));
     assert!(!unused.iter().any(|u| u.starts_with("POST /v1/jobs")));
