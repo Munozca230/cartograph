@@ -844,8 +844,6 @@ struct FileResult {
     entries: Vec<EntryPoint>,
 }
 
-/// Resolve every file's calls and entry points. `files` are the extractions of the files
-/// of `graph` (import sites and edges must already be resolved).
 /// Only the bridges (see [`bridge`]) of `files`, without the rest of the symbol layer: for
 /// an index that skips it (a git base for `diff` and `check`), so both sides compare.
 pub fn bridges_only(
@@ -884,6 +882,8 @@ pub fn bridges_only(
     out
 }
 
+/// Resolve every file's calls and entry points. `files` are the extractions of the files
+/// of `graph` (import sites and edges must already be resolved).
 pub fn resolve(
     graph: &Graph,
     files: &[FileCode<'_>],

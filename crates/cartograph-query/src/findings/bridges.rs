@@ -144,7 +144,13 @@ pub(super) fn version_skew(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
         else {
             continue;
         };
-        if e.kind != BridgeKind::Package || e.role != BridgeRole::Consume {
+        if e.kind != BridgeKind::Package
+            || e.role != BridgeRole::Consume
+            || !cx
+                .g
+                .file_by_path(&e.file)
+                .is_some_and(|f| cx.active[f as usize])
+        {
             continue;
         }
         let producers: Vec<&str> = b
@@ -231,6 +237,9 @@ pub(super) fn undeclared_member_dependency(cx: &Ctx<'_>, b: &BridgeTable) -> Vec
         }
         for d in deps {
             if d.kinds & crate::graph::dep_kind::IMPORT == 0 {
+                continue;
+            }
+            if !cx.active[d.file as usize] {
                 continue;
             }
             let bm = member_of(cx, g.path(d.file));

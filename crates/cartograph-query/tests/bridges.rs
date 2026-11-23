@@ -243,3 +243,40 @@ fn flows_continue_over_bridges_with_their_label() {
         "{via:?}"
     );
 }
+
+/// Ignored files are left out of the findings about packages, at either end.
+#[test]
+fn ignored_manifests_and_members_leave_package_findings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    common::copy_dir(
+        &common::repo_root().join("tests/fixtures/workspace-bridges"),
+        &root,
+    );
+    let file = root.join("cartograph-workspace.toml");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        format!("ignore = [\"api/pom.xml\", \"legacy/**\"]\n{text}"),
+    )
+    .unwrap();
+    let out = cartograph_index::index(&root, &cartograph_index::IndexOptions::default()).unwrap();
+    let r = Repo::with_symbols(
+        &out.graph,
+        &out.symbols,
+        cartograph_query::Config::load(&root).unwrap(),
+    );
+    let ids: Vec<&str> = r.findings().iter().map(|f| f.id.as_str()).collect();
+    assert!(
+        !ids.contains(&"version_skew:api/pom.xml:maven:com.acme:lib"),
+        "{ids:?}"
+    );
+    assert!(
+        !ids.contains(&"undeclared_member_dependency:api->legacy"),
+        "{ids:?}"
+    );
+    assert!(
+        ids.contains(&"version_skew:desktop/package.json:npm:@acme/ui-kit"),
+        "{ids:?}"
+    );
+}
