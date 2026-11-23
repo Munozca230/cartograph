@@ -147,18 +147,30 @@ pub(crate) fn same_package(
 fn package_dirs(g: &RepoGraph, t: FileIx) -> Vec<String> {
     let dir = g.dirs[g.files[t as usize].dir as usize].path.clone();
     let mut out = vec![dir.clone()];
-    let segs: Vec<&str> = dir.split('/').collect();
-    if let Some(i) = segs.iter().position(|s| *s == "main") {
-        let mut m = segs.clone();
-        m[i] = "test";
-        out.push(m.join("/"));
-    }
+    out.extend(test_mirror(&dir));
     out
 }
 
-/// Lower-case names a test of `name` may be named after: its stem, and without `Impl`.
+/// The test tree's mirror of a JVM source folder (`src/main/java/a` → `src/test/java/a`,
+/// Kotlin, Scala and Groovy alike). Elsewhere `src/main` is no source set (the main
+/// process of an Electron app): no mirror.
+fn test_mirror(dir: &str) -> Option<String> {
+    let segs: Vec<&str> = dir.split('/').collect();
+    let i = segs.windows(3).position(|w| {
+        w[0] == "src" && w[1] == "main" && matches!(w[2], "java" | "kotlin" | "scala" | "groovy")
+    })?;
+    let mut m = segs.clone();
+    m[i + 1] = "test";
+    Some(m.join("/"))
+}
+
+/// Lower-case names a test of `name` may be named after: its name without its extension
+/// (`users.service` of `users.service.ts`), and without `Impl`.
 fn subjects_of(name: &str) -> Vec<String> {
-    let stem = name.split('.').next().unwrap_or(name).to_lowercase();
+    let stem = name
+        .rsplit_once('.')
+        .map_or(name, |(s, _)| s)
+        .to_lowercase();
     let mut out = vec![stem.clone()];
     if let Some(s) = stem.strip_suffix("impl")
         && !s.is_empty()
@@ -169,17 +181,15 @@ fn subjects_of(name: &str) -> Vec<String> {
 }
 
 /// What a test file is named after, lower case: `FooTest.java`, `TestFoo.java`,
-/// `FooIT.java` → `foo`; `foo.test.ts` → `foo`; `test_foo.py`, `foo_test.go` → `foo`.
+/// `FooIT.java` → `foo`; `foo.test.ts` → `foo`, `users.controller.spec.ts` →
+/// `users.controller`; `test_foo.py`, `foo_test.go` → `foo`.
 fn test_subject(name: &str) -> Option<String> {
-    let mut parts = name.split('.');
-    let stem = parts.next()?;
-    let has_marker = name
-        .split('.')
-        .rev()
-        .nth(1)
-        .is_some_and(|m| matches!(m, "test" | "spec" | "e2e"));
-    let s = if has_marker && name.split('.').count() >= 3 {
-        stem
+    let parts: Vec<&str> = name.split('.').collect();
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    let marked = parts.len() >= 3 && matches!(parts[parts.len() - 2], "test" | "spec" | "e2e");
+    let before_marker = parts[..parts.len().saturating_sub(2)].join(".");
+    let s = if marked {
+        before_marker.as_str()
     } else if let Some(s) = stem.strip_prefix("test_") {
         s
     } else if let Some(s) = stem.strip_suffix("_test") {
@@ -310,6 +320,35 @@ fn own_slow(g: &RepoGraph, f: FileIx) -> Option<String> {
         .iter()
         .find(|(d, _)| dirs.iter().any(|x| x == d))
         .map(|(_, why)| why.to_string())
+}
+
+/// Whether `f`, or a file of the test tree it imports (at most two steps away), imports
+/// `spec` (`@playwright/test` through a shared fixtures module).
+fn tree_imports(g: &RepoGraph, f: FileIx, spec: &str) -> bool {
+    let has = |u: FileIx| g.sites[u as usize].iter().any(|s| s.specifier == spec);
+    if has(f) {
+        return true;
+    }
+    let mut frontier = vec![f];
+    let mut seen = vec![f];
+    for _ in 0..2 {
+        let mut next = Vec::new();
+        for &u in &frontier {
+            for d in &g.out[u as usize] {
+                let v = d.file;
+                if seen.contains(&v) || g.files[v as usize].kind != FileKind::Test {
+                    continue;
+                }
+                if has(v) {
+                    return true;
+                }
+                seen.push(v);
+                next.push(v);
+            }
+        }
+        frontier = next;
+    }
+    false
 }
 
 /// Why `f` is slow: [`own_slow`], else an import marker of a file of the test tree it
@@ -513,9 +552,20 @@ fn tool_of(g: &RepoGraph, f: FileIx) -> Option<(Tool, String)> {
         Some("javascript" | "typescript" | "tsx" | "jsx") => {
             let imports = |p: &str| g.sites[f as usize].iter().any(|s| s.specifier == p);
             let nearest = find(&["npm"])?;
-            let own = if imports("@playwright/test") {
+            let declares = |r: &str| {
+                up.iter()
+                    .filter_map(|d| manifest(g, d, &["npm"]))
+                    .any(|m| m.test_runners.iter().any(|x| x == r))
+            };
+            let dirs: Vec<&str> = path.split('/').collect();
+            let in_dir = |names: &[&str]| dirs[..dirs.len() - 1].iter().any(|d| names.contains(d));
+            // Playwright: imported here or by a fixture of the test tree it imports (two
+            // steps), or an `e2e`/`playwright` test where the package uses Playwright.
+            let own = if tree_imports(g, f, "@playwright/test")
+                || (in_dir(&["e2e", "playwright"]) && declares("playwright"))
+            {
                 Some("playwright")
-            } else if imports("cypress") || path.split('/').any(|d| d == "cypress") {
+            } else if tree_imports(g, f, "cypress") || in_dir(&["cypress"]) {
                 Some("cypress")
             } else {
                 None
@@ -663,11 +713,13 @@ pub(crate) fn commands(
                         }
                     }
                     let mut s = format!("{bin} test");
+                    // `-am` builds the modules they depend on (a sibling not installed),
+                    // which hold none of the tests named.
                     if !modules.is_empty() {
-                        s.push_str(&format!(" -pl {}", modules.join(",")));
+                        s.push_str(&format!(" -pl {} -am", modules.join(",")));
                     }
                     s.push_str(&format!(" -Dtest={}", classes.join(",")));
-                    if modules.len() > 1 {
+                    if !modules.is_empty() {
                         s.push_str(" -Dsurefire.failIfNoSpecifiedTests=false");
                     }
                     s
@@ -760,6 +812,16 @@ mod tests {
             ["fooserviceimpl", "fooservice"]
         );
         assert_eq!(subjects_of("Impl.java"), ["impl"]);
+        // The whole name before the extension: a service and a controller are apart.
+        assert_eq!(subjects_of("users.service.ts"), ["users.service"]);
+        assert_eq!(
+            test_subject("users.controller.spec.ts").as_deref(),
+            Some("users.controller")
+        );
+        assert_eq!(
+            test_subject("users.service.spec.ts").as_deref(),
+            Some("users.service")
+        );
     }
 
     #[test]
@@ -788,6 +850,21 @@ mod tests {
         ] {
             assert_eq!(import_marker(spec).as_deref(), want, "{spec}");
         }
+    }
+
+    #[test]
+    fn only_a_jvm_source_set_has_a_test_mirror() {
+        assert_eq!(
+            test_mirror("api/src/main/java/com/acme").as_deref(),
+            Some("api/src/test/java/com/acme")
+        );
+        assert_eq!(
+            test_mirror("src/main/kotlin/a").as_deref(),
+            Some("src/test/kotlin/a")
+        );
+        // An Electron app's main process is no source set.
+        assert_eq!(test_mirror("desktop/src/main/ipc"), None);
+        assert_eq!(test_mirror("src/main"), None);
     }
 
     #[test]

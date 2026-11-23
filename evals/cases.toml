@@ -398,7 +398,7 @@ contains = [
   "slow: @SpringBootTest",
   "same package, no import reaches it",
   "FilePathsTest.java",
-  "./mvnw test -pl app -Dtest=FileServiceImplTest",
+  "./mvnw test -pl app -am -Dtest=FileServiceImplTest -Dsurefire.failIfNoSpecifiedTests=false",
   "run the slow ones",
 ]
 in_order = true

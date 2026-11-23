@@ -44,13 +44,13 @@ fn maven_tests_closest_first_with_slow_ones_apart() {
     // From the member's root, where the wrapper is, into the module; the helper is in no
     // command.
     assert!(
-        t.contains("run (maven, member server): ./mvnw test -pl app -Dtest=FileServiceImplTest\n"),
+        t.contains("run (maven, member server): ./mvnw test -pl app -am -Dtest=FileServiceImplTest -Dsurefire.failIfNoSpecifiedTests=false\n"),
         "{t}"
     );
     assert!(
         t.contains(
             "run the slow ones (maven, member server): \
-             ./mvnw test -pl app -Dtest=FileControllerIT,FileStoreTest\n"
+             ./mvnw test -pl app -am -Dtest=FileControllerIT,FileStoreTest -Dsurefire.failIfNoSpecifiedTests=false\n"
         ),
         "{t}"
     );
@@ -142,6 +142,73 @@ fn gradle_tests_run_per_project_with_the_wrapper() {
             .contains("run (gradle): ./gradlew :app:test --tests ClockTest\n"),
         "{}",
         a.text
+    );
+}
+
+/// Playwright specs that import `test` from a shared fixtures module, or sit in `e2e/`
+/// without importing Playwright, still run with Playwright; a unit test with vitest. A
+/// controller's spec is not named after the service.
+#[test]
+fn playwright_through_fixtures_or_its_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("w");
+    let files = [
+        (
+            "package.json",
+            r#"{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"1","@playwright/test":"1"}}"#,
+        ),
+        ("src/users.service.ts", "export const users = () => 1;\n"),
+        (
+            "src/users.service.test.ts",
+            "import { users } from './users.service';\nusers();\n",
+        ),
+        (
+            "src/users.controller.spec.ts",
+            "import { users } from './users.service';\nusers();\n",
+        ),
+        (
+            "e2e/fixtures.ts",
+            "import { test as base } from '@playwright/test';\nexport const test = base;\n",
+        ),
+        (
+            "e2e/users.e2e.ts",
+            "import { test } from './fixtures';\nimport { users } from '../src/users.service';\ntest('u', () => users());\n",
+        ),
+        (
+            "e2e/plain.spec.ts",
+            "import { users } from '../src/users.service';\nusers();\n",
+        ),
+    ];
+    for (rel, text) in files {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let out = cartograph_index::index(&root, &cartograph_index::IndexOptions::default()).unwrap();
+    let r = cartograph_query::Repo::with_symbols(
+        &out.graph,
+        &out.symbols,
+        cartograph_query::Config::default(),
+    );
+    let a = impact(&r, &["src/users.service.ts".into()]).unwrap();
+    let t = &a.text;
+    assert!(
+        t.contains(
+            "run (vitest): npx vitest run src/users.service.test.ts src/users.controller.spec.ts\n"
+        ),
+        "{t}"
+    );
+    assert!(
+        t.contains("npx playwright test e2e/plain.spec.ts e2e/users.e2e.ts\n"),
+        "{t}"
+    );
+    assert!(
+        t.contains("src/users.service.test.ts 1 · named after it"),
+        "{t}"
+    );
+    assert!(
+        !t.contains("users.controller.spec.ts 1 · named after it"),
+        "{t}"
     );
 }
 

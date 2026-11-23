@@ -157,7 +157,7 @@ the line says `run the tests listed`: the command runs those only.
 
 | Build | Command (from the root it names) |
 |---|---|
-| Maven | `./mvnw test -Dtest=A,B` where the wrapper is (else `mvn`), from the top of the build; `-pl module` for a module of a multi-module build |
+| Maven | `./mvnw test -Dtest=A,B` where the wrapper is (else `mvn`), from the top of the build; `-pl module -am -Dsurefire.failIfNoSpecifiedTests=false` for a module of a multi-module build (its sibling dependencies built too) |
 | Gradle | `./gradlew :module:test --tests A --tests B` (else `gradle`) |
 | vitest, jest, mocha | `npx vitest run <paths>`, `npx jest <paths>`, `npx mocha <paths>`: the runner the `package.json` depends on or its scripts run, paths relative to it; `npm test -- <paths>` when only a `test` script is known; nothing when there is neither |
 | Playwright, Cypress | `npx playwright test <paths>`, `npx cypress run --spec <paths>`, for the tests that import them |
