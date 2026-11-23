@@ -37,6 +37,11 @@ fixture = "../tests/fixtures/godot-basic"
 [repos.spring-java]
 fixture = "../tests/fixtures/spring-java"
 
+# A workspace: four repositories (two in folders named otherwise) mapped as one, with
+# data folders and a worktree copy beside them that are never walked.
+[repos.workspace]
+fixture = "../tests/fixtures/workspace-basic"
+
 # A layered app. main: an old cycle and an old ui -> db violation. Branch feature: a new
 # cycle (model <-> service) and a new core -> ui import. Uncommitted: an unresolved import.
 [repos.layered]
@@ -594,3 +599,50 @@ question = "Which files should I review first?"
 tool = "hotspots"
 contains = ["src/hot.ts", "src/warm.ts", "src/cold.ts"]
 in_order = true
+
+[[case]]
+id = "ws-overview-members"
+repo = "workspace"
+question = "This folder holds several repositories: what are they and how do they depend on each other?"
+tool = "overview"
+contains = ["api/", "lib/", "desktop/", "mcp/", "across members (file pairs): api → lib 4, mcp → desktop 1"]
+not_contains = ["logs/", "backups/", "api-worktrees", "backend-api/"]
+
+[[case]]
+id = "ws-alias-explain"
+repo = "workspace"
+question = "What does the API's UserService use, including from the shared library?"
+tool = "explain"
+args = { node = "api:src/main/java/com/acme/api/UserService.java" }
+contains = ["file api/src/main/java/com/acme/api/UserService.java", "lib/src/main/java/com/acme/lib/", "Money.java", "UserDto.java"]
+
+[[case]]
+id = "ws-impact-across-members"
+repo = "workspace"
+question = "I change the library's UserDto: what breaks in the API and which tests do I run?"
+tool = "impact"
+args = { nodes = ["lib:src/main/java/com/acme/lib/UserDto.java"] }
+contains = ["api/src/main/java/com/acme/api/UserController.java", "api/src/test/java/com/acme/api/UserServiceTest.java"]
+
+[[case]]
+id = "ws-member-relative-path"
+repo = "workspace"
+question = "What does src/tools.ts depend on?"
+tool = "deps"
+args = { node = "src/tools.ts" }
+contains = ["mcp/src/tools.ts", "desktop/src/shared/channels.ts"]
+
+[[case]]
+id = "ws-ambiguous-path"
+repo = "workspace"
+question = "Explain package.json"
+tool = "explain"
+args = { node = "package.json" }
+error = "ambiguous"
+
+[[case]]
+id = "ws-check-member-rules"
+repo = "workspace"
+question = "Does the workspace respect its rules and each repository's own?"
+tool = "check"
+contains = ["cartograph-workspace.toml", "layer_violation:api.service->api.client"]
