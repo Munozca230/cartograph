@@ -24,6 +24,7 @@ pub mod grammars;
 pub mod imports;
 pub mod lang;
 pub mod manifest;
+pub mod noise;
 mod paths;
 pub mod report;
 pub mod resolve;

@@ -67,7 +67,10 @@ pub enum SkipReason {
     /// Larger than the size limit (1 MB by default).
     TooLarge,
     /// A directory that is always excluded (`.git`, `.cartograph`, `node_modules`, `target`),
-    /// the data dir, or the database files when the data dir is the repo root.
+    /// the data dir, or the database files when the data dir is the repo root; a copy of a
+    /// repository (a worktree); a folder of data or tool output (captures, logs, backups,
+    /// caches; see `cartograph_index::noise`); the repo's notes file. `detail` says which
+    /// when it is not one of the fixed names.
     ExcludedDir,
     /// A symbolic link (not followed).
     Symlink,
@@ -80,6 +83,9 @@ pub enum SkipReason {
     /// The file was read but could not be parsed (e.g. a malformed manifest). The file
     /// itself is still indexed; what failed is described in `detail`.
     ParseError,
+    /// A minified bundle (`*.min.js`, or code whose lines are very long on average):
+    /// generated, slow to parse, nothing to map.
+    Minified,
 }
 
 /// Why an import could not be resolved to a file or an external package.
@@ -138,7 +144,7 @@ str_enum!(Confidence { Exact => "exact", Resolved => "resolved", Heuristic => "h
 str_enum!(SkipReason {
     Binary => "binary", TooLarge => "too_large", ExcludedDir => "excluded_dir",
     Symlink => "symlink", InvalidPath => "invalid_path", ReadError => "read_error",
-    WalkError => "walk_error", ParseError => "parse_error",
+    WalkError => "walk_error", ParseError => "parse_error", Minified => "minified",
 });
 str_enum!(UnresolvedReason {
     NotFound => "not_found", Dynamic => "dynamic", Ambiguous => "ambiguous",

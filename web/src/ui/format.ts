@@ -70,6 +70,7 @@ const REASONS: Record<string, string> = {
   alias_unresolved: "Alias sin configurar",
   ambiguous: "Ambiguo",
   too_large: "Demasiado grande",
+  minified: "Minificado",
   parse_error: "Error de análisis",
   binary: "Binario",
   unsupported: "Lenguaje sin soporte",

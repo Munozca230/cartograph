@@ -234,27 +234,78 @@ pub fn walk(
     out.walk_ms = started.elapsed().as_millis();
 
     let started = std::time::Instant::now();
-    if let Some(p) = hooks.progress {
-        p.start(candidates.len() as u64);
-    }
-    let results: Vec<Result<FileRecord, SkippedFile>> = candidates
-        .par_iter()
-        .map(|(abs, rel)| {
-            if cancelled() {
-                // The caller discards a cancelled walk; skip the work.
-                return Err(SkippedFile {
-                    path: rel.clone(),
-                    reason: SkipReason::ReadError,
-                    detail: Some("cancelled".into()),
-                });
-            }
-            let r = read_file(abs, rel, max_file_bytes, hooks.cache);
-            if let Some(p) = hooks.progress {
-                p.advance();
-            }
-            r
+    // Data folders (captures, logs, backups…) are read only if what is read names them.
+    let noise = crate::noise::candidates(candidates.iter().map(|(_, rel)| rel.as_str()));
+    let noise_of = |rel: &str| {
+        noise.iter().position(|(d, _)| {
+            rel.starts_with(d.as_str()) && rel.as_bytes().get(d.len()) == Some(&b'/')
         })
-        .collect();
+    };
+    let (held, first): (Vec<_>, Vec<_>) = candidates
+        .into_iter()
+        .partition(|(_, rel)| noise_of(rel).is_some());
+    if let Some(p) = hooks.progress {
+        p.start(first.len() as u64);
+    }
+    let read_all = |list: &[(PathBuf, String)], progress: bool| {
+        list.par_iter()
+            .map(|(abs, rel)| {
+                if cancelled() {
+                    // The caller discards a cancelled walk; skip the work.
+                    return Err(SkippedFile {
+                        path: rel.clone(),
+                        reason: SkipReason::ReadError,
+                        detail: Some("cancelled".into()),
+                    });
+                }
+                let r = read_file(abs, rel, max_file_bytes, hooks.cache);
+                if progress && let Some(p) = hooks.progress {
+                    p.advance();
+                }
+                r
+            })
+            .collect::<Vec<Result<FileRecord, SkippedFile>>>()
+    };
+    let mut results = read_all(&first, true);
+    if !noise.is_empty() {
+        let read: Vec<&FileRecord> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+        let named = crate::noise::Named::of(
+            read.iter()
+                .flat_map(|f| f.imports.iter().map(|i| (f.path.as_str(), i))),
+            read.iter()
+                .filter_map(|f| f.manifest.as_ref())
+                .flat_map(|m| {
+                    let dir = m.path.rsplit_once('/').map_or("", |(d, _)| d);
+                    m.details["entries"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(move |e| e.as_str().map(|e| (dir, e)))
+                }),
+        );
+        let keep: Vec<bool> = noise.iter().map(|(d, _)| named.names(d)).collect();
+        let (again, _): (Vec<_>, Vec<_>) = held
+            .into_iter()
+            .partition(|(_, rel)| noise_of(rel).is_some_and(|i| keep[i]));
+        results.extend(read_all(&again, false));
+        let dropped: Vec<&(String, String)> = noise
+            .iter()
+            .zip(&keep)
+            .filter(|(_, k)| !**k)
+            .map(|(n, _)| n)
+            .collect();
+        out.dirs.retain(|d| {
+            !dropped.iter().any(|(n, _)| {
+                d == n || (d.starts_with(n.as_str()) && d.as_bytes().get(n.len()) == Some(&b'/'))
+            })
+        });
+        out.skipped
+            .extend(dropped.into_iter().map(|(path, why)| SkippedFile {
+                path: path.clone(),
+                reason: SkipReason::ExcludedDir,
+                detail: Some(why.clone()),
+            }));
+    }
     for r in results {
         match r {
             Ok(f) => out.files.push(f),
@@ -336,6 +387,9 @@ fn read_file(
         ));
     }
     let lang = lang::detect(rel);
+    if let Some(why) = minified(rel, lang, &content) {
+        return Err(skip(SkipReason::Minified, why));
+    }
     let hash = blake3::hash(&content).to_hex().to_string();
     let hit = match (lang, cache) {
         (Some(l), Some(c)) => c.get(&cache_key(l, &hash)).cloned(),
@@ -367,6 +421,36 @@ fn read_file(
         bytes: content.len() as u64,
         hash,
         manifest: manifest::detect(rel).map(|kind| manifest::parse(rel, kind, &content)),
+    })
+}
+
+/// Size from which a code file with very long lines on average counts as minified.
+pub const MINIFIED_MIN_BYTES: usize = 16 * 1024;
+/// Average line length, in bytes, above which such a file counts as minified.
+pub const MINIFIED_LINE_BYTES: usize = 500;
+
+/// Why a file is a minified bundle, if it is one: named `*.min.js` / `*.min.css` (and the
+/// `.mjs` / `.cjs` forms), or code of [`MINIFIED_MIN_BYTES`] or more whose lines average
+/// more than [`MINIFIED_LINE_BYTES`]. Generated, vendored and slow to parse (one
+/// statement-long line), with nothing to map.
+fn minified(rel: &str, lang: Option<&str>, content: &[u8]) -> Option<String> {
+    let name = rel.rsplit('/').next().unwrap_or(rel).to_ascii_lowercase();
+    if [".min.js", ".min.mjs", ".min.cjs", ".min.css"]
+        .iter()
+        .any(|e| name.ends_with(e))
+    {
+        return Some("a minified bundle (`.min.` file)".into());
+    }
+    if lang.is_none() || content.len() < MINIFIED_MIN_BYTES {
+        return None;
+    }
+    let lines = content.iter().filter(|&&b| b == b'\n').count() + 1;
+    let avg = content.len() / lines;
+    (avg > MINIFIED_LINE_BYTES).then(|| {
+        format!(
+            "minified: {} bytes in {lines} lines ({avg} bytes per line)",
+            content.len()
+        )
     })
 }
 
