@@ -459,6 +459,22 @@ contains = ["src/circle.ts", "Circle.draw()", "Ring.draw()", "src/app.ts", "App.
 not_contains = ["Widget"]
 
 [[case]]
+id = "callers-java-injected-interface"
+repo = "spring-java"
+question = "Before changing OrderService.create: who calls it? (the controller holds it in a Lombok-injected field)"
+tool = "callers"
+args = { symbol = "OrderService.create" }
+contains = ["OrderController.java", "OrderController.create()"]
+
+[[case]]
+id = "callers-java-impl-through-interface"
+repo = "spring-java"
+question = "Before changing OrderServiceImpl.create: who calls it, also through its interface?"
+tool = "callers"
+args = { symbol = "OrderServiceImpl.create" }
+contains = ["OrderController.java", "via OrderService.create", "OrderServiceImplTest.java"]
+
+[[case]]
 id = "hierarchy-of-a-base-class"
 repo = "inherit-ts"
 question = "What does Circle extend, and which classes extend it?"

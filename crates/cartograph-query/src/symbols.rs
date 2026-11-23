@@ -716,6 +716,10 @@ pub struct CallSiteRow {
     /// From an imported SCIP index (an exact call of a covered file).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub scip: bool,
+    /// The call resolved to this declaration of the method in a supertype (an interface
+    /// method the symbol implements, a base method it overrides): `Type.method`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -756,6 +760,59 @@ pub struct CallersResult {
     /// Call sites from an imported SCIP index (exact).
     #[serde(skip_serializing_if = "is_zero")]
     pub scip: usize,
+    /// Of `total`, the calls that resolved to the method as a supertype declares it
+    /// (`via` on their sites), and those declarations (`Type.method`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub through: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub through_decls: Vec<String>,
+}
+
+/// A call site of `callers`, with the supertype declaration it went through (`Type.m`).
+type Site<'t> = (&'t SymbolCall, Option<&'t str>);
+
+/// Hops of supertypes `callers` looks through (as `hierarchy`).
+const SUPER_HOPS: usize = 5;
+
+/// Method `id` (`sym:path#Type.m`) as the supertypes of its type declare it, nearest
+/// first: `(id of that declaration, Type.m)`. Every type once, up to [`SUPER_HOPS`] hops.
+/// A call through an interface or a base class (`service.m()` on a field typed with the
+/// interface) resolves to that declaration and may run this method.
+fn super_decls(t: &SymbolTable, id: &str) -> Vec<(String, String)> {
+    let Some((path, q)) = split_symbol_id(id) else {
+        return Vec::new();
+    };
+    let Some((ty, m)) = q.rsplit_once('.') else {
+        return Vec::new();
+    };
+    let start = format!("sym:{path}#{ty}");
+    let mut seen = HashSet::from([start.clone()]);
+    let mut level = vec![start];
+    let mut out = Vec::new();
+    for _ in 0..SUPER_HOPS {
+        let mut next = Vec::new();
+        for cur in &level {
+            for e in t.supers_of(cur) {
+                let Some(x) = &e.target else { continue };
+                if !seen.insert(x.clone()) {
+                    continue;
+                }
+                if let Some((xp, xn)) = split_symbol_id(x) {
+                    let leaf = xn.rsplit('.').next().unwrap_or(xn);
+                    let decl = format!("sym:{xp}#{leaf}.{m}");
+                    if decl != id && t.symbol(&decl).is_some() {
+                        out.push((decl, format!("{leaf}.{m}")));
+                    }
+                }
+                next.push(x.clone());
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        level = next;
+    }
+    out
 }
 
 /// `callers(sym)`, within [`limits::CALLERS`]: every call site that resolved to the symbol,
@@ -783,10 +840,33 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
             suggestions: Vec::new(),
         });
     };
-    let calls: Vec<&SymbolCall> = t.callers_of(&id).iter().map(|&i| &t.calls[i]).collect();
-    let mut by_file: BTreeMap<&str, Vec<&SymbolCall>> = BTreeMap::new();
+    // Direct calls, then calls to the method as a supertype declares it.
+    let decls = if def.kind == SymbolKind::Method {
+        super_decls(t, &id)
+    } else {
+        Vec::new()
+    };
+    let mut calls: Vec<Site<'_>> = t
+        .callers_of(&id)
+        .iter()
+        .map(|&i| (&t.calls[i], None))
+        .collect();
+    let mut through_decls = Vec::new();
+    for (d, name) in &decls {
+        let before = calls.len();
+        calls.extend(
+            t.callers_of(d)
+                .iter()
+                .map(|&i| (&t.calls[i], Some(name.as_str()))),
+        );
+        if calls.len() > before {
+            through_decls.push(clip(name, 120));
+        }
+    }
+    let through = calls.iter().filter(|c| c.1.is_some()).count();
+    let mut by_file: BTreeMap<&str, Vec<Site<'_>>> = BTreeMap::new();
     for c in &calls {
-        by_file.entry(c.file.as_str()).or_default().push(c);
+        by_file.entry(c.0.file.as_str()).or_default().push(*c);
     }
     // A symbol of a test or fixture tree is called from there: nothing to set apart.
     let g = &repo.graph;
@@ -795,7 +875,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
             .is_some_and(|f| in_test_tree(g, f, ROOT))
     };
     let split_tests = !in_tests(&def.file);
-    let mut groups: Vec<(&str, bool, Vec<&SymbolCall>)> = by_file
+    let mut groups: Vec<(&str, bool, Vec<Site<'_>>)> = by_file
         .into_iter()
         .map(|(file, cs)| (file, split_tests && in_tests(file), cs))
         .collect();
@@ -805,14 +885,14 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
             .then(a.0.cmp(b.0))
     });
     for g in &mut groups {
-        g.2.sort_by_key(|c| (c.line, c.caller.clone()));
+        g.2.sort_by_key(|c| (c.0.line, c.0.caller.clone()));
     }
     let test_files = groups.iter().filter(|g| g.1).count();
     let test_total: usize = groups.iter().filter(|g| g.1).map(|g| g.2.len()).sum();
     // Sites of test callers only when nothing else calls the symbol.
     let test_sites = test_files == groups.len();
-    let count = |c: Confidence| calls.iter().filter(|x| x.confidence == c).count();
-    let scip = calls.iter().filter(|x| t.from_scip(x)).count();
+    let count = |c: Confidence| calls.iter().filter(|x| x.0.confidence == c).count();
+    let scip = calls.iter().filter(|x| t.from_scip(x.0)).count();
     let steps: [(usize, usize); 10] = [
         (16, 8),
         (14, 6),
@@ -855,11 +935,12 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                             sites: cs
                                 .iter()
                                 .take(per)
-                                .map(|c| CallSiteRow {
+                                .map(|&(c, via)| CallSiteRow {
                                     line: c.line,
                                     caller: c.caller.as_ref().map(|x| clip(x, 240)),
                                     confidence: c.confidence,
                                     scip: t.from_scip(c),
+                                    via: via.map(|v| clip(v, 120)),
                                 })
                                 .collect(),
                             more: if per == 0 {
@@ -872,6 +953,8 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                     .collect(),
                 groups_more: groups.len().saturating_sub(max_files),
                 scip,
+                through,
+                through_decls: through_decls.clone(),
             }
         },
         render_callers,
@@ -912,8 +995,13 @@ fn render_callers(r: &CallersResult) -> String {
     if r.scip > 0 {
         conf.push(format!("scip {}", r.scip));
     }
+    let through = match r.through {
+        0 => String::new(),
+        n if n == r.total => format!(", all through {}", r.through_decls.join(", ")),
+        n => format!(", {n} of them through {}", r.through_decls.join(", ")),
+    };
     s.push_str(&format!(
-        " · {} call site{} in {} ({})\n",
+        " · {} call site{} in {} ({}){through}\n",
         r.total,
         if r.total == 1 { "" } else { "s" },
         crate::text::files(r.files),
@@ -941,8 +1029,12 @@ fn render_callers(r: &CallersResult) -> String {
                 split_symbol_id(x).map_or(x.to_string(), |(_, n)| format!("{}()", clip(n, 80)))
             });
             let scip = if c.scip { ", scip" } else { "" };
+            let via = c
+                .via
+                .as_deref()
+                .map_or(String::new(), |v| format!(", via {v}"));
             s.push_str(&format!(
-                "{indent}  :{} {who} [{}{scip}]\n",
+                "{indent}  :{} {who} [{}{scip}{via}]\n",
                 c.line, c.confidence
             ));
         }

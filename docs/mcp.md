@@ -523,12 +523,17 @@ after stdin closed.
   classes, interfaces with default methods, Rust traits with default methods and
   supertraits, Go embedded types, the script a GDScript file extends), for `this.m()`,
   `super.m()`, `self.field.m()` and `Type.m()`; a call through a local variable of
-  unknown type is not. A base outside the repo (a library class) ends the lookup, so a
-  method that may come from it stays unresolved rather than guessed; `Deref`, TS interface
-  method signatures (not symbols) and other `partial` parts of a C# class are not
-  followed. `callers` of a base method lists the calls made through subtypes that inherit
-  it, not the calls to an override (`hierarchy` of the method lists the overriding
-  subtypes).
+  unknown type is not. In Java, `x.m()` goes through the type `x` is declared with: a
+  field (the injected `private final FooService fooService;` of Spring and Lombok), a
+  parameter or a local (`var x = new Foo()` included); a field typed with an interface
+  reaches the interface's method. A base outside the repo (a library class) ends the
+  lookup, so a method that may come from it stays unresolved rather than guessed; `Deref`,
+  TS interface method signatures (not symbols) and other `partial` parts of a C# class are
+  not followed. `callers` of a base method lists the calls made through subtypes that
+  inherit it, not the calls to an override (`hierarchy` of the method lists the overriding
+  subtypes). `callers` of a method also lists the calls made to it as its supertypes
+  declare it (an interface method it implements, a base method it overrides), marked
+  `via Interface.method`: they may run it.
 - Notes are per node id: renaming a file orphans its note. A note's hash is over the bytes
   of the files, so a checkout that converts line endings (`core.autocrlf`) sees the notes
   of the repo file written on another platform as stale.
