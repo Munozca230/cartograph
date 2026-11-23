@@ -120,7 +120,9 @@ pub enum Tool {
     /// Cycles, layer violations, god modules, bottlenecks, orphans, hidden coupling…
     Findings {
         /// Only these kinds (repeatable): cycle, folder_cycle, layer_violation, fan_out_limit,
-        /// god_module, hub, sdp, orphan, deep_chain, hidden_coupling.
+        /// god_module, hub, sdp, orphan, deep_chain, hidden_coupling; of bridges
+        /// ipc_no_handler, ipc_unexposed, ipc_unused_handler, http_unmatched_call,
+        /// http_method_mismatch, http_unused_route, undeclared_member_dependency, version_skew.
         #[arg(long)]
         kind: Vec<String>,
         /// At least this severity: error, warning or info.

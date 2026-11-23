@@ -12,7 +12,7 @@
 //! imported or not), RestTemplate, WebClient / RestClient, `java.net.http`, Feign
 //! interfaces, Python `requests` / `httpx`. A function that passes its parameter into a
 //! client's URL (with a base before it, or not) or method is a wrapper: each call to it is a
-//! client site with the call's arguments in place, up to [`MAX_ROUNDS`] wrappers deep
+//! client site with the call's arguments in place, up to four wrappers deep
 //! (`service → ApiClient.post → ApiClient.request → ApiClient.send → fetch`). A call a
 //! resolver cannot tie to its wrapper (`deps.client.post(…)` through an untyped object) is
 //! tied by name when one wrapper of the member has that name (heuristic).
@@ -38,7 +38,7 @@ use cartograph_core::{
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// Wrappers followed, outermost call included.
+/// Passes over the calls: the primitives, then one per wrapper level (four deep).
 const MAX_ROUNDS: usize = 5;
 /// More routes than this tied for a call: no bridge (`ambiguous`).
 const MAX_TIES: usize = 3;

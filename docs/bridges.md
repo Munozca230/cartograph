@@ -94,7 +94,7 @@ What is read:
 - **wrappers**: a function or method that passes its parameter as the URL or path of a
   client call (with a base before it or not: `${this.baseUrl}${endpoint}`), or as its
   method, is a wrapper; every call to it is a client site with its arguments in place, up
-  to five wrappers deep (`service → ApiClient.post → ApiClient.request → ApiClient.send →
+  to four wrappers deep (`service → ApiClient.post → ApiClient.request → ApiClient.send →
   fetch`). Parameters are those of the definition around the call, through the arrows
   inside it; locals are followed; a helper named for a URL (`this.buildUrl(path)`) is an
   unknown base followed by its argument; `process.env.X ?? "http://…"` is its literal. A

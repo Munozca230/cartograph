@@ -120,8 +120,8 @@ pub struct BridgesArgs {
     #[serde(default)]
     pub member: Option<String>,
     /// List what is left unmatched (IPC channels no handler serves, renderer calls the
-    /// preload does not expose, unused handlers, dynamic channels, version skews) instead
-    /// of the bridges.
+    /// preload does not expose, HTTP calls no route serves or with the wrong method, unused
+    /// handlers and routes, dynamic channels and URLs, version skews) instead of the bridges.
     #[serde(default)]
     pub unmatched: bool,
 }
@@ -143,7 +143,9 @@ pub struct EntriesArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FindingsArgs {
     /// Only these kinds: cycle, folder_cycle, layer_violation, fan_out_limit, god_module,
-    /// hub, sdp, orphan, deep_chain, hidden_coupling.
+    /// hub, sdp, orphan, deep_chain, hidden_coupling; of bridges ipc_no_handler,
+    /// ipc_unexposed, ipc_unused_handler, http_unmatched_call, http_method_mismatch,
+    /// http_unused_route, undeclared_member_dependency, version_skew.
     #[serde(default)]
     pub kind: Option<Vec<String>>,
     /// At least this severity: `error`, `warning` or `info`.
@@ -477,7 +479,7 @@ impl Cartograph {
     #[tool(
         description = "Why does A depend on B: the shortest import chain from `from` to `to` \
             (files or folders), each step with its import line, plus alternatives; a step over \
-            a bridge (IPC channel, exposed preload function) says so (`bridges: false` keeps \
+            a bridge (IPC channel, exposed preload function, HTTP route) says so (`bridges: false` keeps \
             imports only). Use it to explain an unexpected dependency or a layer violation.",
         annotations(read_only_hint = true)
     )]
@@ -525,11 +527,12 @@ impl Cartograph {
 
     #[tool(
         description = "Links between files that no import states: Electron IPC (renderer → \
-            preload exposure → main-process handler, pushes back), packages a workspace member \
-            builds for another, HTTP when indexed. Each bridge with its key (channel, \
-            coordinate), both ends as path:line and the symbols there. `node`, `kind` (ipc, \
-            http, package) and `member` narrow it; `unmatched: true` lists what has no other \
-            side (a channel no handler serves, a call the preload does not expose).",
+            preload exposure → main-process handler, pushes back), HTTP (a client call, or a \
+            wrapper's caller → the route that serves it), packages a workspace member builds \
+            for another. Each bridge with its key (channel, `METHOD /path`, coordinate), both \
+            ends as path:line and the symbols there. `node`, `kind` (ipc, http, package) and \
+            `member` narrow it; `unmatched: true` lists what has no other side (a channel no \
+            handler serves, a call the preload does not expose, a call no route serves).",
         annotations(read_only_hint = true)
     )]
     async fn bridges(&self, Parameters(a): Parameters<BridgesArgs>) -> CallToolResult {

@@ -997,7 +997,7 @@ export class ApiClient {
         let c = code(
             "typescript",
             r#"
-const FINISH = '/runner/finish';
+const FINISH = '/jobs/finish';
 export class Client {
   private buildUrl(path: string) { return new URL(path, this.base).toString(); }
   private async fetchWithTimeout(url: string, options: RequestInit) {
