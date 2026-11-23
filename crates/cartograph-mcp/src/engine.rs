@@ -170,8 +170,9 @@ pub enum Ready {
 
 pub struct Engine {
     pub root: PathBuf,
-    /// The workspace `root` holds (`cartograph-workspace.toml`), if any.
-    pub workspace: Option<cartograph_core::Workspace>,
+    /// The workspace `root` holds (`cartograph-workspace.toml`), if any; read again at each
+    /// index run (see [`Engine::workspace`]).
+    workspace: RwLock<Option<cartograph_core::Workspace>>,
     pub data_dir: PathBuf,
     pub opts: Options,
     loaded: RwLock<Option<Arc<Loaded>>>,
@@ -280,7 +281,7 @@ impl Engine {
         Ok(Arc::new(Engine {
             stats,
             _lock: take_lock(&data_dir),
-            workspace,
+            workspace: RwLock::new(workspace),
             root,
             data_dir,
             opts,
@@ -320,6 +321,27 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// The workspace the root holds, as the last index run read it.
+    pub fn workspace(&self) -> Option<cartograph_core::Workspace> {
+        self.workspace
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Read the workspace file again (its members may have changed); an invalid one stops
+    /// the run, as indexing it would.
+    fn reload_workspace(&self) -> Result<(), String> {
+        let ws = cartograph_core::Workspace::find(&self.root).map_err(|e| e.to_string())?;
+        if let (Some(m), Some(w)) = (&self.opts.member, &ws)
+            && w.member(m).is_none()
+        {
+            tracing::warn!(member = %m, "--member is no member of the workspace any more");
+        }
+        *self.workspace.write().unwrap_or_else(|e| e.into_inner()) = ws;
+        Ok(())
     }
 
     /// Whether the file watcher runs (it may have failed to start).
@@ -519,6 +541,7 @@ impl Engine {
     /// the git pass that follows.
     fn index_once(&self, generation: u64) -> Result<(Loaded, Graph, Symbols), String> {
         let started = SystemTime::now();
+        self.reload_workspace()?;
         let opts = IndexOptions {
             max_file_bytes: self.opts.max_file_bytes,
             data_dir: Some(self.data_dir.clone()),
@@ -660,7 +683,7 @@ impl Engine {
         if let Some(l) = self.current() {
             let disk = DiskMap {
                 root: self.root.clone(),
-                workspace: self.workspace.clone(),
+                workspace: self.workspace(),
                 member: self.opts.member.clone(),
             };
             let args = args.to_vec();

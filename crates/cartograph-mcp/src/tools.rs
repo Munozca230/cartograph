@@ -247,7 +247,7 @@ impl Cartograph {
     /// A tool argument as the query crate wants it: an absolute path inside the repo
     /// becomes repo-relative (prefixes `file:`, `dir:`, `sym:` and a `#name` suffix kept).
     pub fn norm(&self, arg: &str) -> String {
-        norm_arg(&self.engine.root, self.engine.workspace.as_ref(), arg)
+        norm_arg(&self.engine.root, self.engine.workspace().as_ref(), arg)
     }
 
     /// Answer a query: freshness gate, then the query under the guard, then the text (with

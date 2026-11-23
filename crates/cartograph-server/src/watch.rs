@@ -298,8 +298,9 @@ impl GitWatch {
 
 /// Keeps the watcher alive; dropping it stops watching.
 pub struct Watcher {
-    // Dropping the watcher closes the channel, which ends the batching thread.
-    _watcher: notify::RecommendedWatcher,
+    // Dropping the watcher closes the channel, which ends the batching thread (which holds
+    // only a weak reference to it).
+    _watcher: Arc<Mutex<Option<notify::RecommendedWatcher>>>,
 }
 
 fn touches_ignore_rules(p: &Path) -> bool {
@@ -359,35 +360,23 @@ pub fn start_with(
     on_change: impl Fn(BTreeSet<String>) + Send + 'static,
     on_git: impl Fn() + Send + 'static,
 ) -> Result<Watcher, String> {
-    let workspace = cartograph_core::Workspace::find(root).map_err(|e| e.to_string())?;
-    let trees: Vec<Tree> = match &workspace {
-        None => vec![Tree::new("", root, data_dir)],
-        Some(ws) => ws
-            .members
-            .iter()
-            .filter_map(|m| {
-                let r = crate::normalize(&m.root).ok()?;
-                Some(Tree::new(&m.name, &r, data_dir))
-            })
-            .collect(),
-    };
-    let ws_file = workspace
-        .as_ref()
-        .map(|_| root.join(cartograph_core::WORKSPACE_FILE));
-    let mut extra: Vec<(PathBuf, RecursiveMode)> = Vec::new();
-    for t in &trees {
-        if let Some(g) = &t.git {
-            extra.extend(g.extra_watches(&t.root));
-        }
-    }
-    let roots: Vec<PathBuf> = trees.iter().map(|t| t.root.clone()).collect();
+    let (trees, workspace) = trees_of(root, data_dir)?;
+    let ws_file = root.join(cartograph_core::WORKSPACE_FILE);
+    let trees = Arc::new(Mutex::new(trees));
+    // The batching thread re-watches when the workspace file changes; it must not keep the
+    // watcher alive (dropping [`Watcher`] ends it).
+    let shared: Arc<Mutex<Option<notify::RecommendedWatcher>>> = Arc::default();
+    let weak = Arc::downgrade(&shared);
+    let (root_t, data_t, trees_t) = (root.to_path_buf(), data_dir.to_path_buf(), trees.clone());
     let handle = move |res: Result<Vec<PathBuf>, String>| match res {
         Ok(paths) => {
-            if ws_file.as_ref().is_some_and(|f| paths.contains(f)) {
-                tracing::debug!("workspace file changed; scheduling a full re-index");
+            if workspace && paths.contains(&ws_file) {
+                tracing::debug!("workspace file changed; watching its members again");
+                rewatch(&root_t, &data_t, &trees_t, &weak);
                 on_change(BTreeSet::new());
                 return;
             }
+            let trees = trees_t.lock().unwrap_or_else(|e| e.into_inner());
             if paths.iter().any(|p| touches_ignore_rules(p)) {
                 trees.iter().for_each(|t| t.filter.reload());
             }
@@ -407,6 +396,7 @@ pub fn start_with(
                     .iter()
                     .any(|t| t.git.as_ref().is_some_and(|g| g.matches(p)))
             });
+            drop(trees);
             if !changed.is_empty() {
                 tracing::debug!(count = changed.len(), paths = ?changed, "watched changes");
                 on_change(changed);
@@ -434,27 +424,91 @@ pub fn start_with(
         let _ = tx.send(msg);
     })
     .map_err(|e| format!("cannot create the file watcher: {e}"))?;
+    for t in trees.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        watcher
+            .watch(&t.root, RecursiveMode::Recursive)
+            .map_err(|e| format!("cannot watch {}: {e}", t.root.display()))?;
+        watch_git_dirs(&mut watcher, t);
+    }
+    if workspace && let Err(e) = watcher.watch(root, RecursiveMode::NonRecursive) {
+        tracing::warn!(dir = %root.display(), error = %e, "cannot watch the workspace file");
+    }
+    *shared.lock().unwrap_or_else(|e| e.into_inner()) = Some(watcher);
     std::thread::Builder::new()
         .name("cartograph-watch".into())
         .spawn(move || batch_events(&rx, handle))
         .map_err(|e| format!("cannot start the watcher thread: {e}"))?;
-    for r in &roots {
-        watcher
-            .watch(r, RecursiveMode::Recursive)
-            .map_err(|e| format!("cannot watch {}: {e}", r.display()))?;
-    }
-    if workspace.is_some()
-        && let Err(e) = watcher.watch(root, RecursiveMode::NonRecursive)
-    {
-        tracing::warn!(dir = %root.display(), error = %e, "cannot watch the workspace file");
-    }
-    for (dir, mode) in extra {
-        // Without it, new commits show up at the next file change instead.
+    Ok(Watcher { _watcher: shared })
+}
+
+/// The trees to watch for `root`: itself, or the members of its workspace; and whether it
+/// is a workspace.
+fn trees_of(root: &Path, data_dir: &Path) -> Result<(Vec<Tree>, bool), String> {
+    let workspace = cartograph_core::Workspace::find(root).map_err(|e| e.to_string())?;
+    Ok(match workspace {
+        None => (vec![Tree::new("", root, data_dir)], false),
+        Some(ws) => (
+            ws.members
+                .iter()
+                .filter_map(|m| {
+                    let r = crate::normalize(&m.root).ok()?;
+                    Some(Tree::new(&m.name, &r, data_dir))
+                })
+                .collect(),
+            true,
+        ),
+    })
+}
+
+/// Watch the git dirs of `t` that lie outside its folder (without them, new commits show up
+/// at the next file change instead).
+fn watch_git_dirs(watcher: &mut notify::RecommendedWatcher, t: &Tree) {
+    for (dir, mode) in t.git.iter().flat_map(|g| g.extra_watches(&t.root)) {
         if let Err(e) = watcher.watch(&dir, mode) {
             tracing::warn!(dir = %dir.display(), error = %e, "cannot watch the git dir");
         }
     }
-    Ok(Watcher { _watcher: watcher })
+}
+
+/// The workspace file changed: read its members again and watch the folders of new ones
+/// (and stop watching those of members gone). A file that no longer parses keeps the
+/// trees watched so far.
+fn rewatch(
+    root: &Path,
+    data_dir: &Path,
+    trees: &Mutex<Vec<Tree>>,
+    watcher: &std::sync::Weak<Mutex<Option<notify::RecommendedWatcher>>>,
+) {
+    let fresh = match trees_of(root, data_dir) {
+        Ok((t, true)) => t,
+        Ok((_, false)) => return,
+        Err(e) => {
+            tracing::warn!(error = %e, "workspace file not read; watching the members as before");
+            return;
+        }
+    };
+    let Some(w) = watcher.upgrade() else { return };
+    let mut w = w.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(w) = w.as_mut() else { return };
+    let mut current = trees.lock().unwrap_or_else(|e| e.into_inner());
+    for old in current
+        .iter()
+        .filter(|o| !fresh.iter().any(|f| f.root == o.root))
+    {
+        let _ = w.unwatch(&old.root);
+    }
+    for t in fresh
+        .iter()
+        .filter(|f| !current.iter().any(|o| o.root == f.root))
+    {
+        match w.watch(&t.root, RecursiveMode::Recursive) {
+            Ok(()) => watch_git_dirs(w, t),
+            Err(e) => {
+                tracing::warn!(dir = %t.root.display(), error = %e, "cannot watch a new member")
+            }
+        }
+    }
+    *current = fresh;
 }
 
 /// Hand `handle` one batch per burst of events: the paths seen until [`DEBOUNCE`] passes

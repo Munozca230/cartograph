@@ -117,3 +117,48 @@ fn the_watcher_reports_member_paths() {
         seen.lock().unwrap()
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_member_added_while_serving_is_indexed_and_watched() {
+    let ws = workspace_basic();
+    let data = tempfile::tempdir().unwrap();
+    let server = start(ServeConfig {
+        port: Some(0),
+        data_dir: Some(data.path().to_path_buf()),
+        ..ServeConfig::new(&ws.root)
+    })
+    .await
+    .unwrap();
+    let addr = server.addr;
+    settle(addr, Duration::from_millis(1500)).await;
+
+    // A new repository next to the others, then added to the workspace file.
+    let extra = ws.root.join("extra-tools");
+    std::fs::create_dir_all(extra.join("src")).unwrap();
+    std::fs::write(extra.join("src/a.ts"), "export const a = 1;\n").unwrap();
+    let file = ws.root.join(cartograph_core::WORKSPACE_FILE);
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    text.push_str("\n[[member]]\nname = \"tools\"\npath = \"extra-tools\"\n");
+    std::fs::write(&file, text).unwrap();
+    wait_for("the new member", || async move {
+        let (s, _) = http_json(addr, "/api/node?id=file:tools/src/a.ts").await;
+        (s == 200).then_some(())
+    })
+    .await;
+
+    // Its folder is watched now: a new file in it is indexed.
+    let deadline = Instant::now() + WAIT;
+    loop {
+        std::fs::write(
+            extra.join("src/b.ts"),
+            "import { a } from './a';\nexport const b = a;\n",
+        )
+        .unwrap();
+        let (s, _) = http_json(addr, "/api/node?id=file:tools/src/b.ts").await;
+        if s == 200 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "tools/src/b.ts never indexed");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
