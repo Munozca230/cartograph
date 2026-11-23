@@ -814,7 +814,10 @@ fn definition(
     let scope = match d.node.parent() {
         Some(obj) if lang == Lang::Js && d.cap == "def.method" && obj.kind() == "object" => {
             let (owner, exp) = js_object_owner(obj, src, 0)?;
-            object_exported = Some(exp);
+            // `const api = {…}; export { api };` or `export default api;`.
+            let root = owner.split('.').next().unwrap_or(&owner);
+            let listed_root = listed.contains(root) || code.default_export.as_deref() == Some(root);
+            object_exported = Some(exp || listed_root);
             Scope::Member(owner)
         }
         _ => scope_of(lang, d.node, src),

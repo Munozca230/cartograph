@@ -1396,3 +1396,65 @@ fn an_inner_gdscript_class_on_line_one_is_not_the_script() {
     );
     assert_eq!(call(&s, "util.gd:7", "sym:util.gd#ping"), None);
 }
+
+#[test]
+fn page_scripts_are_normalized() {
+    use cartograph_index::symbols::resolve::page_entries;
+    let pages = [(
+        "web/index.html",
+        "<script type=\"module\" src=\"./src/main.ts\"></script>\n<script type=\"module\" src=\"../shared/boot.ts\"></script>",
+    )];
+    let files = ["web/src/main.ts", "shared/boot.ts"];
+    let got: Vec<String> = page_entries(&pages, |p| files.contains(&p))
+        .into_iter()
+        .map(|e| e.file)
+        .collect();
+    assert_eq!(got, vec!["web/src/main.ts", "shared/boot.ts"]);
+}
+
+#[test]
+fn commonjs_and_listed_object_members() {
+    let s = symbols_of("electron-app");
+    // `const legacy = require("./legacy"); legacy.ping()` reaches `module.exports.ping`.
+    assert_eq!(
+        call(
+            &s,
+            "src/electron/uses-legacy.js:3",
+            "sym:src/electron/legacy.js#module.exports.ping"
+        ),
+        Some(Confidence::Resolved)
+    );
+    // `export { panel }` exports the members of `const panel = {…}`.
+    assert!(
+        s.symbols
+            .iter()
+            .any(|x| x.id() == "sym:src/electron/listed.ts#panel.open" && x.exported)
+    );
+}
+
+/// A library's `package.json` `main` (no Electron, no `bin`, no script running it) is not
+/// where a program starts.
+#[test]
+fn a_library_main_is_not_a_program_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("lib");
+    let write = |rel: &str, text: &str| {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    write(
+        "package.json",
+        r#"{"name":"lib","main":"dist/index.js","types":"dist/index.d.ts","scripts":{"build":"tsc"}}"#,
+    );
+    write("src/index.ts", "export function f() {}\n");
+    let s = index(&root, &IndexOptions::default()).unwrap().symbols;
+    assert!(s.entries.is_empty(), "{:?}", s.entries);
+    // A script that runs it makes it a program.
+    write(
+        "package.json",
+        r#"{"name":"lib","main":"dist/index.js","scripts":{"start":"node dist/index.js"}}"#,
+    );
+    let s = index(&root, &IndexOptions::default()).unwrap().symbols;
+    assert_eq!(s.entries.len(), 1, "{:?}", s.entries);
+}

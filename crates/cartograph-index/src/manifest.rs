@@ -178,7 +178,9 @@ fn parse_npm(text: &str) -> Result<Parsed, String> {
     }
     // The program a `package.json` runs (Electron's main process, a Node app): a flow
     // entry (see `symbols::resolve`).
-    if let Some(main) = v.get("main").and_then(Value::as_str) {
+    if let Some(main) = v.get("main").and_then(Value::as_str)
+        && npm_program(&v, main)
+    {
         details.insert("main".into(), Value::String(main.to_string()));
     }
     let entries = npm_entries(&v);
@@ -189,6 +191,34 @@ fn parse_npm(text: &str) -> Result<Parsed, String> {
         );
     }
     Ok((name, Value::Object(details)))
+}
+
+/// Whether a `package.json` whose `main` is `main` describes a program rather than a
+/// library: it has a `bin`, depends on Electron (its `main` is the main process), or a
+/// script runs `main` (`node dist/index.js`) or Electron.
+fn npm_program(v: &Value, main: &str) -> bool {
+    let clean = |s: &str| s.trim_start_matches("./").replace('\\', "/");
+    let main = clean(main);
+    let stem = main
+        .strip_suffix(".js")
+        .or_else(|| main.strip_suffix(".cjs"))
+        .or_else(|| main.strip_suffix(".mjs"))
+        .unwrap_or(&main)
+        .to_string();
+    let electron = ["dependencies", "devDependencies"]
+        .iter()
+        .any(|k| v.get(k).and_then(|d| d.get("electron")).is_some());
+    let runs = v
+        .get("scripts")
+        .and_then(Value::as_object)
+        .is_some_and(|scripts| {
+            scripts.values().filter_map(Value::as_str).any(|cmd| {
+                cmd.split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                    .map(clean)
+                    .any(|t| t == main || t == stem || t == "electron")
+            })
+        });
+    v.get("bin").is_some() || electron || runs
 }
 
 /// Files a `package.json` runs or exposes, relative to its directory: `main`, `module`,

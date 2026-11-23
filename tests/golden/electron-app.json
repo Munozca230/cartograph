@@ -14,6 +14,7 @@
     "src/electron/preload.ts:34 sym:src/electron/preload.ts#makeLocal -> sym:src/electron/log.ts#logCall [resolved]",
     "src/electron/preload.ts:38 (top level) -> sym:src/electron/preload.ts#makeLocal [exact]",
     "src/electron/updater.ts:6 sym:src/electron/updater.ts#Updater.register -> sym:src/electron/handlers.ts#checkForUpdates [resolved]",
+    "src/electron/uses-legacy.js:3 (top level) -> sym:src/electron/legacy.js#module.exports.ping [resolved]",
     "src/ui/app.ts:4 sym:src/ui/app.ts#boot -> sym:src/electron/api.ts#api.stop [resolved]",
     "src/ui/app.ts:5 sym:src/ui/app.ts#boot -> sym:src/electron/api.ts#default.run [resolved]",
     "src/ui/main.ts:3 (top level) -> sym:src/ui/app.ts#boot [resolved]"
@@ -36,6 +37,7 @@
     "src/electron/main.ts: exact 1, resolved 1, heuristic 0, ambiguous 0, unresolved 8",
     "src/electron/preload.ts: exact 1, resolved 4, heuristic 0, ambiguous 0, unresolved 8",
     "src/electron/updater.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 1",
+    "src/electron/uses-legacy.js: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 1",
     "src/ui/app.ts: exact 0, resolved 2, heuristic 0, ambiguous 0, unresolved 0",
     "src/ui/main.ts: exact 0, resolved 1, heuristic 0, ambiguous 0, unresolved 0"
   ],
@@ -52,6 +54,7 @@
     "function sym:src/electron/legacy.js#onPing L3-5 exported",
     "method sym:src/electron/legacy.js#module.exports.ping L8-10 exported",
     "method sym:src/electron/legacy.js#module.exports.later L11-11 exported",
+    "method sym:src/electron/listed.ts#panel.open L2-4 exported",
     "function sym:src/electron/log.ts#logCall L1-3 exported",
     "function sym:src/electron/main.ts#createWindow L5-7",
     "function sym:src/electron/main.ts#register L17-19 exported",

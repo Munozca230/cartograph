@@ -1368,7 +1368,15 @@ fn via_qualifier(
                         ctx.files[t].code.defs[(s - ctx.files[t].first) as usize].class_name
                     }));
                 } else {
+                    let before = v.len();
                     v.extend(ctx.export_lookup(binds, t, name, Via::Named, 3, &mut Vec::new()));
+                    // `const m = require("./m"); m.f()` of `module.exports = { f() {} }` (or
+                    // `export default { f() {} }` through `import * as m`).
+                    if fam == Fam::Js && v.len() == before {
+                        for obj in ["module.exports", "default"] {
+                            v.extend(ctx.members(t, obj, name).iter().copied());
+                        }
+                    }
                 }
             }
             BindKind::Named | BindKind::Default => {
@@ -1590,10 +1598,8 @@ pub fn page_entries(pages: &[(&str, &str)], is_file: impl Fn(&str) -> bool) -> V
                 continue;
             }
             let rel = src.trim_start_matches('/');
-            let path = if dir.is_empty() {
-                rel.to_string()
-            } else {
-                format!("{dir}/{rel}")
+            let Some(path) = cartograph_core::manifest_entry::join(dir, rel) else {
+                continue;
             };
             if !is_file(&path) {
                 continue;

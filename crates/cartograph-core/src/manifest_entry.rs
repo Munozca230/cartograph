@@ -4,8 +4,9 @@
 /// Extensions Node and bundlers try for a `package.json` path written without one.
 pub const ENTRY_EXTS: &[&str] = &["js", "mjs", "cjs", "ts", "tsx", "jsx"];
 
-/// `dir/rel` without empty and `.` segments; `None` when `..` leaves `dir`.
-fn join(dir: &str, rel: &str) -> Option<String> {
+/// `dir/rel` (repo-relative, forward slashes) with empty and `.` segments dropped and `..`
+/// applied; `None` when `..` goes above the repo root.
+pub fn join(dir: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
     for seg in rel.split('/') {
         match seg {
@@ -61,11 +62,13 @@ pub fn entry_files(dir: &str, rel: &str, is_file: impl Fn(&str) -> bool) -> Vec<
     output_source(dir, &rel, &is_file).into_iter().collect()
 }
 
-/// The source of a build output that is not indexed (an ignored `dist/`): for
-/// `dist-electron/electron/main.js`, `src/electron/main.ts` or `electron/main.ts`, with the
-/// first folder (the output folder) dropped, then each further leading folder, and the
-/// extensions a compiler turns into the output's (`.ts`, `.tsx`, `.js`, `.jsx` for `.js`;
-/// `.mts` for `.mjs`; `.cts` for `.cjs`). The first that is a file, or `None`.
+/// The source of a build output that is not indexed (an ignored output, or a compile in
+/// place): the output's own path first (`electron/main.js` → `electron/main.ts`, then
+/// `src/electron/main.ts`), then with the first folder (an output folder) dropped, then each
+/// further leading folder, `src/` first (`dist-electron/electron/main.js` →
+/// `src/electron/main.ts`), with the extensions a compiler turns into the output's (`.ts`,
+/// `.tsx`, `.js`, `.jsx` for `.js`; `.mts` for `.mjs`; `.cts` for `.cjs`). The first that is
+/// a file, or `None`.
 fn output_source(dir: &str, rel: &str, is_file: &impl Fn(&str) -> bool) -> Option<String> {
     let parts: Vec<&str> = rel
         .split('/')
@@ -82,10 +85,11 @@ fn output_source(dir: &str, rel: &str, is_file: &impl Fn(&str) -> bool) -> Optio
         "cjs" => &["cts", "ts", "cjs"],
         _ => return None,
     };
-    for k in 1..=folders.len() {
+    for k in 0..=folders.len() {
         let tail: Vec<&str> = folders[k..].iter().copied().chain([stem]).collect();
         let tail = tail.join("/");
-        for base in ["src/", ""] {
+        let bases = if k == 0 { ["", "src/"] } else { ["src/", ""] };
+        for base in bases {
             for e in exts {
                 let c = join(dir, &format!("{base}{tail}.{e}"))?;
                 if is_file(&c) {
@@ -143,6 +147,14 @@ mod tests {
             vec!["pkg/src/index.ts"]
         );
         assert_eq!(entry_files("tool", "out/cli.mjs", &f), vec!["tool/cli.mts"]);
+        // Compiled in place (`tsc` without `outDir`): the output's own folder first, never
+        // an unrelated `src/main.ts`.
+        let g = files(&["electron/main.ts", "src/main.ts", "main.ts"]);
+        assert_eq!(
+            entry_files("", "electron/main.js", &g),
+            vec!["electron/main.ts"]
+        );
+        assert_eq!(entry_files("", "main.js", &g), vec!["main.ts"]);
         // Not a JS output, or nothing fits.
         assert!(entry_files("", "dist/main.css", &f).is_empty());
         assert!(entry_files("", "dist/other.js", &f).is_empty());
