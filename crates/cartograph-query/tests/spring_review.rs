@@ -1431,7 +1431,7 @@ fn super_exempts_as_many_calls_as_it_makes() {
         ),
         (
             "Audited",
-            "@org.springframework.stereotype.Service public class Audited extends Base {\n    void go() { super.save(); make().save(); }\n    Base make() { return null; }\n}\n",
+            "@org.springframework.stereotype.Service public class Audited extends Base {\n    void go() { super.save(); make().save(); }\n    Base make() { return null; }\n    void alone() { super.save(); }\n    void both(Base b) { super.save(); b.save(); }\n}\n",
         ),
         (
             "Other",
@@ -1450,8 +1450,12 @@ fn super_exempts_as_many_calls_as_it_makes() {
     let load = |s: &cartograph_core::Symbols| {
         Repo::with_symbols(&out.graph, s, Config::load(root).unwrap())
     };
+    // `make().save()` did not resolve: the line is listed, as it may run the bean's.
     let t = callers(&load(&s), "Other.save");
-    assert!(!t.contains("Audited.go()"), "only super: {t}");
+    assert_eq!(t.matches("Audited.go()").count(), 1, "{t}");
+    // Alone, or beside a call that resolved, `super` is what the base class runs.
+    assert!(!t.contains("Audited.alone()"), "only super: {t}");
+    assert_eq!(t.matches("Audited.both(").count(), 1, "{t}");
     // What an imported index adds: the call on what `make()` returns.
     let id = |x: &str| format!("sym:api/{}.java#{x}", x.split('.').next().unwrap_or(""));
     s.calls.push(SymbolCall {
@@ -1464,7 +1468,7 @@ fn super_exempts_as_many_calls_as_it_makes() {
     s.normalize();
     let r = load(&s);
     let t = callers(&r, "Other.save");
-    assert_eq!(t.matches("Audited.go()").count(), 1, "{t}");
+    assert_eq!(t.matches("Audited.go()").count(), 2, "{t}");
     let f = flow_of(&r, &id("Audited.go"));
     assert!(
         f.contains(&("Audited.go".to_string(), "Other.save".to_string())),

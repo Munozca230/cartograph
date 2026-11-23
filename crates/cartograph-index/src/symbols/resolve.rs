@@ -992,6 +992,7 @@ fn resolve_file(
     };
     let mut calls = Vec::new();
     let mut sites: Vec<JavaSite> = Vec::new();
+    let mut unknown: HashSet<(u32, &str)> = HashSet::new();
     for c in &f.code.calls {
         let caller = caller_of(&callables, c.line);
         match resolve_call(ctx, binds, h, rust_paths, fi, c, caller.map(|x| x.0)) {
@@ -1019,9 +1020,21 @@ fn resolve_file(
                     confidence: conf,
                 });
             }
-            Out::Ambiguous => stats.ambiguous += 1,
-            Out::Unresolved => stats.unresolved += 1,
+            out => {
+                match out {
+                    Out::Ambiguous => stats.ambiguous += 1,
+                    _ => stats.unresolved += 1,
+                }
+                if !c.sup {
+                    unknown.insert((c.line, c.name.as_str()));
+                }
+            }
         }
+    }
+    // A `super.m()` beside another `m()` that did not resolve is not told apart from it.
+    for s in &mut sites {
+        let name = s.target.rsplit('.').next().unwrap_or("");
+        s.sup &= !unknown.contains(&(s.line, name));
     }
     // Entry points.
     let libs = g.libraries(f.path);

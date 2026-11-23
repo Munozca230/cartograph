@@ -16,6 +16,15 @@
     ],
     "sym:src/main/java/com/shop/pool/Out.java#Entry.flushEntry": [
       "file:src/main/java/com/shop/pool/Scoped.java:9"
+    ],
+    "sym:src/main/java/com/shop/sum/Base.java#Base.totalSum": [
+      "file:src/main/java/com/shop/sum/Sib.java:6"
+    ],
+    "sym:src/main/java/com/shop/sum/Reg.java#Reg.next": [
+      "file:src/main/java/com/shop/sum/Sib.java:6"
+    ],
+    "sym:src/main/java/com/shop/sum/Sub.java#Sub.totalSum": [
+      "file:src/main/java/com/shop/sum/Sib.java:6"
     ]
   },
   "paths": {}
