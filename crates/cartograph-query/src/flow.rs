@@ -69,6 +69,8 @@ struct Callee {
     calls: u32,
     /// Over a bridge rather than a call: `ipc invoke users:get`.
     via: Option<String>,
+    /// A bean's, beside the method the call names: shown in the room the rest leaves.
+    extra: bool,
 }
 
 /// Call data indexed for flows. Build it once per snapshot.
@@ -143,7 +145,17 @@ impl CallIndex {
                 .unwrap_or(0);
             for (i, (target, via)) in reach.into_iter().enumerate() {
                 let key = (caller.clone(), target);
-                if let Some(&(tail, k)) = pos.get(&key) {
+                // Called by its name, after a call that reaches it as a bean's: it takes its
+                // place among the calls.
+                let moved = via == Via::Named && pos.get(&key).is_some_and(|p| p.0);
+                let mut before = 0;
+                if moved
+                    && let Some(&(_, k)) = pos.get(&key)
+                    && let Some(e) = beans.get_mut(&key.0).and_then(|v| v.get_mut(k))
+                {
+                    before = std::mem::take(&mut e.calls);
+                }
+                if let Some(&(tail, k)) = pos.get(&key).filter(|_| !moved) {
                     let list = if tail { &mut beans } else { &mut ix.out };
                     if let Some(e) = list.get_mut(&key.0).and_then(|v| v.get_mut(k)) {
                         e.calls += 1;
@@ -152,6 +164,7 @@ impl CallIndex {
                         }
                         if via == Via::Named {
                             e.via = None;
+                            e.extra = false;
                         }
                     }
                     continue;
@@ -164,20 +177,11 @@ impl CallIndex {
                     target: key.1,
                     line: c.line,
                     confidence: c.confidence,
-                    calls: 1,
+                    calls: before + 1,
                     via: spring_via(via),
+                    extra: tail,
                 });
             }
-        }
-        for (caller, mut list) in beans {
-            list.sort_by_key(|c| c.via.as_deref() == Some(SPRING_OTHER_VIA));
-            for c in &list {
-                ix.spring_into
-                    .entry(c.target.clone())
-                    .or_default()
-                    .push(caller.clone());
-            }
-            ix.out.entry(caller).or_default().extend(list);
         }
         // Bridges between two functions (a renderer view → the exposed preload function →
         // the main-process handler) continue a flow, marked as such.
@@ -198,7 +202,19 @@ impl CallIndex {
                 confidence: b.confidence,
                 calls: 1,
                 via: Some(crate::bridges::step_label(b)),
+                extra: false,
             });
+        }
+        for (caller, mut list) in beans {
+            list.retain(|c| c.calls > 0);
+            list.sort_by_key(|c| c.via.as_deref() == Some(SPRING_OTHER_VIA));
+            for c in &list {
+                ix.spring_into
+                    .entry(c.target.clone())
+                    .or_default()
+                    .push(caller.clone());
+            }
+            ix.out.entry(caller).or_default().extend(list);
         }
         ix.declared_edges(repo, &dispatch);
         for f in repo.findings() {
@@ -247,6 +263,7 @@ impl CallIndex {
                     confidence: Confidence::Resolved,
                     calls: 1,
                     via: spring_via(via),
+                    extra: false,
                 })
                 .collect();
             for c in &list {
@@ -255,6 +272,12 @@ impl CallIndex {
             }
             self.declared.insert(id, list);
         }
+    }
+
+    /// How many functions a function calls, those beans run beside them left out.
+    fn named_callees(&self, id: &str) -> usize {
+        let of = |c: &&Callee| c.target != id && !c.extra;
+        self.callees(id).iter().filter(of).count()
     }
 
     /// Where entry `i` of `repo.symbols.entries` starts its flow.
@@ -685,7 +708,7 @@ pub fn flow(
             end_line: s.map_or(1, |s| s.end_line),
             callers: t.callers_of(id).len(),
             depth: d,
-            callees: ix.callees(id).iter().filter(|c| c.target != id).count(),
+            callees: ix.named_callees(id),
             more: 0,
             open: false,
             finding: ix.mark(&file),
@@ -699,13 +722,14 @@ pub fn flow(
                 at: &mut HashMap<String, usize>,
                 n: usize,
                 per: usize,
-                cap: usize|
+                cap: usize,
+                extra: bool|
      -> Vec<usize> {
         let id = nodes[n].id.clone();
         let d = nodes[n].depth;
         let mut added = Vec::new();
         for c in ix.callees(&id) {
-            if c.target == id || at.contains_key(&c.target) {
+            if c.target == id || at.contains_key(&c.target) || (c.extra && !extra) {
                 continue;
             }
             if added.len() >= per || nodes.len() >= cap {
@@ -723,16 +747,27 @@ pub fn flow(
     // 1. The base flow, the same whatever is expanded: level by level, and within a level
     // the functions that call the most first, so the budget goes to the ones that do the
     // work before small helpers (`new`, `default`).
-    let mut level: Vec<usize> = vec![0];
-    while !level.is_empty() {
-        level.sort_by(|&a, &b| nodes[b].callees.cmp(&nodes[a].callees).then(a.cmp(&b)));
-        let mut next = Vec::new();
-        for &n in &level {
-            if nodes[n].depth < depth {
-                next.extend(grow(&mut nodes, &mut at, n, PER_NODE, budget));
+    // Then, in the room left, the beans beside the methods calls name.
+    for extra in [false, true] {
+        let mut level: Vec<usize> = (0..nodes.len()).collect();
+        while !level.is_empty() {
+            level.sort_by(|&a, &b| {
+                (nodes[a].depth, nodes[b].callees, a).cmp(&(nodes[b].depth, nodes[a].callees, b))
+            });
+            let mut next = Vec::new();
+            for &n in &level {
+                if nodes[n].depth < depth {
+                    let shown = ix
+                        .callees(&nodes[n].id)
+                        .iter()
+                        .filter(|c| extra && at.contains_key(&c.target))
+                        .count();
+                    let per = PER_NODE.saturating_sub(shown);
+                    next.extend(grow(&mut nodes, &mut at, n, per, budget, extra));
+                }
             }
+            level = next;
         }
-        level = next;
     }
 
     // 2. Expansions on top of it, in the order they were opened: each shows its callees as
@@ -751,7 +786,7 @@ pub fn flow(
             }
             progress = true;
             nodes[n].open = true;
-            grow(&mut nodes, &mut at, n, EXPAND_PER, MAX_NODES);
+            grow(&mut nodes, &mut at, n, EXPAND_PER, MAX_NODES, true);
         }
         if !progress {
             break;
@@ -1142,7 +1177,7 @@ pub fn file_flows(repo: &Repo, ix: &CallIndex, file: &str) -> Result<FileFlows, 
         }
         functions.push(FileFunction {
             callers: t.callers_of(&id).len(),
-            callees: ix.callees(&id).iter().filter(|c| c.target != id).count(),
+            callees: ix.named_callees(&id),
             name: s.qualified(),
             kind: s.kind,
             line: s.line,
@@ -1156,42 +1191,47 @@ pub fn file_flows(repo: &Repo, ix: &CallIndex, file: &str) -> Result<FileFlows, 
     // Walk callers back from the file's functions (and its module-level code).
     let mut reached: HashSet<String> = seen.clone();
     reached.insert(format!("file:{path}"));
-    let mut frontier: Vec<String> = reached.iter().cloned().collect();
+    let mut frontier: Vec<String>;
     let mut partial = false;
-    'walk: for _ in 0..THROUGH_DEPTH {
-        let mut next = Vec::new();
-        for id in &frontier {
-            let calls = t.callers_of(id).iter().map(|&i| {
-                let c = &t.calls[i];
-                let up = c.caller.clone();
-                (up.unwrap_or_else(|| format!("file:{}", c.file)), &c.file)
-            });
-            let beans = ix
-                .spring_into
-                .get(id)
-                .into_iter()
-                .flatten()
-                .filter_map(|c| {
-                    let file = &ix.symbol(repo, c)?.file;
-                    Some((c.clone(), file))
+    // Callers first, then the way back through beans.
+    'walk: for extra in [false, true] {
+        frontier = reached.iter().cloned().collect();
+        for _ in 0..THROUGH_DEPTH {
+            let mut next = Vec::new();
+            for id in &frontier {
+                let calls = t.callers_of(id).iter().map(|&i| {
+                    let c = &t.calls[i];
+                    let up = c.caller.clone();
+                    (up.unwrap_or_else(|| format!("file:{}", c.file)), &c.file)
                 });
-            for (up, file) in calls.chain(beans) {
-                if is_test_file(repo, file) {
-                    continue;
-                }
-                if reached.insert(up.clone()) {
-                    if reached.len() > THROUGH_BUDGET {
-                        partial = true;
-                        break 'walk;
+                let beans = ix
+                    .spring_into
+                    .get(id)
+                    .into_iter()
+                    .flatten()
+                    .filter(|_| extra)
+                    .filter_map(|c| {
+                        let file = &ix.symbol(repo, c)?.file;
+                        Some((c.clone(), file))
+                    });
+                for (up, file) in calls.chain(beans) {
+                    if is_test_file(repo, file) {
+                        continue;
                     }
-                    next.push(up);
+                    if reached.insert(up.clone()) {
+                        if reached.len() > THROUGH_BUDGET {
+                            partial = true;
+                            break 'walk;
+                        }
+                        next.push(up);
+                    }
                 }
             }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
         }
-        if next.is_empty() {
-            break;
-        }
-        frontier = next;
     }
     let mut entries: Vec<FlowEntry> = repo_entries(repo)
         .filter(|&(i, e)| e.file == path || reached.contains(ix.root_of(i)))

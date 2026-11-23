@@ -20,6 +20,8 @@ pub trait Types {
     fn supertypes(&self, id: &str) -> Vec<String>;
     /// Whether a symbol has this id.
     fn exists(&self, id: &str) -> bool;
+    /// How many calls there are to a call's target on its line.
+    fn calls_like(&self, c: &SymbolCall) -> usize;
     /// Whether type `id` is an interface.
     fn is_interface(&self, id: &str) -> bool;
     /// Types defined in a file, as `(name, id)`.

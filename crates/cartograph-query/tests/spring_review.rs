@@ -1287,3 +1287,242 @@ fn a_route_of_an_abstract_method_goes_on_to_its_bean() {
         back.entries.iter().map(|e| &e.name).collect::<Vec<_>>()
     );
 }
+
+// Regressions ------------------------------------------------------------------------
+
+#[test]
+fn a_method_called_by_name_is_not_left_among_the_beans() {
+    use cartograph_query::flow::{CallIndex, FlowOptions, PER_NODE, flow};
+    // `find` is reached as a bean's first, then called by its name.
+    let mut desk = String::from(
+        "@Service public class Desk {
+    @Autowired private Finder finder;
+    @Autowired private Disk disk;
+    void work() {
+        finder.find();
+        disk.find();
+",
+    );
+    for i in 0..PER_NODE - 1 {
+        desk.push_str(&format!("        Help.h{i}();\n"));
+    }
+    desk.push_str("    }\n}\n");
+    let help: String = (0..PER_NODE)
+        .map(|i| format!("    static void h{i}() {{ }}\n"))
+        .collect();
+    let help = format!("public class Help {{\n{help}}}\n");
+    let r = repo(&[
+        (
+            "api/Finder.java",
+            "public class Finder { public void find() { } }",
+        ),
+        (
+            "api/Disk.java",
+            "@Service public class Disk extends Finder { @Override public void find() { } }",
+        ),
+        ("api/Desk.java", &desk),
+        ("api/Help.java", &help),
+    ]);
+    let ix = CallIndex::build(&r);
+    let g = flow(
+        &r,
+        &ix,
+        "sym:api/Desk.java#Desk.work",
+        &FlowOptions::default(),
+    )
+    .unwrap();
+    let e = g.edges.iter().find(|e| e.dst.ends_with("#Disk.find"));
+    let e = e.unwrap_or_else(|| panic!("{:?}", g.edges));
+    assert_eq!(e.via, None);
+}
+
+#[test]
+fn beans_take_only_the_room_calls_and_bridges_leave() {
+    use cartograph_query::flow::{CallIndex, FlowOptions, PER_NODE, flow};
+    // Ten classes override a method with a body; the calls and the route come first.
+    let names: Vec<String> = (0..10).map(|i| format!("Kind{i}")).collect();
+    let kinds: Vec<(String, String)> = names
+        .iter()
+        .map(|n| {
+            (
+                format!("api/{n}.java"),
+                format!(
+                    "@Service public class {n} extends Base {{ @Override public void step() {{ }} }}"
+                ),
+            )
+        })
+        .collect();
+    let mut files: Vec<(&str, &str)> = kinds
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    files.push((
+        "api/Base.java",
+        "public class Base { public void step() { } }",
+    ));
+    files.push((
+        "api/Desk.java",
+        "@Service public class Desk {
+    @Autowired private List<Base> all;
+    private RestTemplate rest;
+    void work() {
+        all.forEach(b -> b.step());
+        one();
+        two();
+        rest.getForObject(\"/api/next\", String.class);
+    }
+    void one() { d0(); d1(); d2(); d3(); d4(); }
+    void two() { }
+    void d0() { }
+    void d1() { }
+    void d2() { }
+    void d3() { }
+    void d4() { }
+}
+",
+    ));
+    files.push((
+        "api/Next.java",
+        "@RestController public class Next { @GetMapping(\"/api/next\") public String next() { return \"\"; } }",
+    ));
+    let r = repo(&files);
+    let ix = CallIndex::build(&r);
+    let nodes = |max_nodes: usize| -> Vec<String> {
+        let opts = FlowOptions {
+            max_nodes,
+            ..FlowOptions::default()
+        };
+        flow(&r, &ix, "sym:api/Desk.java#Desk.work", &opts)
+            .unwrap()
+            .nodes
+            .iter()
+            .map(|n| n.id.rsplit('#').next().unwrap_or("").to_string())
+            .collect()
+    };
+    let tight = nodes(10);
+    for want in [
+        "Base.step",
+        "Desk.one",
+        "Desk.two",
+        "Next.next",
+        "Desk.d0",
+        "Desk.d1",
+        "Desk.d2",
+        "Desk.d3",
+        "Desk.d4",
+    ] {
+        assert!(tight.iter().any(|x| x == want), "{want}: {tight:?}");
+    }
+    // Then the beans, as many as the function has room for.
+    let wide = nodes(60);
+    let beans = wide.iter().filter(|x| x.starts_with("Kind")).count();
+    assert_eq!(beans, PER_NODE - 4, "{wide:?}");
+}
+
+#[test]
+fn super_exempts_as_many_calls_as_it_makes() {
+    use cartograph_core::{Confidence, SymbolCall};
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    for (n, body) in [
+        (
+            "Base",
+            "public class Base {\n    public void save() { }\n}\n",
+        ),
+        (
+            "Audited",
+            "@org.springframework.stereotype.Service public class Audited extends Base {\n    void go() { super.save(); make().save(); }\n    Base make() { return null; }\n}\n",
+        ),
+        (
+            "Other",
+            "@org.springframework.stereotype.Service public class Other extends Base {\n    public void save() { }\n}\n",
+        ),
+    ] {
+        fs::create_dir_all(root.join("api")).unwrap();
+        fs::write(
+            root.join(format!("api/{n}.java")),
+            format!("package com.shop;\n{body}"),
+        )
+        .unwrap();
+    }
+    let out = index(root, &IndexOptions::default()).unwrap();
+    let mut s = out.symbols;
+    let load = |s: &cartograph_core::Symbols| {
+        Repo::with_symbols(&out.graph, s, Config::load(root).unwrap())
+    };
+    let t = callers(&load(&s), "Other.save");
+    assert!(!t.contains("Audited.go()"), "only super: {t}");
+    // What an imported index adds: the call on what `make()` returns.
+    let id = |x: &str| format!("sym:api/{}.java#{x}", x.split('.').next().unwrap_or(""));
+    s.calls.push(SymbolCall {
+        file: "api/Audited.java".into(),
+        line: 3,
+        caller: Some(id("Audited.go")),
+        target: id("Base.save"),
+        confidence: Confidence::Exact,
+    });
+    s.normalize();
+    let r = load(&s);
+    let t = callers(&r, "Other.save");
+    assert_eq!(t.matches("Audited.go()").count(), 1, "{t}");
+    let f = flow_of(&r, &id("Audited.go"));
+    assert!(
+        f.contains(&("Audited.go".to_string(), "Other.save".to_string())),
+        "{f:?}"
+    );
+}
+
+#[test]
+fn the_spring_block_gives_way_to_callers() {
+    // Many beans injected in many places, many calls: the files come first.
+    let mut files: Vec<(String, String)> = vec![(
+        "api/Rule.java".into(),
+        "public interface Rule { void apply(); }".into(),
+    )];
+    for i in 0..30 {
+        files.push((
+            format!("api/rules/SomewhatLongRuleName{i}.java"),
+            format!(
+                "@Service public class SomewhatLongRuleName{i} implements com.shop.Rule {{ @Override public void apply() {{ }} }}"
+            ),
+        ));
+    }
+    for i in 0..20 {
+        files.push((
+            format!("api/desk/LongishDeskName{i}.java"),
+            format!(
+                "@Service public class LongishDeskName{i} {{
+    @Autowired private com.shop.Rule rule;
+    void a(Rule r) {{ r.apply(); }}
+    void b(Rule r) {{ r.apply(); }}
+    void c(Rule r) {{ r.apply(); }}
+    void d(Rule r) {{ r.apply(); }}
+    @Autowired private List<Rule> rules;
+}}
+"
+            ),
+        ));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let r = repo(&files);
+    let d = symbols::callers(&r, "Rule.apply").unwrap().data;
+    let sites = |d: &symbols::CallersResult| d.groups.iter().map(|g| g.sites.len()).sum::<usize>();
+    // The same question without Spring.
+    let out = {
+        let mut s = cartograph_core::Symbols {
+            symbols: r.symbols.symbols.clone(),
+            calls: r.symbols.calls.clone(),
+            indexed: true,
+            ..Default::default()
+        };
+        s.normalize();
+        s
+    };
+    let bare = Repo::with_symbols(&cartograph_core::Graph::default(), &out, Config::default());
+    let b = symbols::callers(&bare, "Rule.apply").unwrap().data;
+    assert!(b.groups_more > 0, "the answer is cut: {}", b.groups.len());
+    assert_eq!((d.groups.len(), sites(&d)), (b.groups.len(), sites(&b)));
+}

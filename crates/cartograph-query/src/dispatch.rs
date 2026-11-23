@@ -58,12 +58,18 @@ impl<'t, T: Types> Dispatcher<'t, T> {
         v
     }
 
-    /// The call runs the method it names: `super.m()`, a private or a static one.
-    pub fn as_named(&self, c: &SymbolCall) -> bool {
+    /// Of the calls to a call's target on its line, how many run the method they name:
+    /// `super.m()`, and all to a private or a static one.
+    pub fn as_named(&self, c: &SymbolCall) -> usize {
         let sp = self.spring();
-        sp.method(&c.target)
+        if sp
+            .method(&c.target)
             .is_some_and(|m| m.private || m.is_static)
-            || sp.sites(c).is_some_and(|s| s.iter().all(|x| x.sup))
+        {
+            return usize::MAX;
+        }
+        sp.sites(c)
+            .map_or(0, |s| s.iter().filter(|x| x.sup).count())
     }
 
     /// The beans Spring gives what a call to a method of type `ty` is made on, and how it
@@ -98,12 +104,17 @@ impl<'t, T: Types> Dispatcher<'t, T> {
         let Some(ty) = self.spring().declarer(&c.target) else {
             return Vec::new();
         };
-        if self.as_named(c) {
+        let named = self.as_named(c);
+        if named > 0 && named >= self.t.calls_like(c) {
             return Vec::new();
         }
         let mut beans: Vec<&SpringBean> = Vec::new();
         match self.spring().sites(c) {
             None => beans.extend(self.spring().beans_below(ty)),
+            // A call no site tells of (an imported index's) is of any of them.
+            Some(sites) if sites.iter().all(|s| s.sup) => {
+                beans.extend(self.spring().beans_below(ty));
+            }
             Some(sites) => {
                 for s in sites.iter().filter(|s| !s.sup) {
                     let of = s.recv.as_deref().filter(|r| self.is(r, ty)).unwrap_or(ty);

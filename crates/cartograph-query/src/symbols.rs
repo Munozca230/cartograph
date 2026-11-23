@@ -68,6 +68,14 @@ impl crate::spring::Types for SymbolTable {
         self.symbol(id).is_some()
     }
 
+    fn calls_like(&self, c: &SymbolCall) -> usize {
+        self.callers_of(&c.target)
+            .iter()
+            .map(|&i| &self.calls[i])
+            .filter(|x| x.line == c.line && x.file == c.file)
+            .count()
+    }
+
     fn is_interface(&self, id: &str) -> bool {
         self.symbol(id)
             .is_some_and(|s| s.kind == SymbolKind::Interface)
@@ -1373,6 +1381,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
     for (d, name) in &decls {
         let before = calls.len();
         let decl_ty = crate::spring::type_of_method(t, d);
+        let mut supers: HashMap<(&str, u32), usize> = HashMap::new();
         for &i in t.callers_of(d) {
             let c = &t.calls[i];
             let mine = own.as_ref().is_some_and(|o| {
@@ -1380,8 +1389,13 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                     .as_deref()
                     .is_some_and(|x| x.starts_with(o.as_str()))
             });
-            // `super.m()`, a private and a static method run as they are.
-            if mine || dispatch.as_named(c) {
+            // `super.m()`, a private and a static method run as they are: of the calls on a
+            // line, as many as are `super`.
+            let left = supers
+                .entry((c.file.as_str(), c.line))
+                .or_insert_with(|| dispatch.as_named(c));
+            if mine || *left > 0 {
+                *left = left.saturating_sub(1);
                 continue;
             }
             let note = decl_ty
@@ -1444,12 +1458,19 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
         (3, 1),
         (1, 1),
     ];
-    let idx: Vec<usize> = (0..steps.len()).collect();
+    // What Spring adds gives way first, then the sites and files.
+    let of_spring = if spring.is_some() {
+        SPRING_POINTS.len()
+    } else {
+        0
+    };
+    let idx: Vec<usize> = (0..of_spring + steps.len()).collect();
     Ok(fit(
         limits::CALLERS,
         &idx,
         |k| {
-            let (max_files, per) = steps[k.min(steps.len() - 1)];
+            let (max_files, per) = steps[k.saturating_sub(of_spring).min(steps.len() - 1)];
+            let given = k;
             CallersResult {
                 instead_of: instead.as_deref().map(|x| clip(x, 120)),
                 symbol: clip(&id, 240),
@@ -1504,7 +1525,7 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
                     })
                     .collect(),
                 bridged_more: bridged.len().saturating_sub(max_files),
-                spring: spring.as_ref().map(|sp| sp.shrink(k)),
+                spring: spring.as_ref().and_then(|sp| sp.shrink(given)),
             }
         },
         render_callers,
@@ -1626,12 +1647,12 @@ const SPRING_NAMES: [usize; 10] = [32, 24, 21, 16, 12, 10, 8, 6, 4, 3];
 const SPRING_POINTS: [usize; 10] = [8, 8, 6, 6, 5, 4, 3, 3, 2, 1];
 
 impl SpringCallers {
-    /// Within step `k` of the fit: fewer points and labels.
-    fn shrink(&self, k: usize) -> SpringCallers {
-        let names = SPRING_NAMES[k.min(SPRING_NAMES.len() - 1)];
-        let points = SPRING_POINTS[k.min(SPRING_POINTS.len() - 1)];
+    /// Within step `k`: fewer points and labels, then nothing.
+    fn shrink(&self, k: usize) -> Option<SpringCallers> {
+        let names = *SPRING_NAMES.get(k)?;
+        let points = *SPRING_POINTS.get(k)?;
         let cut = |v: &[String]| v.iter().take(names).cloned().collect::<Vec<_>>();
-        SpringCallers {
+        Some(SpringCallers {
             bean_names: cut(&self.bean_names),
             points: self
                 .points
@@ -1645,7 +1666,7 @@ impl SpringCallers {
                 .collect(),
             points_more: self.points_more + self.points.len().saturating_sub(points),
             ..self.clone()
-        }
+        })
     }
 }
 
