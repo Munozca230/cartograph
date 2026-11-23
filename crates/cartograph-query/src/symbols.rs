@@ -1746,6 +1746,14 @@ fn spring_callers(
     if points.is_empty() && implementors.is_empty() {
         return None;
     }
+    // A bean nobody injects by its own type may be injected by one of its supertypes.
+    if points.is_empty() && is_bean {
+        points = crate::spring::points_above(t, ty)
+            .into_iter()
+            .map(|i| (i, i.ty.clone()))
+            .collect();
+        points.sort_by_key(|a| key(a.0));
+    }
     let mut last: Option<Vec<String>> = None;
     let rows: Vec<SpringPoint> = points
         .iter()
@@ -1851,10 +1859,9 @@ fn render_spring(r: &CallersResult, s: &mut String) {
     if sp.points.is_empty() {
         if sp.beans > 0 {
             s.push_str(&format!(
-                "Spring: {} bean{} implement{} {}: {}; injected nowhere in the repo\n",
+                "Spring: {} bean{} of {}: {}; no injection point of it found\n",
                 sp.beans,
                 if sp.beans == 1 { "" } else { "s" },
-                if sp.beans == 1 { "s" } else { "" },
                 sp.ty,
                 spring_names(&sp.bean_names, sp.beans.saturating_sub(sp.bean_names.len()))
             ));

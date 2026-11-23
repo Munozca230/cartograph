@@ -750,3 +750,260 @@ fn a_nested_bean_and_a_generated_mapper_have_the_names_spring_gives_them() {
     let t = callers(&r, "Gateway.charge");
     assert_eq!(t.matches("Card (@Primary, of 4)").count(), 2, "{t}");
 }
+
+// Second review ----------------------------------------------------------------------
+
+fn flow_of(r: &Repo, from: &str) -> Vec<(String, String)> {
+    use cartograph_query::flow::{CallIndex, FlowOptions, flow};
+    let ix = CallIndex::build(r);
+    let name = |id: &str| id.rsplit('#').next().unwrap_or(id).to_string();
+    flow(r, &ix, from, &FlowOptions::default())
+        .unwrap()
+        .edges
+        .iter()
+        .map(|e| (name(&e.src), name(&e.dst)))
+        .collect()
+}
+
+#[test]
+fn flows_go_on_from_an_abstract_class_to_its_beans() {
+    let r = repo(&[
+        (
+            "api/Exporter.java",
+            "public abstract class Exporter {
+    public abstract void write();
+    public void run() { write(); }
+    public void close() { done(); }
+    void done() { }
+}
+",
+        ),
+        (
+            "api/CsvExporter.java",
+            "@Service public class CsvExporter extends Exporter {
+    @Override public void write() { flush(); }
+    @Override public void close() { super.close(); }
+    void flush() { }
+}
+",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired private Exporter exporter;
+    void direct() { exporter.write(); }
+    void template() { exporter.run(); }
+}
+",
+        ),
+    ]);
+    let has = |v: &[(String, String)], a: &str, b: &str| v.iter().any(|(x, y)| x == a && y == b);
+    let f = flow_of(&r, "sym:api/Desk.java#Desk.direct");
+    assert!(has(&f, "CsvExporter.write", "CsvExporter.flush"), "{f:?}");
+    let f = flow_of(&r, "sym:api/Desk.java#Desk.template");
+    assert!(has(&f, "CsvExporter.write", "CsvExporter.flush"), "{f:?}");
+    let f = flow_of(&r, "sym:api/CsvExporter.java#CsvExporter.close");
+    assert!(has(&f, "CsvExporter.close", "Exporter.close"), "{f:?}");
+    assert!(!has(&f, "Exporter.close", "CsvExporter.close"), "{f:?}");
+}
+
+#[test]
+fn two_beans_of_a_type_with_names_not_known_are_two() {
+    let r = gateways(&[
+        (
+            "api/Extra.java",
+            "@Configuration public class Extra {
+    @Bean(Elsewhere.A) Gateway one() { return null; }
+    @Bean(Elsewhere.B) Gateway two() { return null; }
+}
+",
+        ),
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    @Autowired private List<Gateway> all;
+    void pay() { all.forEach(g -> g.charge()); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Gateway.charge");
+    assert!(
+        t.contains("4 beans: Card, Wire, one (@Bean), two (@Bean)"),
+        "{t}"
+    );
+}
+
+#[test]
+fn aliases_count_for_qualifiers_and_member_names() {
+    let r = repo(&[
+        (
+            "api/Printer.java",
+            "public interface Printer { void print(); }",
+        ),
+        (
+            "api/Config.java",
+            "@Configuration public class Config {
+    @Bean({\"main\", Elsewhere.ALIAS}) Printer main() { return null; }
+    @Bean({\"laser\", \"fast\"}) Printer laser() { return null; }
+}
+",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired @Qualifier(\"other\") private Printer unknown;
+    @Autowired private Printer fast;
+    void a() { unknown.print(); fast.print(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Printer.print");
+    assert!(
+        t.contains("@Qualifier(\"other\")) api/Desk.java:3: qualified by a name not known, 1 fit: main (@Bean)"),
+        "{t}"
+    );
+    assert!(
+        t.contains("field fast, Printer) api/Desk.java:4: laser (@Bean) (by name, of 2)"),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_lombok_field_another_method_sets_is_not_narrowed() {
+    let r = gateways(&[(
+        "api/Till.java",
+        "@lombok.AllArgsConstructor @Service public class Till {
+    private Gateway gateway;
+    private Gateway kept;
+    public void use(Gateway other) { this.gateway = other; }
+    void pay() { gateway.charge(); }
+    void keep() { kept.charge(); }
+}
+",
+    )]);
+    let t = callers(&r, "Wire.charge");
+    assert!(t.contains("Till.pay()"), "{t}");
+    assert!(!t.contains("Till.keep()"), "{t}");
+}
+
+#[test]
+fn a_parameter_given_another_value_is_not_what_spring_injects() {
+    let r = gateways(&[
+        (
+            "api/Retry.java",
+            "public class Retry implements Gateway { Retry(Gateway g) { } @Override public void charge() { } }",
+        ),
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    private final Gateway main;
+    private Gateway twice;
+    public Till(Gateway gateway, Gateway second) {
+        gateway = new Retry(gateway);
+        this.main = gateway;
+        this.twice = second;
+        this.twice = new Retry(this.twice);
+        gateway.charge();
+    }
+    void pay() { main.charge(); }
+    void again() { twice.charge(); }
+}
+",
+        ),
+        (
+            "api/Safe.java",
+            "@Service public class Safe {
+    private final Gateway main;
+    public Safe(Gateway gateway) {
+        gateway = Objects.requireNonNull(gateway);
+        this.main = gateway;
+    }
+    void pay() { main.charge(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Wire.charge");
+    assert!(t.contains("Till.pay()"), "{t}");
+    assert!(t.contains("Till.again()"), "{t}");
+    assert!(
+        t.contains("api/Till.java (3)"),
+        "the constructor's own call: {t}"
+    );
+    assert!(!t.contains("Safe.pay()"), "{t}");
+}
+
+#[test]
+fn a_repository_interface_takes_the_name_of_its_stereotype() {
+    let r = repo(&[
+        (
+            "api/Order.java",
+            "@Document(\"orders\") public class Order { }",
+        ),
+        (
+            "api/Orders.java",
+            "public interface Orders extends MongoRepository<Order, String> { Order findByCode(String c); }",
+        ),
+        (
+            "api/LiveOrders.java",
+            "@Repository(\"live\") public interface LiveOrders extends Orders, MongoRepository<Order, String> { }",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired @Qualifier(\"live\") private Orders orders;
+    void work() { orders.findByCode(\"a\"); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Orders.findByCode");
+    assert!(t.contains("LiveOrders (qualified)"), "{t}");
+}
+
+#[test]
+fn a_bean_injected_by_its_supertype_is_injected_somewhere() {
+    let r = repo(&[
+        (
+            "api/Printer.java",
+            "public interface Printer { void print(); }",
+        ),
+        (
+            "api/Laser.java",
+            "public class Laser implements Printer { @Override public void print() { } public void warm() { } }",
+        ),
+        (
+            "api/Alone.java",
+            "public class Alone { public void hum() { } }",
+        ),
+        (
+            "api/Config.java",
+            "@Configuration public class Config {
+    @Bean Laser laser() { return new Laser(); }
+    @Bean Alone alone() { return new Alone(); }
+}
+",
+        ),
+        (
+            "api/Desk.java",
+            "@Service public class Desk {
+    @Autowired private Printer printer;
+    void a() { printer.print(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Laser.warm");
+    assert!(!t.contains("injected nowhere"), "{t}");
+    assert!(
+        t.contains("injected into Desk (field printer, Printer) api/Desk.java:3"),
+        "{t}"
+    );
+    let t = callers(&r, "Alone.hum");
+    assert!(
+        t.contains("Spring: 1 bean of Alone: alone (@Bean); no injection point of it found"),
+        "{t}"
+    );
+}

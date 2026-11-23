@@ -168,6 +168,17 @@ fn ancestors<T: Types>(t: &T, ty: &str) -> HashSet<String> {
     seen
 }
 
+/// Injection points of a supertype of `ty` that receive its bean.
+pub fn points_above<'t, T: Types>(t: &'t T, ty: &str) -> Vec<&'t SpringInjection> {
+    let mut above: Vec<String> = ancestors(t, ty).into_iter().filter(|x| x != ty).collect();
+    above.sort();
+    above
+        .iter()
+        .flat_map(|a| t.spring().injections_of(a))
+        .filter(|i| pick(i, &beans_for(t, i)).0.iter().any(|b| b.ty == ty))
+        .collect()
+}
+
 /// Whether `ty` is a subtype of `of`.
 pub fn is_subtype<T: Types>(t: &T, ty: &str, of: &str) -> bool {
     ty != of && ancestors(t, ty).contains(of)
@@ -202,7 +213,8 @@ fn beans_where<'t, T: Types>(t: &'t T, ty: &str, tests: bool) -> Vec<&'t SpringB
         .map(|(_, b)| b)
         .collect();
     v.sort_by_key(|b| (bean_label(b), b.file.clone(), b.line));
-    v.dedup_by(|a, b| a.ty == b.ty && a.name == b.name);
+    // Two names not known are not one.
+    v.dedup_by(|a, b| a.ty == b.ty && a.name == b.name && !a.name.is_empty());
     v
 }
 
@@ -267,7 +279,7 @@ pub fn pick<'b>(inj: &SpringInjection, all: &[&'b SpringBean]) -> (Vec<&'b Sprin
             |b: &&SpringBean| b.name == *q || b.aliases.contains(q) || b.qualifiers.contains(q);
         // With no bean of that name, one whose own name or qualifier is not known may be.
         if !v.iter().any(fits) {
-            v.retain(|b| b.name.is_empty() || b.qualifiers.iter().any(String::is_empty));
+            v.retain(|b| !named(b) || b.qualifiers.iter().any(String::is_empty));
             let why = if v.is_empty() {
                 Why::None
             } else {
@@ -298,9 +310,13 @@ pub fn pick<'b>(inj: &SpringInjection, all: &[&'b SpringBean]) -> (Vec<&'b Sprin
     if primary.len() == 1 {
         return (primary, Why::Primary);
     }
-    let named: Vec<&SpringBean> = v.iter().copied().filter(|b| b.name == inj.member).collect();
-    if named.len() == 1 {
-        return (named, Why::Name);
+    let like: Vec<&SpringBean> = v
+        .iter()
+        .copied()
+        .filter(|b| b.name == inj.member || b.aliases.contains(&inj.member))
+        .collect();
+    if like.len() == 1 {
+        return (like, Why::Name);
     }
     (v, Why::Ambiguous)
 }
