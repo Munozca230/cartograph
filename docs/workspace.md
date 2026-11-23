@@ -76,8 +76,10 @@ An absolute path maps through the member whose folder holds it.
 Only the members: each is walked from its own folder with its own `.gitignore`, so the
 parent's other folders (logs, backups, documents, worktree copies) are never read. Imports
 resolve across members wherever the resolvers would within one repository: a Java class
-by its package, a TypeScript or C relative path that leaves a member's folder (it lands in
-the member whose folder holds that place, whatever it is named). Each member's root plays
+by its package; and a reference that leaves a member's folder lands in the member whose
+folder holds that place, whatever it is named: TypeScript and C relative imports, tsconfig
+`extends`, `baseUrl` and `paths` (`"@lib/*": ["../shared-lib/src/*"]`), Go `replace`
+directives, Cargo path dependencies. Each member's root plays
 the part of a repository root for the resolvers (its compilation database, its Go root
 package). A member's own `index.scip` is imported for it.
 
@@ -139,8 +141,9 @@ the file and name the member that plain paths try first:
   "args": ["mcp", "--workspace", "../cartograph-workspace.toml", "--member", "api"] }
 ```
 
-The watcher follows each member's folder (with its own ignore rules and git dirs) and
-re-indexes everything when the workspace file changes. `diff` and `check` take
+The watcher follows each member's folder (with its own ignore rules and git dirs); when
+the workspace file changes it watches the members' folders again (new ones in, removed ones
+out) and re-indexes everything. `diff` and `check` take
 `base: "main"` or `"api=feat,lib=main"`.
 
 ## Web map and HTTP API
