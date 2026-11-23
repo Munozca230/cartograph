@@ -352,17 +352,29 @@ fn value_expr(v: Node<'_>, src: &[u8]) -> Option<StrExpr> {
     known.then_some(e)
 }
 
-/// The qualifier of a field or parameter: `@Qualifier("x")`, `@Named("x")`,
-/// `@Resource(name = "x")`.
-fn qualifier(annots: &[Annot<'_>], src: &[u8]) -> Option<StrExpr> {
-    annots.iter().find_map(|a| {
-        let keys: &[&str] = match a.name.as_str() {
-            "Qualifier" | "Named" => &["value"],
-            "Resource" => &["name"],
-            _ => return None,
-        };
-        a.arg(keys).and_then(|v| strings(v, src).into_iter().next())
+/// The bean name a `@Resource` field or setter asks for, and whether it is the default
+/// one (`member`): `@Resource(name = "x")`, a JNDI lookup or another type (not known).
+fn resource(annots: &[Annot<'_>], member: &str, src: &[u8]) -> Option<(StrExpr, bool)> {
+    let a = annots.iter().find(|a| a.name == "Resource")?;
+    if let Some(v) = a.arg(&["lookup", "type"]) {
+        return Some((StrExpr::hole(&text(v, src)), false));
+    }
+    let given = a
+        .arg(&["name"])
+        .and_then(|v| strings(v, src).into_iter().next());
+    Some(match given {
+        Some(e) => (e, false),
+        None => (StrExpr::lit(member), true),
     })
+}
+
+/// The qualifier of a field or parameter: `@Qualifier("x")`, `@Named("x")`.
+fn qualifier(annots: &[Annot<'_>], src: &[u8]) -> Option<StrExpr> {
+    annots
+        .iter()
+        .filter(|a| a.name == "Qualifier" || a.name == "Named")
+        .find_map(|a| a.arg(&["value"]))
+        .and_then(|v| strings(v, src).into_iter().next())
 }
 
 /// `(wrapper, type)` of a declared type: `("", "T")`, `("List", "T")`, `("[]", "T")`.
@@ -605,6 +617,7 @@ fn params_of(
             wrapper,
             ty: t,
             qualifier: qualifier(&annots, src),
+            resource: None,
         });
     }
 }
@@ -640,11 +653,17 @@ fn generated_bean(n: Node<'_>, name: &str, annots: &[Annot<'_>], src: &[u8], out
         _ => false,
     });
     if let Some(a) = made {
+        // MapStruct writes the bean's class (`OrderMapperImpl`).
+        let class = if a.name == "Mapper" {
+            format!("{name}Impl")
+        } else {
+            name.to_string()
+        };
         out.beans.push(RawBean {
             line: line(n),
             ty: name.to_string(),
             stereotype: a.name.clone(),
-            default_name: crate::symbols::decapitalize(name),
+            default_name: crate::symbols::decapitalize(&class),
             names: Vec::new(),
             factory: None,
             primary: annots.iter().any(|a| a.name == "Primary"),
@@ -705,6 +724,26 @@ fn repo(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
     }
 }
 
+/// A class with the classes around it (`Outer.Inner`), as Spring names a nested bean.
+fn short_name(n: Node<'_>, name: &str, src: &[u8]) -> String {
+    let mut out = name.to_string();
+    let mut cur = n.parent();
+    while let Some(p) = cur {
+        if matches!(
+            p.kind(),
+            "class_declaration"
+                | "interface_declaration"
+                | "enum_declaration"
+                | "record_declaration"
+        ) && let Some(outer) = p.child_by_field_name("name")
+        {
+            out = format!("{}.{out}", text(outer, src));
+        }
+        cur = p.parent();
+    }
+    out
+}
+
 fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
     let Some(name) = n.child_by_field_name("name").map(|x| text(x, src)) else {
         return;
@@ -721,7 +760,7 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
             line: line(n),
             ty: name.clone(),
             stereotype: st.name.clone(),
-            default_name: crate::symbols::decapitalize(&name),
+            default_name: crate::symbols::decapitalize(&short_name(n, &name, src)),
             names: st
                 .arg(&["value"])
                 .map(|v| strings(v, src))
@@ -831,6 +870,7 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                     let Some(field) = d.child_by_field_name("name").map(|x| text(x, src)) else {
                         continue;
                     };
+                    let name_of_field = field.clone();
                     let holds = if fields.set_elsewhere(&field, 0) {
                         Vec::new()
                     } else {
@@ -841,10 +881,14 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                         line: line(d),
                         class: name.clone(),
                         how: if injected { "field" } else { "constructor" }.to_string(),
-                        member: field,
+                        member: name_of_field.clone(),
                         wrapper: wrapper.clone(),
                         ty: t.clone(),
                         qualifier: qualifier(&fa, src),
+                        resource: wrapper
+                            .is_empty()
+                            .then(|| resource(&fa, &name_of_field, src))
+                            .flatten(),
                     });
                 }
             }
@@ -887,10 +931,20 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
                     };
                     let before = out.injections.len();
                     params_of(*m, &name, how, src, imp, &fields, &mut out.injections);
-                    // `@Resource(name = "x")` on a setter names its one bean.
-                    if let Some(q) = qualifier(&ma, src) {
-                        for i in &mut out.injections[before..] {
-                            i.qualifier.get_or_insert_with(|| q.clone());
+                    // A qualifier or a `@Resource` on a setter is its one parameter's; the
+                    // property names the bean (`setWire` → `wire`).
+                    let property = mname
+                        .strip_prefix("set")
+                        .filter(|p| !p.is_empty())
+                        .map_or(mname.clone(), crate::symbols::decapitalize);
+                    let q = qualifier(&ma, src);
+                    let r = resource(&ma, &property, src);
+                    for i in &mut out.injections[before..] {
+                        if i.qualifier.is_none() {
+                            i.qualifier = q.clone();
+                        }
+                        if i.wrapper.is_empty() {
+                            i.resource = r.clone();
                         }
                     }
                 }
@@ -1041,8 +1095,11 @@ mod tests {
         c.injections
             .iter()
             .map(|i| {
+                let asked = i.resource.as_ref().map_or(String::new(), |(e, default)| {
+                    format!(" #{}{}", shown(e), if *default { "?" } else { "" })
+                });
                 format!(
-                    "{} {} {} {}<{}>{}",
+                    "{} {} {} {}<{}>{}{asked}",
                     i.class,
                     i.how,
                     i.member,
@@ -1161,7 +1218,7 @@ class WithLombok {
             [
                 "Checkout field payments <Payments>",
                 "Checkout field wire <Payments> @wire",
-                "Checkout field cash <Payments> @cash",
+                "Checkout field cash <Payments> #cash",
                 "Checkout constructor all List<Payments>",
                 "Checkout constructor byName Map<Payments>",
                 "Checkout constructor audit ObjectProvider<Audit>",
@@ -1354,7 +1411,7 @@ class ShopProperties {}
         assert_eq!(
             beans,
             [
-                "Mapper OrderMapper orderMapper",
+                "Mapper OrderMapper orderMapperImpl",
                 "ConfigurationProperties ShopProperties shopProperties"
             ]
         );

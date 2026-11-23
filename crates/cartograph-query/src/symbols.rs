@@ -1202,7 +1202,8 @@ pub struct SpringPoint {
     pub declared: String,
     /// `path:line`.
     pub at: String,
-    /// `all`, `qualified`, `only`, `primary`, `by name`, `ambiguous`, `unknown`, `none`.
+    /// `all`, `qualified`, `only`, `primary`, `by name`, `ambiguous`, `unknown`,
+    /// `unknown name`, `no such name`, `none`.
     pub why: String,
     /// Beans it receives.
     pub count: usize,
@@ -1758,11 +1759,19 @@ fn spring_callers(
                 "constructor" | "bean" => i.how.clone(),
                 h => format!("{h} {}", i.member),
             };
-            let declared = match &i.qualifier {
+            let mut declared = match &i.qualifier {
                 Some(q) if q.is_empty() => format!("{} @Qualifier(?)", declared(i)),
                 Some(q) => format!("{} @Qualifier(\"{}\")", declared(i), clip(q, 60)),
                 None => declared(i),
             };
+            match &i.resource {
+                Some(r) if r.default => declared.push_str(" @Resource"),
+                Some(r) if r.name.is_empty() => declared.push_str(" @Resource(name = ?)"),
+                Some(r) => {
+                    declared.push_str(&format!(" @Resource(name = \"{}\")", clip(&r.name, 60)));
+                }
+                None => {}
+            }
             SpringPoint {
                 owner: clip(leaf(&i.owner), 80),
                 how,
@@ -1776,6 +1785,8 @@ fn spring_callers(
                     Why::Name => "by name",
                     Why::Ambiguous => "ambiguous",
                     Why::Unknown => "unknown",
+                    Why::UnknownName => "unknown name",
+                    Why::NoName => "no such name",
                     Why::None => "none",
                 }
                 .to_string(),
@@ -1875,12 +1886,22 @@ fn render_spring(r: &CallersResult, s: &mut String) {
             "qualified" => format!("{} (qualified)", spring_names(&p.names, p.names_more)),
             "only" => format!("{} (the only bean)", spring_names(&p.names, p.names_more)),
             "primary" => format!("{} (@Primary, of {})", spring_names(&p.names, 0), p.of),
-            "by name" => format!("{} (by name, of {})", spring_names(&p.names, 0), p.of),
+            "by name" => format!(
+                "{} (by name, of {})",
+                spring_names(&p.names, p.names_more),
+                p.of
+            ),
             "unknown" => format!(
                 "qualified by a name not known, {} fit: {}",
                 p.count,
                 spring_names(&p.names, p.names_more)
             ),
+            "unknown name" => format!(
+                "named by what is not known, {} fit: {}",
+                p.count,
+                spring_names(&p.names, p.names_more)
+            ),
+            "no such name" => "no bean of that name in the repo".to_string(),
             "ambiguous" => format!(
                 "ambiguous, {} fit: {}",
                 p.count,

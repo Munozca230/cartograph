@@ -77,14 +77,25 @@ pub struct SpringInjection {
     pub wrapper: String,
     /// The type injected (`sym:…`).
     pub ty: String,
-    /// `@Qualifier`, `@Named` or `@Resource(name)`: the name, empty when it is written as
-    /// an expression whose value is not known.
+    /// `@Qualifier` or `@Named`: the name, empty when it is written as an expression whose
+    /// value is not known.
     pub qualifier: Option<String>,
+    /// `@Resource`: the bean name it asks for.
+    pub resource: Option<ResourceName>,
     pub file: String,
     pub line: u32,
     /// The calls made on what is injected here: on the field or parameter, on a field the
     /// parameter is assigned to, on the variable of a loop or lambda over it.
     pub uses: Vec<InjectedUse>,
+}
+
+/// The bean name a `@Resource` asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ResourceName {
+    /// Empty when it is not known (an expression, a JNDI lookup).
+    pub name: String,
+    /// Not given: the field's or the setter's property, tried before the type.
+    pub default: bool,
 }
 
 /// A call on what an injection point receives.
@@ -152,6 +163,7 @@ mod tests {
             wrapper: "List".into(),
             ty: "sym:I.java#I".into(),
             qualifier: None,
+            resource: None,
             file: "A.java".into(),
             line: 3,
             uses: vec![InjectedUse {

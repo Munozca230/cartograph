@@ -217,20 +217,48 @@ pub enum Why {
     Only,
     /// The `@Primary` one of several.
     Primary,
-    /// The one named like the field or parameter.
+    /// The one named like the field or parameter, or as a `@Resource` asks.
     Name,
     /// Several fit and nothing picks one.
     Ambiguous,
     /// Qualified by a name that is not known: any of them.
     Unknown,
+    /// A `@Resource` whose name, or the name of a bean that fits, is not known: any of them.
+    UnknownName,
+    /// A `@Resource` names a bean that is not in the repo.
+    NoName,
     /// No bean of the type in the repo.
     None,
+}
+
+/// Every name of a bean is known.
+fn named(b: &SpringBean) -> bool {
+    !b.name.is_empty() && b.aliases.iter().all(|a| !a.is_empty())
 }
 
 /// The beans an injection point receives (`all`: the beans of its type).
 pub fn pick<'b>(inj: &SpringInjection, all: &[&'b SpringBean]) -> (Vec<&'b SpringBean>, Why) {
     let mut v: Vec<&SpringBean> = all.to_vec();
     let mut why = Why::All;
+    // `@Resource`: by name first; the default name falls back to the type.
+    if let Some(r) = &inj.resource
+        && !v.is_empty()
+    {
+        if r.name.is_empty() || v.iter().any(|b| !named(b)) {
+            return (v, Why::UnknownName);
+        }
+        let hit: Vec<&SpringBean> = v
+            .iter()
+            .copied()
+            .filter(|b| b.name == r.name || b.aliases.contains(&r.name))
+            .collect();
+        if !hit.is_empty() {
+            return (hit, Why::Name);
+        }
+        if !r.default {
+            return (Vec::new(), Why::NoName);
+        }
+    }
     if let Some(q) = &inj.qualifier {
         if q.is_empty() && !v.is_empty() {
             return (v, Why::Unknown);
@@ -453,6 +481,7 @@ mod tests {
             wrapper: wrapper.into(),
             ty: "sym:a/I.java#I".into(),
             qualifier: qualifier.map(str::to_string),
+            resource: None,
             file: "a/C.java".into(),
             line: 3,
             uses: Vec::new(),
@@ -488,6 +517,22 @@ mod tests {
         // A qualifier whose value is not known narrows nothing, not even to the primary.
         let (v, why) = pick(&point("", "x", Some("")), &all);
         assert_eq!((v.len(), why), (3, Why::Unknown));
+        // `@Resource`: its name before the primary; only a default name falls back.
+        let asks = |name: &str, default| SpringInjection {
+            resource: Some(cartograph_core::ResourceName {
+                name: name.into(),
+                default,
+            }),
+            ..point("", "x", None)
+        };
+        let (v, why) = pick(&asks("c", true), &all);
+        assert_eq!((names(v), why), (vec!["c".to_string()], Why::Name));
+        let (v, why) = pick(&asks("x", true), &all);
+        assert_eq!((names(v), why), (vec!["wire".to_string()], Why::Primary));
+        let (v, why) = pick(&asks("x", false), &all);
+        assert_eq!((v.len(), why), (0, Why::NoName));
+        let (v, why) = pick(&asks("", false), &all);
+        assert_eq!((v.len(), why), (3, Why::UnknownName));
         // An alias, and a bean whose own name is not known.
         let mut d = bean("D", "", false);
         let (v, why) = pick(&point("", "x", Some("nope")), &[&a, &d]);

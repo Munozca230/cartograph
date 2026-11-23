@@ -172,9 +172,13 @@ pub struct RawInjection {
     /// The bean type as written.
     #[serde(rename = "t")]
     pub ty: String,
-    /// `@Qualifier("x")`, `@Named("x")`, `@Resource(name = "x")`.
+    /// `@Qualifier("x")`, `@Named("x")`.
     #[serde(rename = "q", default, skip_serializing_if = "Option::is_none")]
     pub qualifier: Option<StrExpr>,
+    /// `@Resource`: the bean name it asks for, and whether it is the default one (the
+    /// field's, the setter's property).
+    #[serde(rename = "r", default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<(StrExpr, bool)>,
     /// The fields that hold what is injected here, as `(name, line)`: the field itself, or
     /// those the parameter is assigned to.
     #[serde(rename = "f", default, skip_serializing_if = "Vec::is_empty")]
@@ -861,8 +865,9 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// ([`Code::entities`], [`Code::repos`], [`Code::sinks`]); 27: the declaration a Java
 /// receiver comes from ([`Call::recv_decl`]), bean names and qualifiers as expressions,
 /// fields an injected parameter is assigned to, raw generic injections, Spring Data
-/// repositories as beans, entities by the package of their annotation.
-pub const REVISION: u32 = 27;
+/// repositories as beans, entities by the package of their annotation; 28: the name a
+/// `@Resource` asks for, the bean names of nested classes and generated mappers.
+pub const REVISION: u32 = 28;
 
 /// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
 /// `orderService`; `URLMaker`, two capitals first, stays as it is).

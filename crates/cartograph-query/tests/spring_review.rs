@@ -614,3 +614,139 @@ fn a_spring_data_repository_is_a_bean_and_a_type_without_one_is_not() {
     assert!(!t.contains("the Remote bean"), "{t}");
     assert!(t.contains("no bean of the type in the repo"), "{t}");
 }
+
+// `@Resource` ------------------------------------------------------------------------
+
+#[test]
+fn a_resource_without_a_name_is_found_by_its_member_before_its_type() {
+    for pkg in ["javax", "jakarta"] {
+        let till = format!(
+            "@Service public class Till {{
+    @{pkg}.annotation.Resource private Gateway wire;
+    @{pkg}.annotation.Resource private Gateway other;
+    @{pkg}.annotation.Resource(name = \"wire\") private Gateway named;
+    private Gateway held;
+    @{pkg}.annotation.Resource public void setWire(Gateway any) {{ this.held = any; }}
+    @{pkg}.annotation.Resource private List<Gateway> card;
+    void byField() {{ wire.charge(); }}
+    void byType() {{ other.charge(); }}
+    void byName() {{ named.charge(); }}
+    void bySetter() {{ held.charge(); }}
+    void all() {{ card.forEach(g -> g.charge()); }}
+}}
+"
+        );
+        let r = gateways(&[("api/Till.java", &till)]);
+        let t = callers(&r, "Wire.charge");
+        for m in ["byField", "byName", "bySetter", "all"] {
+            let want = format!("Till.{m}() [resolved, via Gateway.charge (Spring bean)]");
+            assert!(t.contains(&want), "{pkg} {want}: {t}");
+        }
+        assert!(!t.contains("Till.byType()"), "{pkg}: {t}");
+        let t = callers(&r, "Card.charge");
+        for m in ["byType", "all"] {
+            assert!(t.contains(&format!("Till.{m}()")), "{pkg} {m}: {t}");
+        }
+        for m in ["byField", "byName", "bySetter"] {
+            assert!(!t.contains(&format!("Till.{m}()")), "{pkg} {m}: {t}");
+        }
+        let t = callers(&r, "Gateway.charge");
+        for want in [
+            "field wire, Gateway @Resource) api/Till.java:3: Wire (by name, of 2)",
+            "field other, Gateway @Resource) api/Till.java:4: Card (@Primary, of 2)",
+            "field named, Gateway @Resource(name = \"wire\")) api/Till.java:5: Wire (by name, of 2)",
+            "setter any, Gateway @Resource) api/Till.java:7: Wire (by name, of 2)",
+        ] {
+            assert!(t.contains(want), "{pkg} {want}: {t}");
+        }
+    }
+}
+
+#[test]
+fn a_resource_narrows_nothing_it_cannot_tell() {
+    // The name of a candidate is not known.
+    let r = gateways(&[
+        (
+            "api/Odd.java",
+            "@Service(Elsewhere.NAME) public class Odd implements Gateway { @Override public void charge() { } }",
+        ),
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    @jakarta.annotation.Resource private Gateway wire;
+    @jakarta.annotation.Resource(name = \"wire\") private Gateway named;
+    void byField() { wire.charge(); }
+    void byName() { named.charge(); }
+}
+",
+        ),
+    ]);
+    for sym in ["Card.charge", "Wire.charge", "Odd.charge"] {
+        let t = callers(&r, sym);
+        assert!(t.contains("Till.byField()"), "{sym}: {t}");
+        assert!(t.contains("Till.byName()"), "{sym}: {t}");
+    }
+    // A name written as an expression, or looked up elsewhere; a qualifier is no name.
+    let r = gateways(&[
+        (
+            "api/Slow.java",
+            "@Service @Qualifier(\"late\") public class Slow implements Gateway { @Override public void charge() { } }",
+        ),
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    @jakarta.annotation.Resource(name = Elsewhere.NAME) private Gateway wire;
+    @jakarta.annotation.Resource(lookup = \"java:/wire\") private Gateway slow;
+    @jakarta.annotation.Resource(name = \"late\") private Gateway late;
+    void expression() { wire.charge(); }
+    void lookup() { slow.charge(); }
+    void qualifier() { late.charge(); }
+}
+",
+        ),
+    ]);
+    for sym in ["Card.charge", "Wire.charge"] {
+        let t = callers(&r, sym);
+        for m in ["expression", "lookup", "qualifier"] {
+            assert!(t.contains(&format!("Till.{m}()")), "{sym} {m}: {t}");
+        }
+    }
+    let t = callers(&r, "Gateway.charge");
+    assert!(
+        t.contains("@Resource(name = \"late\")) api/Till.java:5: no bean of that name"),
+        "{t}"
+    );
+    assert!(
+        t.contains("@Resource(name = ?)) api/Till.java:3: named by what is not known, 3 fit"),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_nested_bean_and_a_generated_mapper_have_the_names_spring_gives_them() {
+    // `outer.Wire`, `gateMapperImpl`: no field is called like that.
+    let r = gateways(&[
+        (
+            "api/Outer.java",
+            "public class Outer { @Service static class Inner implements Gateway { @Override public void charge() { } } }",
+        ),
+        (
+            "api/GateMapper.java",
+            "@org.mapstruct.Mapper(componentModel = \"spring\") public interface GateMapper extends Gateway { }",
+        ),
+        (
+            "api/Till.java",
+            "@Service public class Till {
+    @jakarta.annotation.Resource private Gateway inner;
+    @jakarta.annotation.Resource private Gateway gateMapper;
+    void one() { inner.charge(); }
+    void two() { gateMapper.charge(); }
+}
+",
+        ),
+    ]);
+    let t = callers(&r, "Card.charge");
+    assert!(t.contains("Till.one()") && t.contains("Till.two()"), "{t}");
+    let t = callers(&r, "Gateway.charge");
+    assert_eq!(t.matches("Card (@Primary, of 4)").count(), 2, "{t}");
+}

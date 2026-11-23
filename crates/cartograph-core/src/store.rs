@@ -301,7 +301,8 @@ const MIGRATIONS: &[&str] = &[
         qualifier TEXT,
         file      TEXT NOT NULL,
         line      INTEGER NOT NULL,
-        uses      TEXT NOT NULL
+        uses      TEXT NOT NULL,
+        resource  TEXT
     );
     CREATE TABLE data_sinks (
         store      TEXT NOT NULL,
@@ -1526,8 +1527,8 @@ fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
     }
     let mut stmt = tx.prepare(
         "INSERT INTO spring_injections
-         (owner, how, member, wrapper, ty, qualifier, file, line, uses)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         (owner, how, member, wrapper, ty, qualifier, file, line, uses, resource)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )?;
     for i in &s.injections {
         stmt.execute(params![
@@ -1539,7 +1540,8 @@ fn insert_spring(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
             i.qualifier,
             i.file,
             i.line,
-            serde_json::to_string(&i.uses)?
+            serde_json::to_string(&i.uses)?,
+            i.resource.as_ref().map(serde_json::to_string).transpose()?
         ])?;
     }
     let mut stmt = tx.prepare(
@@ -1598,7 +1600,7 @@ fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
         });
     }
     let mut stmt = conn.prepare(
-        "SELECT owner, how, member, wrapper, ty, qualifier, file, line, uses
+        "SELECT owner, how, member, wrapper, ty, qualifier, file, line, uses, resource
          FROM spring_injections",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -1613,12 +1615,15 @@ fn read_spring(conn: &Connection, out: &mut Symbols) -> Result<()> {
                 file: r.get(6)?,
                 line: r.get(7)?,
                 uses: Vec::new(),
+                resource: None,
             },
             r.get::<_, String>(8)?,
+            r.get::<_, Option<String>>(9)?,
         ))
     })?;
     for row in rows {
-        let (mut i, uses) = row?;
+        let (mut i, uses, resource) = row?;
+        i.resource = resource.map(|r| serde_json::from_str(&r)).transpose()?;
         i.uses = serde_json::from_str(&uses)?;
         out.injections.push(i);
     }
@@ -2447,6 +2452,10 @@ mod tests {
                 wrapper: "List".into(),
                 ty: "sym:src/Payments.java#Payments".into(),
                 qualifier: None,
+                resource: Some(crate::ResourceName {
+                    name: "payments".into(),
+                    default: true,
+                }),
                 file: "src/Checkout.java".into(),
                 line: 9,
                 uses: vec![crate::InjectedUse {

@@ -13,7 +13,9 @@
 use super::bridge::{Consts, callables};
 use super::{Bindings, Ctx, Fam, Out, Sid, caller_of, resolve_type};
 use crate::symbols::{Call, Form};
-use cartograph_core::{Confidence, DataSink, InjectedUse, SpringBean, SpringInjection, symbol_id};
+use cartograph_core::{
+    Confidence, DataSink, InjectedUse, ResourceName, SpringBean, SpringInjection, symbol_id,
+};
 use std::collections::HashMap;
 
 /// A type named in file `fi`, when the file or its imports find it.
@@ -227,6 +229,10 @@ pub(super) fn run(
                 wrapper: i.wrapper.clone(),
                 ty: id(t),
                 qualifier: i.qualifier.as_ref().map(value),
+                resource: i.resource.as_ref().map(|(e, default)| ResourceName {
+                    name: value(e),
+                    default: *default,
+                }),
                 file: path.to_string(),
                 line: i.line,
                 uses,

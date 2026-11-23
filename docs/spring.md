@@ -15,10 +15,10 @@ and Spring Boot 3 (`jakarta.*`) code index the same way.
 | What | How it is written |
 |---|---|
 | Beans | a class annotated `@Component`, `@Service`, `@Repository`, `@Controller`, `@RestController` or `@Configuration`; the return type of a `@Bean` method |
-| Bean names | `@Service("orders")`, `@Bean(name = "orders")`, `@Bean({"orders", "alias"})`, literals or constants (`Names.ORDERS`); else the class name decapitalized (`OrderService` → `orderService`) or the `@Bean` method's name |
+| Bean names | `@Service("orders")`, `@Bean(name = "orders")`, `@Bean({"orders", "alias"})`, literals or constants (`Names.ORDERS`); else the class name decapitalized, with the classes around a nested one (`outer.Inner`) and `Impl` for a MapStruct mapper (`OrderService` → `orderService`) or the `@Bean` method's name |
 | `@Primary`, `@Qualifier("x")` | on the bean class or the `@Bean` method |
 | Injection points | fields with `@Autowired`, `@Inject` (`javax.inject` / `jakarta.inject`) or `@Resource` (`javax.annotation` / `jakarta.annotation`); the parameters of the constructor Spring calls: the one marked `@Autowired` or `@Inject`, else the only constructor of a bean class (the default since Spring 4.3), else the fields a Lombok `@RequiredArgsConstructor` (final fields without a value) or `@AllArgsConstructor` writes the constructor for; the parameters of `@Autowired` setters and methods and of `@Bean` methods |
-| What an injection point receives | `T`, `List<T>`, `Set<T>`, `Queue<T>`, `Deque<T>`, `Collection<T>`, `Iterable<T>` and their usual implementations, `Map<String, T>` (and `ConcurrentMap`…), `T[]`, `Optional<T>`, `ObjectProvider<T>`, `Provider<T>`; `@Qualifier("x")`, `@Named("x")`, `@Resource(name = "x")` |
+| What an injection point receives | `T`, `List<T>`, `Set<T>`, `Queue<T>`, `Deque<T>`, `Collection<T>`, `Iterable<T>` and their usual implementations, `Map<String, T>` (and `ConcurrentMap`…), `T[]`, `Optional<T>`, `ObjectProvider<T>`, `Provider<T>`; `@Qualifier("x")`, `@Named("x")`, `@Resource`, `@Resource(name = "x")` |
 | Data | `@Document(collection = "x")` / `@Document("x")` (Mongo; without a name, the class name decapitalized), `@Entity` / `@Table(name = "x")` (JPA), Spring Data's own `@Table("x")` (JDBC, Cassandra; a table without a name takes the class name in snake case, in lower case for Cassandra); Spring Data repositories (`extends MongoRepository<E, Id>`, `JpaRepository`, `CrudRepository`…) and any call on one, whose interface is a bean; `getCollection(NAME[, E.class])` with a literal or a constant, in a file that imports the Mongo driver or Spring Data Mongo, `mongoTemplate.find(q, E.class)` and the other `MongoTemplate` / `MongoOperations` calls that name an entity class or a collection, `entityManager.find(E.class, id)` |
 
 `@PostConstruct` (`javax.annotation` or `jakarta.annotation`) injects nothing: such a method
@@ -28,7 +28,12 @@ Which beans an injection point receives follows Spring's rules: every bean of th
 (its own beans and those of its subtypes, through `extends` and `implements`) for a list,
 a set, a collection, a map or an array; for one bean, those a qualifier names, else the
 only one, else the `@Primary` one, else the one named like the field or parameter; with
-none of these, the point is reported as ambiguous. A qualifier written as an expression
+none of these, the point is reported as ambiguous. A `@Resource` goes by name first:
+`@Resource(name = "x")` takes the bean of that name (or alias) and no other;
+without a name it takes the bean named like the field or the setter's property
+(`setWire` → `wire`), and only when none of the type is called so does it go by type
+(`@Primary` included). When its name (an expression, a `lookup`), or the name of a bean
+that fits, is not known, it narrows nothing. A qualifier written as an expression
 whose value is not known narrows nothing (`qualified by a name not known`). An
 `ObjectProvider` gives one bean, or all of them where it is streamed or looped over.
 
