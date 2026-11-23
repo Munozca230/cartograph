@@ -81,13 +81,13 @@ export function findingsOnPlan(plan: Plan, findings: readonly Finding[]): Findin
 
 const fmt = (n: number | undefined) => (n ?? 0).toLocaleString("es");
 
-/** What the plan says about a finding, in Spanish (the server's title is English). */
 /** The route of an HTTP finding's id (`http_unmatched_call:web:POST /api/x` → `POST /api/x`). */
 function httpRoute(id: string): string {
   const m = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|ANY) \S.*$/.exec(id);
   return m ? m[0] : id.slice(id.indexOf(":") + 1);
 }
 
+/** What the plan says about a finding, in Spanish (the server's title is English). */
 export function findingLabel(f: Finding): string {
   const m = f.metrics;
   const rule = f.violation ? "Regla rota: " : "";
