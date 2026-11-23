@@ -440,6 +440,11 @@ impl Resolver {
         }
     }
 
+    /// The package `file` declares (`""` for the default package).
+    pub fn package(&self, file: &str) -> Option<&str> {
+        self.package_of.get(file).map(String::as_str)
+    }
+
     /// Resolve one import. Returns `(specifier, outcome)` per target.
     pub fn resolve(
         &self,

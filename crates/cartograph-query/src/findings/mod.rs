@@ -14,6 +14,7 @@ mod layers;
 mod metrics;
 mod orphans;
 
+pub(crate) use cycles::WITHIN_PACKAGE;
 pub use kind::{FindingKind, Severity};
 
 use crate::config::Config;

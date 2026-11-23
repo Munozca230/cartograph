@@ -23,6 +23,26 @@ fn in_scope(cx: &Ctx<'_>, files: &[FileIx]) -> bool {
     }
 }
 
+/// Metric of a file cycle that stays inside one Java package (see [`within_package`]):
+/// `info`, never a violation, and never the base of a new violation in `diff`.
+pub(crate) const WITHIN_PACKAGE: &str = "within_package";
+
+/// The package of component `c` when every dependency between its files is a Java
+/// reference to a type of the same package ([`crate::graph::Dep::implicit`]).
+fn within_package(cx: &Ctx<'_>, comp: &[FileIx], comp_of: &[u32], c: u32) -> Option<String> {
+    let g = cx.g;
+    let all_implicit = comp.iter().all(|&u| {
+        cx.rt_adj[u as usize]
+            .iter()
+            .filter(|&&d| comp_of[d as usize] == c)
+            .all(|&d| g.dep(u, d).is_some_and(|x| x.implicit))
+    });
+    if !all_implicit {
+        return None;
+    }
+    g.files[comp[0] as usize].package.clone()
+}
+
 pub(super) fn file_cycles(cx: &Ctx<'_>) -> Vec<Finding> {
     let g = cx.g;
     let comps = tarjan(&cx.rt_adj);
@@ -45,23 +65,46 @@ pub(super) fn file_cycles(cx: &Ctx<'_>) -> Vec<Finding> {
             .iter()
             .map(|&f| g.files[f as usize].name.as_str())
             .collect();
-        let title = if comp.len() == 2 {
-            format!(
+        // Every dependency inside the component is a Java reference to a type of the same
+        // package (no import): the cycle stays inside the package, the unit of design.
+        let package = within_package(cx, comp, &comp_of, c as u32);
+        let title = match &package {
+            Some(p) if comp.len() == 2 => format!(
+                "{} and {} reference each other within package {p}",
+                g.path(comp[0]),
+                g.path(comp[1])
+            ),
+            Some(p) if cyc.len() == comp.len() => format!(
+                "cycle of {} files within package {p}: {}",
+                comp.len(),
+                names.join(" → ")
+            ),
+            Some(p) => format!(
+                "{} files tangled in a cycle within package {p} (shortest loop: {})",
+                comp.len(),
+                names.join(" → ")
+            ),
+            None if comp.len() == 2 => format!(
                 "{} and {} import each other",
                 g.path(comp[0]),
                 g.path(comp[1])
-            )
-        } else if cyc.len() == comp.len() {
-            format!("cycle of {} files: {}", comp.len(), names.join(" → "))
-        } else {
-            format!(
+            ),
+            None if cyc.len() == comp.len() => {
+                format!("cycle of {} files: {}", comp.len(), names.join(" → "))
+            }
+            None => format!(
                 "{} files tangled in a cycle (shortest loop: {})",
                 comp.len(),
                 names.join(" → ")
-            )
+            ),
         };
         let key = g.id(NodeRef::File(comp[0]));
-        let mut f = Finding::new(FindingKind::Cycle, Severity::Warning, &key, title);
+        let severity = if package.is_some() {
+            Severity::Info
+        } else {
+            Severity::Warning
+        };
+        let mut f = Finding::new(FindingKind::Cycle, severity, &key, title);
         let mut via_dir = 0;
         for i in 0..cyc.len() {
             let (a, b) = (cyc[i], cyc[(i + 1) % cyc.len()]);
@@ -82,7 +125,9 @@ pub(super) fn file_cycles(cx: &Ctx<'_>) -> Vec<Finding> {
         if via_dir > 0 {
             f.metric("via_dir_edges", via_dir as f64);
         }
-        if in_scope(cx, &cyc) {
+        if package.is_some() {
+            f.metric(WITHIN_PACKAGE, 1.0);
+        } else if in_scope(cx, &cyc) {
             f.violation = true;
             f.severity = Severity::Error;
         }

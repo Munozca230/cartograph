@@ -27,6 +27,11 @@ pub const ROOT: DirIx = 0;
 /// indexer, `cartograph_index::resolve::TYPE_ONLY_META`).
 pub const TYPE_ONLY_META: &str = "type_only_imports";
 
+/// Key of a File node's meta listing the files of its own Java package it names without an
+/// import, with that package (written by the indexer,
+/// `cartograph_index::resolve::SAME_PACKAGE_META`).
+pub const SAME_PACKAGE_META: &str = "same_package_uses";
+
 /// Bits of [`Dep::kinds`].
 pub mod dep_kind {
     pub const IMPORT: u8 = 1;
@@ -48,6 +53,8 @@ pub struct FileNode {
     pub entry: Option<&'static str>,
     /// Unresolved imports of this file.
     pub unresolved: u32,
+    /// Java: the package of a file that names types of its own package without an import.
+    pub package: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +98,10 @@ pub struct Dep {
     /// so not a load-time dependency. Findings about runtime structure (cycles, Stable
     /// Dependencies, hubs, god modules) leave it out; `deps`, `impact` and `path` keep it.
     pub type_only: bool,
+    /// Every contributing edge was a Java reference to a type of the same package, which
+    /// needs no import: the package is one unit, a cycle made only of these stays inside
+    /// it (see [`SAME_PACKAGE_META`]).
+    pub implicit: bool,
 }
 
 /// What an import site resolved to.
@@ -317,6 +328,9 @@ impl RepoGraph {
                 kind,
                 entry,
                 unresolved: 0,
+                package: n.meta[SAME_PACKAGE_META]["package"]
+                    .as_str()
+                    .map(str::to_string),
             });
             file_ix.insert(n.path.clone(), i as FileIx);
             // Totals up the chain.
@@ -374,6 +388,20 @@ impl RepoGraph {
             }
         }
 
+        // Same-package edges the indexer marked, as (source file, target id).
+        let mut implicit: BTreeSet<(FileIx, &str)> = BTreeSet::new();
+        for (i, n) in file_nodes.iter().enumerate() {
+            for t in n.meta[SAME_PACKAGE_META]["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                if let Some(t) = t.as_str() {
+                    implicit.insert((i as FileIx, t));
+                }
+            }
+        }
+
         // Dependencies.
         let mut pairs: BTreeMap<(FileIx, FileIx), Dep> = BTreeMap::new();
         let mut ext_pairs: BTreeSet<(FileIx, ExtIx)> = BTreeSet::new();
@@ -393,6 +421,7 @@ impl RepoGraph {
             };
             let heuristic = e.confidence == Confidence::Heuristic;
             let typed = e.kind == EdgeKind::Import && type_only.contains(&(src, e.dst.as_str()));
+            let same_pkg = e.kind == EdgeKind::Uses && implicit.contains(&(src, e.dst.as_str()));
             let mut add = |dst: FileIx, via_dir: bool| {
                 if dst == src {
                     return;
@@ -403,11 +432,13 @@ impl RepoGraph {
                     via_dir: true,
                     heuristic: true,
                     type_only: true,
+                    implicit: true,
                 });
                 d.kinds |= bit;
                 d.via_dir &= via_dir;
                 d.heuristic &= heuristic;
                 d.type_only &= typed;
+                d.implicit &= same_pkg;
             };
             if let Some(dst) = lookup_file(&e.dst) {
                 add(dst, false);

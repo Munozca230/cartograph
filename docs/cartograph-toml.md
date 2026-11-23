@@ -53,7 +53,7 @@ Las dependencias dentro de una misma capa siempre están permitidas. Una capa no
 
 ## `[rules]`
 - `max_fan_out` (entero ≥ 1): un archivo que depende de más archivos distintos es un hallazgo `fan_out_limit`.
-- `no_cycles`: `true` (todo ciclo es una violación), `false` o `[]` (ninguno), o una lista de rutas: un ciclo es una violación cuando algún archivo de su ciclo más corto cae en esas rutas.
+- `no_cycles`: `true` (todo ciclo es una violación), `false` o `[]` (ninguno), o una lista de rutas: un ciclo es una violación cuando algún archivo de su ciclo más corto cae en esas rutas. Un ciclo entre archivos Java de un mismo paquete que solo se nombran sin import queda dentro del paquete, la unidad de diseño (como en ArchUnit): es informativo y nunca una violación, tampoco en `check --base`; basta un import entre paquetes para que vuelva a contar.
 
 ## `[thresholds]`
 Los hallazgos que miden el repo contra sí mismo usan la valla de Tukey sobre la distribución del propio repo (Q3 + `fence` × rango intercuartílico) más un piso pequeño. Todos son opcionales:

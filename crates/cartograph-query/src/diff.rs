@@ -21,7 +21,7 @@
 use crate::Repo;
 use crate::algo::Adj;
 use crate::budget::{Answer, clip, fit, limits};
-use crate::findings::{Finding, FindingKind, rule_deps};
+use crate::findings::{Finding, FindingKind, WITHIN_PACKAGE, rule_deps};
 use crate::graph::{FileIx, ROOT, RepoGraph};
 use crate::list::{Brief, render_brief};
 use serde::Serialize;
@@ -67,22 +67,39 @@ pub fn compare<'a>(base: &'a Repo, head: &'a Repo) -> Compared<'a> {
     let base_adj = rule_deps(&base.graph, &base.config);
     let head_adj = rule_deps(&head.graph, &head.config);
     let base_deps = dep_set(&base.graph, &base_adj);
-    let ids =
-        |fs: &'a [Finding]| -> HashSet<&'a str> { fs.iter().map(|f| f.id.as_str()).collect() };
+    // Findings of each side by id, and the nodes of their cycles by kind: a cycle matches
+    // one of the other side that shares a node. A cycle inside one Java package (info,
+    // never a violation) does not stand for a cycle violation: once it crosses packages
+    // (an import joins it), it is new. The flag says whether a finding is such a cycle.
+    let inside = |f: &Finding| f.metrics.contains_key(WITHIN_PACKAGE);
+    let ids = |fs: &'a [Finding]| -> HashSet<(&'a str, bool)> {
+        fs.iter().map(|f| (f.id.as_str(), inside(f))).collect()
+    };
     let (base_ids, head_ids) = (ids(bf), ids(hf));
-    // Cycle nodes of each side, by kind: a cycle matches one of the other side that shares
-    // a node.
-    let cycle_nodes = |fs: &'a [Finding]| -> HashSet<(FindingKind, &'a str)> {
+    let cycle_nodes = |fs: &'a [Finding]| -> HashSet<(FindingKind, &'a str, bool)> {
         fs.iter()
             .filter(|f| is_cycle(f.kind))
-            .flat_map(|f| f.nodes.iter().map(move |n| (f.kind, n.as_str())))
+            .flat_map(|f| f.nodes.iter().map(move |n| (f.kind, n.as_str(), inside(f))))
             .collect()
     };
     let (base_cyc, head_cyc) = (cycle_nodes(bf), cycle_nodes(hf));
-    let matched = |f: &Finding, ids: &HashSet<&str>, cyc: &HashSet<(FindingKind, &str)>| {
-        ids.contains(f.id.as_str())
-            || (is_cycle(f.kind) && f.nodes.iter().any(|n| cyc.contains(&(f.kind, n.as_str()))))
-    };
+    let matched =
+        |f: &Finding, ids: &HashSet<(&str, bool)>, cyc: &HashSet<(FindingKind, &str, bool)>| {
+            // A violation is matched by a finding of the other side that is not a
+            // same-package cycle; anything else by any finding.
+            let flags: &[bool] = if f.violation {
+                &[false]
+            } else {
+                &[false, true]
+            };
+            flags.iter().any(|&fl| {
+                ids.contains(&(f.id.as_str(), fl))
+                    || (is_cycle(f.kind)
+                        && f.nodes
+                            .iter()
+                            .any(|n| cyc.contains(&(f.kind, n.as_str(), fl))))
+            })
+        };
     let head_out = hf
         .iter()
         .map(|f| {

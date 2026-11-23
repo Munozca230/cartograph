@@ -347,13 +347,24 @@ pub fn resolve_all(
     let mut externals: BTreeMap<String, Node> = BTreeMap::new();
     for (f, (outcomes, types, uses)) in files.iter().zip(per_file) {
         let src = node_id(NodeKind::File, f.path);
-        // A type of the file's own package: no import, still a dependency.
-        for u in uses {
-            res.edges.push(Edge::new(
-                src.clone(),
-                node_id(NodeKind::File, &u),
-                EdgeKind::Uses,
-                Confidence::Resolved,
+        // A type of the file's own package: no import, still a dependency. Marked on the
+        // file ([`SAME_PACKAGE_META`]) with its package.
+        if !uses.is_empty() {
+            let dsts: Vec<String> = uses.iter().map(|u| node_id(NodeKind::File, u)).collect();
+            for d in &dsts {
+                res.edges.push(Edge::new(
+                    src.clone(),
+                    d.clone(),
+                    EdgeKind::Uses,
+                    Confidence::Resolved,
+                ));
+            }
+            res.file_meta.push((
+                f.path.to_string(),
+                serde_json::json!({ SAME_PACKAGE_META: {
+                    "package": java.package(f.path).unwrap_or_default(),
+                    "files": dsts,
+                }}),
             ));
         }
         // Repo targets of this file → whether every import of it so far is type-only.
@@ -466,6 +477,11 @@ fn go_test_edges(ix: &Index<'_>) -> Vec<Edge> {
 /// imports only for types (TypeScript `import type`, `import("…")` in a type…). The `Import`
 /// edge is there as for any import; this marks it type-only without a schema change.
 pub const TYPE_ONLY_META: &str = "type_only_imports";
+
+/// Key of a File node's `meta` for the `uses` edges to types of its own Java package that
+/// it names without an import: `{"package": "a.b", "files": ["file:…"]}`. Findings treat a
+/// cycle made only of them as one inside a package (the package is the unit).
+pub const SAME_PACKAGE_META: &str = "same_package_uses";
 
 /// External node for `ecosystem:name` (`npm:react`, `node:fs`, `pypi:numpy`, `python:os`).
 fn external_node(ext: &str) -> Node {

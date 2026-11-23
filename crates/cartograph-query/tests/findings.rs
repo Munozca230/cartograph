@@ -2,7 +2,7 @@
 
 mod common;
 
-use cartograph_query::{Config, Finding, FindingKind, Repo, Severity, impact, path};
+use cartograph_query::{Config, Finding, FindingKind, Repo, Severity, check, impact, path};
 use common::{fixture, index_dir};
 use std::fs;
 use std::path::Path;
@@ -461,4 +461,98 @@ fn evidence_edges_beyond_the_cap_are_counted() {
     assert!(f.edges_more > 0);
     let json = serde_json::to_value(f).unwrap();
     assert_eq!(json["edges_more"], f.edges_more);
+}
+
+/// The file cycle holding `path`.
+fn cycle_of<'a>(r: &'a Repo, path: &str) -> &'a Finding {
+    let id = format!("file:{path}");
+    r.findings()
+        .iter()
+        .find(|f| f.kind == FindingKind::Cycle && f.nodes.contains(&id))
+        .unwrap_or_else(|| panic!("no cycle through {path}: {:?}", r.findings()))
+}
+
+/// `tests/fixtures/<name>` copied to a temp dir, `edit` applied, indexed with its config.
+fn edited(name: &str, edit: impl FnOnce(&Path)) -> (tempfile::TempDir, Repo) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join(name);
+    common::copy_dir(
+        &common::repo_root().join("tests/fixtures").join(name),
+        &root,
+    );
+    edit(&root);
+    let g = index_dir(&root);
+    let config = Config::load(&root).unwrap();
+    (tmp, Repo::new(&g, config))
+}
+
+#[test]
+fn a_java_cycle_inside_one_package_is_info_never_a_violation() {
+    let r = fixture("java-cycles");
+    let rules = "src/main/java/com/acme/rules";
+    // `no_cycles = true`: the annotation and its validator name each other without an
+    // import, inside package com.acme.rules (the unit of design).
+    let inside = cycle_of(&r, &format!("{rules}/ValidName.java"));
+    assert_eq!(inside.severity, Severity::Info, "{inside:?}");
+    assert!(!inside.violation);
+    assert!(
+        inside
+            .title
+            .contains("reference each other within package com.acme.rules"),
+        "{}",
+        inside.title
+    );
+    // Two packages importing each other: still a violation (a file and a folder cycle).
+    let across = cycle_of(&r, "src/main/java/com/acme/left/Left.java");
+    assert!(
+        across.violation && across.severity == Severity::Error,
+        "{across:?}"
+    );
+    let c = check::check(&r).data;
+    assert!(!c.violations.is_empty());
+    for v in &c.violations {
+        assert!(!v.nodes.iter().any(|n| n.contains("/rules")), "{v:?}");
+    }
+
+    // check --base: a new same-package cycle does not fail the check, a new cross-package
+    // one does.
+    let (_b, base) = edited("java-cycles", |root| {
+        let p = root.join("src/main/java/com/acme");
+        fs::write(
+            p.join("rules/ValidNameValidator.java"),
+            "package com.acme.rules;\n\npublic class ValidNameValidator {}\n",
+        )
+        .unwrap();
+        fs::write(
+            p.join("right/Right.java"),
+            "package com.acme.right;\n\npublic class Right {}\n",
+        )
+        .unwrap();
+    });
+    let c = check::check_base(&r, &base, "base").data;
+    assert!(!c.violations.is_empty());
+    for v in &c.violations {
+        assert!(!v.nodes.iter().any(|n| n.contains("/rules")), "{v:?}");
+    }
+    // A same-package cycle of the base does not stand for a cycle violation of the head:
+    // an explicit import of the class turns it into one.
+    let (_h, head) = edited("java-cycles", |root| {
+        fs::write(
+            root.join(format!("{rules}/ValidNameValidator.java")),
+            "package com.acme.rules;\n\nimport com.acme.rules.ValidName;\n\
+             import jakarta.validation.ConstraintValidator;\n\n\
+             public class ValidNameValidator implements ConstraintValidator<ValidName, String> {}\n",
+        )
+        .unwrap();
+    });
+    let now = cycle_of(&head, &format!("{rules}/ValidName.java"));
+    assert!(now.violation, "{now:?}");
+    let c = check::check_base(&head, &r, "base").data;
+    assert!(
+        c.violations
+            .iter()
+            .any(|v| v.nodes.iter().any(|n| n.contains("/rules/"))),
+        "{:?}",
+        c.violations
+    );
 }
