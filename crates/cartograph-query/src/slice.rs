@@ -197,7 +197,9 @@ impl<'t> Graph<'t> {
     fn landing(&self, b: &Bridge) -> Option<Node> {
         let d = b.dst.as_deref()?;
         let sym = self.t.symbol(d)?;
-        if sym.line == b.dst_line {
+        // A handler passed by reference is registered elsewhere: the whole function.
+        let inline = b.dst_file == sym.file && sym.line < b.dst_line && b.dst_line <= sym.end_line;
+        if !inline {
             return Some(Node::whole(d));
         }
         let next = self
@@ -336,21 +338,70 @@ fn hops_to(
     hops
 }
 
-/// Words of a method that writes.
+/// First words of a call or method that writes.
 const WRITES: &[&str] = &[
-    "insert", "save", "update", "upsert", "replace", "persist", "put", "create", "add", "delete",
-    "remove", "write", "store", "merge",
+    "insert",
+    "save",
+    "update",
+    "upsert",
+    "replace",
+    "persist",
+    "put",
+    "create",
+    "add",
+    "delete",
+    "remove",
+    "write",
+    "store",
+    "merge",
+    "bulk",
+    "findAndModify",
+    "findAndReplace",
+    "findAndRemove",
+    "findOneAnd",
+];
+/// First words of a call that reads.
+const READS: &[&str] = &[
+    "find",
+    "get",
+    "read",
+    "query",
+    "search",
+    "count",
+    "exists",
+    "aggregate",
+    "stream",
+    "list",
+    "load",
+    "fetch",
 ];
 
-fn writes(name: &str) -> bool {
-    let n = name.to_ascii_lowercase();
-    WRITES
-        .iter()
-        .any(|w| n.starts_with(w) || n.contains(&format!("_{w}")))
+/// `name` starts with one of `words`, as a word (`saveAll`, not `savedBy`).
+fn starts(name: &str, words: &[&str]) -> bool {
+    words.iter().any(|w| {
+        name.strip_prefix(w)
+            .is_some_and(|rest| !rest.starts_with(|c: char| c.is_lowercase()))
+    })
 }
 
-/// A data sink the walk found: `((rank, depth, order), method, sink, writes)`.
-type Found<'t> = ((u8, usize, usize), Node, &'t DataSink, bool);
+/// Whether a sink's call writes: the call itself says it (`save`, `findAndModify`,
+/// `findById`); one that only opens the collection (`getCollection`) is what the method
+/// around it is.
+fn writes(d: &DataSink, method: &str) -> bool {
+    let op = d.via.rsplit('.').next().unwrap_or(&d.via);
+    if op != "getCollection" {
+        if starts(op, WRITES) {
+            return true;
+        }
+        if starts(op, READS) {
+            return false;
+        }
+    }
+    starts(method, WRITES)
+}
+
+/// A data sink the walk found: `((rank, depth, method's turn, line), method, sink, writes)`.
+type Found<'t> = ((u8, usize, usize, u32), Node, &'t DataSink, bool);
 
 /// From a handler: the nearest data sink (writes first unless `read`), and the other
 /// collections reached.
@@ -374,9 +425,9 @@ fn to_data(g: &Graph<'_>, start: &Node, read: bool) -> (Vec<Hop>, Option<SinkRow
             let name = split_symbol_id(&n.id)
                 .map(|(_, q)| q.rsplit('.').next().unwrap_or(q))
                 .unwrap_or("");
-            let w = writes(name) || writes(d.via.rsplit('.').next().unwrap_or(""));
+            let w = writes(d, name);
             let rank = u8::from(w == read);
-            found.push(((rank, depth, found.len()), n.clone(), d, w));
+            found.push(((rank, depth, visits, d.line), n.clone(), d, w));
         }
         if depth >= SINK_DEPTH {
             continue;
