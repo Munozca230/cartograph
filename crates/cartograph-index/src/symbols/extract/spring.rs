@@ -120,6 +120,8 @@ const ORIGINS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Entity", &["javax.persistence.", "jakarta.persistence."]),
+    ("Mapper", &["org.mapstruct."]),
+    ("ConfigurationProperties", &["org.springframework.boot."]),
     ("RequiredArgsConstructor", &["lombok."]),
     ("AllArgsConstructor", &["lombok."]),
     ("MongoRepository", &["org.springframework.data."]),
@@ -379,9 +381,38 @@ fn classes(root: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
         stack.extend(n.named_children(&mut c));
         match n.kind() {
             "class_declaration" | "record_declaration" => class(n, src, imp, out),
-            "interface_declaration" => repo(n, src, imp, out),
+            "interface_declaration" => {
+                repo(n, src, imp, out);
+                if let Some(name) = n.child_by_field_name("name").map(|x| text(x, src)) {
+                    generated_bean(n, &name, &annotations(n, src, imp), src, out);
+                }
+            }
             _ => {}
         }
+    }
+}
+
+/// A bean whose class a tool writes or Spring Boot registers from the type: a MapStruct
+/// mapper of the `spring` component model (its generated implementation is the bean), a
+/// `@ConfigurationProperties` class.
+fn generated_bean(n: Node<'_>, name: &str, annots: &[Annot<'_>], src: &[u8], out: &mut Spring) {
+    let made = annots.iter().find(|a| match a.name.as_str() {
+        "Mapper" => a
+            .arg(&["componentModel"])
+            .is_some_and(|v| text(v, src).to_ascii_lowercase().contains("spring")),
+        "ConfigurationProperties" => true,
+        _ => false,
+    });
+    if let Some(a) = made {
+        out.beans.push(RawBean {
+            line: line(n),
+            ty: name.to_string(),
+            stereotype: a.name.clone(),
+            name: crate::symbols::decapitalize(name),
+            factory: None,
+            primary: annots.iter().any(|a| a.name == "Primary"),
+            qualifiers: Vec::new(),
+        });
     }
 }
 
@@ -428,6 +459,9 @@ fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
     let stereotype = annots
         .iter()
         .find(|a| STEREOTYPES.contains(&a.name.as_str()));
+    if stereotype.is_none() {
+        generated_bean(n, &name, &annots, src, out);
+    }
     if let Some(st) = stereotype {
         out.beans.push(RawBean {
             line: line(n),
@@ -846,6 +880,32 @@ class WithLombok {
                 "Single constructor set Set<Payments>",
                 "WithLombok constructor payments Collection<Payments>",
                 "WithLombok constructor ledger <Ledger>",
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_beans_mapstruct_and_configuration_properties() {
+        let c = code(
+            r#"import org.mapstruct.Mapper; import org.springframework.boot.context.properties.ConfigurationProperties;
+@Mapper(componentModel = "spring")
+public interface OrderMapper {}
+@Mapper
+interface PlainMapper {}
+@ConfigurationProperties(prefix = "shop")
+class ShopProperties {}
+"#,
+        );
+        let beans: Vec<String> = c
+            .beans
+            .iter()
+            .map(|b| format!("{} {} {}", b.stereotype, b.ty, b.name))
+            .collect();
+        assert_eq!(
+            beans,
+            [
+                "Mapper OrderMapper orderMapper",
+                "ConfigurationProperties ShopProperties shopProperties"
             ]
         );
     }
