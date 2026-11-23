@@ -564,6 +564,9 @@ pub struct Symbols {
     /// The bridges matched.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bridges: Vec<crate::bridge::Bridge>,
+    /// Where string keys are defined, run, listed and used (see [`crate::key`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<crate::key::KeySite>,
 }
 
 impl Symbols {
@@ -591,6 +594,8 @@ impl Symbols {
         self.endpoints.dedup();
         self.bridges.sort();
         self.bridges.dedup();
+        self.keys.sort();
+        self.keys.dedup();
     }
 }
 

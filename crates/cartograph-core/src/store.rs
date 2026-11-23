@@ -260,6 +260,24 @@ const MIGRATIONS: &[&str] = &[
         confidence TEXT NOT NULL
     );
     "#,
+    // v13: string keys (see `crate::key`): where each is defined, run, listed and used.
+    // They belong to the symbol layer and are cleared with it. Self-contained.
+    r#"
+    CREATE TABLE key_sites (
+        key            TEXT NOT NULL,
+        role           TEXT NOT NULL,
+        form           TEXT NOT NULL,
+        name           TEXT,
+        container      TEXT NOT NULL,
+        container_file TEXT NOT NULL,
+        container_line INTEGER NOT NULL,
+        file           TEXT NOT NULL,
+        line           INTEGER NOT NULL,
+        symbol         TEXT,
+        target         TEXT,
+        confidence     TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// One row of the SCIP cache: the decoded form (`data`, opaque to the store) of the SCIP
@@ -1106,6 +1124,9 @@ fn clear_symbols(conn: &Connection) -> Result<()> {
     if has_table(conn, "bridges")? {
         conn.execute_batch("DELETE FROM bridge_endpoints; DELETE FROM bridges;")?;
     }
+    if has_table(conn, "key_sites")? {
+        conn.execute("DELETE FROM key_sites", [])?;
+    }
     Ok(())
 }
 
@@ -1222,6 +1243,30 @@ fn insert_symbols(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
                 e.symbol,
                 e.confidence.as_str(),
                 e.detail
+            ])?;
+        }
+    }
+    if !s.keys.is_empty() && has_table(tx, "key_sites")? {
+        let mut stmt = tx.prepare(
+            "INSERT INTO key_sites
+             (key, role, form, name, container, container_file, container_line, file, line,
+              symbol, target, confidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )?;
+        for k in &s.keys {
+            stmt.execute(params![
+                k.key,
+                k.role.as_str(),
+                k.form,
+                k.name,
+                k.container,
+                k.container_file,
+                k.container_line,
+                k.file,
+                k.line,
+                k.symbol,
+                k.target,
+                k.confidence.as_str()
             ])?;
         }
     }
@@ -1391,8 +1436,63 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
     if has_table(conn, "bridges")? {
         read_bridges(conn, &mut out)?;
     }
+    if has_table(conn, "key_sites")? {
+        read_keys(conn, &mut out)?;
+    }
     out.normalize();
     Ok(out)
+}
+
+fn read_keys(conn: &Connection, out: &mut Symbols) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT key, role, form, name, container, container_file, container_line, file, line,
+                symbol, target, confidence
+         FROM key_sites",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            (
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ),
+            (
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, u32>(6)?,
+            ),
+            (
+                r.get::<_, String>(7)?,
+                r.get::<_, u32>(8)?,
+                r.get::<_, Option<String>>(9)?,
+                r.get::<_, Option<String>>(10)?,
+                r.get::<_, String>(11)?,
+            ),
+        ))
+    })?;
+    for row in rows {
+        let (
+            (key, role, form, name),
+            (container, container_file, container_line),
+            (file, line, symbol, target, confidence),
+        ) = row?;
+        out.keys.push(crate::key::KeySite {
+            key,
+            role: role.parse()?,
+            form,
+            name,
+            container,
+            container_file,
+            container_line,
+            file,
+            line,
+            symbol,
+            target,
+            confidence: confidence.parse()?,
+        });
+    }
+    Ok(())
 }
 
 fn read_bridges(conn: &Connection, out: &mut Symbols) -> Result<()> {
@@ -2036,9 +2136,74 @@ mod tests {
             scip: Default::default(),
             endpoints: Vec::new(),
             bridges: Vec::new(),
+            keys: Vec::new(),
         };
         s.normalize();
         s
+    }
+
+    /// [`sample_symbols`] with key sites (schema v13).
+    fn sample_keyed() -> Symbols {
+        let mut s = Symbols {
+            keys: vec![
+                crate::KeySite {
+                    key: "READ-FILE".into(),
+                    role: crate::KeyRole::Define,
+                    form: "enum".into(),
+                    name: Some("Action.READ_FILE".into()),
+                    container: "Action".into(),
+                    container_file: "src/Action.java".into(),
+                    container_line: 3,
+                    file: "src/Action.java".into(),
+                    line: 4,
+                    symbol: None,
+                    target: None,
+                    confidence: Confidence::Exact,
+                },
+                crate::KeySite {
+                    key: "READ-FILE".into(),
+                    role: crate::KeyRole::Provide,
+                    form: "case".into(),
+                    name: None,
+                    container: "switch in Runner.run".into(),
+                    container_file: "src/Runner.java".into(),
+                    container_line: 7,
+                    file: "src/Runner.java".into(),
+                    line: 8,
+                    symbol: Some("sym:src/Runner.java#Runner.run".into()),
+                    target: Some("sym:src/Files.java#Files.read".into()),
+                    confidence: Confidence::Resolved,
+                },
+            ],
+            ..sample_symbols()
+        };
+        s.normalize();
+        s
+    }
+
+    #[test]
+    fn migrates_a_v12_db_to_v13_with_no_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let mut store = Store { conn };
+            store.migrate_to(12).unwrap();
+            let tx = store.begin_replace().unwrap();
+            tx.write_graph(&sample()).unwrap();
+            tx.write_symbols(&sample_keyed()).unwrap();
+            tx.commit().unwrap();
+            // Written before the table existed: no keys kept.
+            assert_eq!(store.load_symbols().unwrap(), sample_symbols());
+        }
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        let tx = store.begin_replace().unwrap();
+        tx.write_symbols(&sample_keyed()).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(store.load_symbols().unwrap(), sample_keyed());
+        store.replace_graph(&other()).unwrap();
+        assert_eq!(store.load_symbols().unwrap(), Symbols::default());
     }
 
     /// [`sample_symbols`] with bridges (schema v12).
