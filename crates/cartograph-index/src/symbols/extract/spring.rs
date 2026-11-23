@@ -89,6 +89,108 @@ pub(super) struct Spring {
     pub sinks: Vec<RawSink>,
 }
 
+/// Where the names this extraction knows come from: an annotation or a Spring Data
+/// interface counts only when it is Spring's (or the `javax.*` / `jakarta.*` standard it
+/// follows, or Lombok's), written with its package or imported from it.
+const ORIGINS: &[(&str, &[&str])] = &[
+    ("Component", &["org.springframework."]),
+    ("Service", &["org.springframework."]),
+    ("Repository", &["org.springframework."]),
+    ("Controller", &["org.springframework."]),
+    ("RestController", &["org.springframework."]),
+    ("Configuration", &["org.springframework."]),
+    ("Bean", &["org.springframework."]),
+    ("Primary", &["org.springframework."]),
+    ("Autowired", &["org.springframework."]),
+    ("Value", &["org.springframework."]),
+    (
+        "Qualifier",
+        &["org.springframework.", "javax.inject.", "jakarta.inject."],
+    ),
+    ("Inject", &["javax.inject.", "jakarta.inject."]),
+    ("Named", &["javax.inject.", "jakarta.inject."]),
+    ("Resource", &["javax.annotation.", "jakarta.annotation."]),
+    ("Document", &["org.springframework.data."]),
+    (
+        "Table",
+        &[
+            "javax.persistence.",
+            "jakarta.persistence.",
+            "org.springframework.data.",
+        ],
+    ),
+    ("Entity", &["javax.persistence.", "jakarta.persistence."]),
+    ("RequiredArgsConstructor", &["lombok."]),
+    ("AllArgsConstructor", &["lombok."]),
+    ("MongoRepository", &["org.springframework.data."]),
+    ("ReactiveMongoRepository", &["org.springframework.data."]),
+    ("JpaRepository", &["org.springframework.data."]),
+    ("CrudRepository", &["org.springframework.data."]),
+    ("ListCrudRepository", &["org.springframework.data."]),
+    ("PagingAndSortingRepository", &["org.springframework.data."]),
+    (
+        "ListPagingAndSortingRepository",
+        &["org.springframework.data."],
+    ),
+    ("ReactiveCrudRepository", &["org.springframework.data."]),
+];
+
+/// A Java file's imports: simple name → qualified name, and the packages of `.*` imports.
+#[derive(Debug, Default)]
+struct Imports {
+    named: HashMap<String, String>,
+    globs: Vec<String>,
+}
+
+impl Imports {
+    fn of(root: Node<'_>, src: &[u8]) -> Imports {
+        let mut out = Imports::default();
+        let mut c = root.walk();
+        for n in root.named_children(&mut c) {
+            if n.kind() != "import_declaration" {
+                continue;
+            }
+            let t = text(n, src);
+            if t.contains(" static ") {
+                continue;
+            }
+            let path: String = t
+                .trim_start_matches("import")
+                .trim_end_matches(';')
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            match path.strip_suffix(".*") {
+                Some(pkg) => out.globs.push(format!("{pkg}.")),
+                None => {
+                    let simple = path.rsplit('.').next().unwrap_or(&path).to_string();
+                    out.named.insert(simple, path);
+                }
+            }
+        }
+        out
+    }
+
+    /// The simple name of `written` (`Inject`, `jakarta.inject.Inject`) when it is the
+    /// annotation or interface this extraction knows by that name; other names pass as
+    /// they are (nothing reads them).
+    fn known(&self, written: &str) -> Option<String> {
+        let simple = written.rsplit('.').next().unwrap_or(written).to_string();
+        let Some((_, origins)) = ORIGINS.iter().find(|(n, _)| *n == simple) else {
+            return Some(simple);
+        };
+        let from = |q: &str| origins.iter().any(|o| q.starts_with(o));
+        let ok = if written.contains('.') {
+            from(written)
+        } else if let Some(q) = self.named.get(&simple) {
+            from(q)
+        } else {
+            self.globs.iter().any(|g| from(g))
+        };
+        ok.then_some(simple)
+    }
+}
+
 /// An annotation: its simple name and its arguments (`None` key: `value`).
 struct Annot<'t> {
     name: String,
@@ -106,7 +208,7 @@ impl<'t> Annot<'t> {
 }
 
 /// The annotations of a declaration (in its `modifiers`).
-fn annotations<'t>(decl: Node<'t>, src: &[u8]) -> Vec<Annot<'t>> {
+fn annotations<'t>(decl: Node<'t>, src: &[u8], imp: &Imports) -> Vec<Annot<'t>> {
     let mut out = Vec::new();
     let mut c = decl.walk();
     for m in decl.children(&mut c).filter(|m| m.kind() == "modifiers") {
@@ -118,7 +220,9 @@ fn annotations<'t>(decl: Node<'t>, src: &[u8]) -> Vec<Annot<'t>> {
             let Some(name) = a.child_by_field_name("name").map(|x| text(x, src)) else {
                 continue;
             };
-            let name = name.rsplit('.').next().unwrap_or(&name).to_string();
+            let Some(name) = imp.known(&name) else {
+                continue;
+            };
             let mut args = Vec::new();
             if let Some(list) = a.child_by_field_name("arguments") {
                 let mut c3 = list.walk();
@@ -225,7 +329,14 @@ fn plain_value(ty: &str) -> bool {
 }
 
 /// The parameters of a constructor or method as injection points.
-fn params_of(m: Node<'_>, class: &str, how: &str, src: &[u8], out: &mut Vec<RawInjection>) {
+fn params_of(
+    m: Node<'_>,
+    class: &str,
+    how: &str,
+    src: &[u8],
+    imp: &Imports,
+    out: &mut Vec<RawInjection>,
+) {
     let Some(ps) = m.child_by_field_name("parameters") else {
         return;
     };
@@ -234,7 +345,7 @@ fn params_of(m: Node<'_>, class: &str, how: &str, src: &[u8], out: &mut Vec<RawI
         if p.kind() != "formal_parameter" {
             continue;
         }
-        let annots = annotations(p, src);
+        let annots = annotations(p, src, imp);
         if annots.iter().any(|a| a.name == "Value") {
             continue;
         }
@@ -261,21 +372,21 @@ fn params_of(m: Node<'_>, class: &str, how: &str, src: &[u8], out: &mut Vec<RawI
 }
 
 /// Beans, injection points, entities and repositories of the classes of a Java file.
-fn classes(root: Node<'_>, src: &[u8], out: &mut Spring) {
+fn classes(root: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         let mut c = n.walk();
         stack.extend(n.named_children(&mut c));
         match n.kind() {
-            "class_declaration" | "record_declaration" => class(n, src, out),
-            "interface_declaration" => repo(n, src, out),
+            "class_declaration" | "record_declaration" => class(n, src, imp, out),
+            "interface_declaration" => repo(n, src, imp, out),
             _ => {}
         }
     }
 }
 
 /// A Spring Data repository interface.
-fn repo(n: Node<'_>, src: &[u8], out: &mut Spring) {
+fn repo(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
     let Some(name) = n.child_by_field_name("name").map(|x| text(x, src)) else {
         return;
     };
@@ -289,7 +400,7 @@ fn repo(n: Node<'_>, src: &[u8], out: &mut Spring) {
     let mut stack = vec![ext];
     while let Some(x) = stack.pop() {
         if x.kind() == "generic_type"
-            && let Some(base) = x.named_child(0).map(|b| text(b, src))
+            && let Some(base) = x.named_child(0).and_then(|b| imp.known(&text(b, src)))
             && REPOS.iter().any(|(r, _)| *r == base)
             && let Some(args) = x.named_child(1).filter(|a| a.kind() == "type_arguments")
             && let Some(entity) = args
@@ -309,11 +420,11 @@ fn repo(n: Node<'_>, src: &[u8], out: &mut Spring) {
     }
 }
 
-fn class(n: Node<'_>, src: &[u8], out: &mut Spring) {
+fn class(n: Node<'_>, src: &[u8], imp: &Imports, out: &mut Spring) {
     let Some(name) = n.child_by_field_name("name").map(|x| text(x, src)) else {
         return;
     };
-    let annots = annotations(n, src);
+    let annots = annotations(n, src, imp);
     let stereotype = annots
         .iter()
         .find(|a| STEREOTYPES.contains(&a.name.as_str()));
@@ -363,16 +474,16 @@ fn class(n: Node<'_>, src: &[u8], out: &mut Spring) {
         .iter()
         .copied()
         .filter(|m| {
-            annotations(*m, src)
+            annotations(*m, src, imp)
                 .iter()
                 .any(|a| a.name == "Autowired" || a.name == "Inject")
         })
         .collect();
     // The constructor Spring calls: the one marked, else the only one of a bean class.
     match (marked.as_slice(), ctors.as_slice()) {
-        ([one], _) => params_of(*one, &name, "constructor", src, &mut out.injections),
+        ([one], _) => params_of(*one, &name, "constructor", src, imp, &mut out.injections),
         ([], [one]) if stereotype.is_some() => {
-            params_of(*one, &name, "constructor", src, &mut out.injections)
+            params_of(*one, &name, "constructor", src, imp, &mut out.injections)
         }
         _ => {}
     }
@@ -384,7 +495,7 @@ fn class(n: Node<'_>, src: &[u8], out: &mut Spring) {
     for m in &members {
         match m.kind() {
             "field_declaration" => {
-                let fa = annotations(*m, src);
+                let fa = annotations(*m, src, imp);
                 if fa.iter().any(|a| a.name == "Value") || has_modifier(*m, "static") {
                     continue;
                 }
@@ -430,7 +541,7 @@ fn class(n: Node<'_>, src: &[u8], out: &mut Spring) {
                 }
             }
             "method_declaration" => {
-                let ma = annotations(*m, src);
+                let ma = annotations(*m, src, imp);
                 let mname = m
                     .child_by_field_name("name")
                     .map(|x| text(x, src))
@@ -464,7 +575,7 @@ fn class(n: Node<'_>, src: &[u8], out: &mut Spring) {
                                 .collect(),
                         });
                     }
-                    params_of(*m, &name, "bean", src, &mut out.injections);
+                    params_of(*m, &name, "bean", src, imp, &mut out.injections);
                 } else if ma.iter().any(|a| INJECTS.contains(&a.name.as_str())) {
                     let how = if mname.starts_with("set") {
                         "setter"
@@ -472,7 +583,7 @@ fn class(n: Node<'_>, src: &[u8], out: &mut Spring) {
                         "method"
                     };
                     let before = out.injections.len();
-                    params_of(*m, &name, how, src, &mut out.injections);
+                    params_of(*m, &name, how, src, imp, &mut out.injections);
                     // `@Resource(name = "x")` on a setter names its one bean.
                     if let Some(q) = qualifier(&ma, src) {
                         for i in &mut out.injections[before..] {
@@ -579,7 +690,8 @@ pub(super) fn java(
     recv_types: &HashMap<usize, String>,
 ) -> Spring {
     let mut out = Spring::default();
-    classes(root, src, &mut out);
+    let imp = Imports::of(root, src);
+    classes(root, src, &imp, &mut out);
     out.sinks = sinks(calls, recv_types, src);
     out.beans.sort_by_key(|b| b.line);
     out.injections.sort_by_key(|i| i.line);
@@ -622,7 +734,7 @@ mod tests {
     #[test]
     fn beans_with_names_primary_and_qualifiers() {
         let c = code(
-            r#"
+            r#"import org.springframework.stereotype.*; import org.springframework.context.annotation.*; import org.springframework.beans.factory.annotation.Qualifier;
 @Service
 public class CardPayments implements Payments {}
 @Component("wire") @Primary
@@ -676,7 +788,7 @@ class Plain {}
     #[test]
     fn the_injection_points_spring_uses() {
         let c = code(
-            r#"
+            r#"import org.springframework.stereotype.*; import org.springframework.beans.factory.annotation.*; import jakarta.annotation.Resource; import lombok.RequiredArgsConstructor;
 @Service
 class Checkout {
     @Autowired private Payments payments;
@@ -739,9 +851,59 @@ class WithLombok {
     }
 
     #[test]
+    fn javax_and_jakarta_inject_alike_and_foreign_namesakes_not_at_all() {
+        let jakarta = code(
+            r#"import jakarta.inject.Inject; import jakarta.inject.Named; import org.springframework.stereotype.Component;
+@Component
+class A {
+    @Inject @Named("fast") private Store store;
+}
+"#,
+        );
+        assert_eq!(injections(&jakarta), ["A field store <Store> @fast"]);
+        let javax = code(
+            r#"import javax.inject.*; import org.springframework.stereotype.Component;
+@Component
+class A {
+    @Inject private Store store;
+    @Inject
+    A(Clock clock) {}
+}
+"#,
+        );
+        assert_eq!(
+            injections(&javax),
+            ["A field store <Store>", "A constructor clock <Clock>"]
+        );
+        // Written with their packages, no import needed.
+        let qualified = code(
+            r#"
+@org.springframework.stereotype.Service
+class A {
+    @jakarta.inject.Inject private Store store;
+}
+"#,
+        );
+        assert_eq!(qualified.beans.len(), 1);
+        assert_eq!(injections(&qualified), ["A field store <Store>"]);
+        // Another framework's `@Component` and `@Inject`: not Spring's.
+        let foreign = code(
+            r#"import com.other.di.Component; import com.other.di.Inject;
+@Component
+class A {
+    @Inject private Store store;
+    A(Clock clock) {}
+}
+"#,
+        );
+        assert!(foreign.beans.is_empty(), "{:?}", foreign.beans);
+        assert!(foreign.injections.is_empty(), "{:?}", foreign.injections);
+    }
+
+    #[test]
     fn entities_repositories_and_store_calls() {
         let c = code(
-            r#"
+            r#"import org.springframework.data.mongodb.core.mapping.Document; import jakarta.persistence.*; import org.springframework.data.mongodb.repository.MongoRepository; import org.springframework.data.jpa.repository.JpaRepository;
 @Document(collection = "orders")
 class Order {}
 @Document(Names.CARTS)
