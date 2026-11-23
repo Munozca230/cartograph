@@ -88,15 +88,31 @@ fn a_bean_of_a_list_is_reached_through_the_interface() {
     let t = &a.text;
     assert!(t.contains("PricingEngine.java"), "{t}");
     assert!(t.contains("via PriceRule.discounts (Spring bean)"), "{t}");
-    // Not a bean: Spring never injects it, so the calls through the injected list never
-    // run it.
+    // Not a bean (it may be built with `new`): a plain supertype hop, never a Spring one.
     let a = symbols::callers(&r, "LegacyRule.discounts").unwrap();
-    assert!(!a.text.contains("PricingEngine.java"), "{}", a.text);
+    assert!(a.text.contains("via PriceRule.discounts]"), "{}", a.text);
+    assert!(!a.text.contains("Spring bean"), "{}", a.text);
+}
+
+#[test]
+fn a_call_spring_cannot_narrow_keeps_its_plain_hop() {
+    let r = repo();
+    let at = |line: u32| format!(":{line} Desk.work()");
+    // The bean inherits the method from a base that is no bean.
+    let a = symbols::callers(&r, "BaseNotifier.send").unwrap().text;
+    assert!(a.contains(&at(18)), "{a}");
+    assert!(a.contains("via Notifier.send (Spring bean)"), "{a}");
+    // A `@Bean` method that returns the interface: the class is not known.
+    let a = symbols::callers(&r, "LaserPrinter.print").unwrap().text;
     assert!(
-        a.text
-            .contains("2 calls through PriceRule.discounts reach other beans"),
-        "{}",
-        a.text
+        a.contains(&at(19)) && a.contains("via Printer.print]"),
+        "{a}"
+    );
+    // No bean of the type in the source.
+    let a = symbols::callers(&r, "FlatScanner.scan").unwrap().text;
+    assert!(
+        a.contains(&at(20)) && a.contains("via Scanner.scan]"),
+        "{a}"
     );
 }
 

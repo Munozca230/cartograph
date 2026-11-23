@@ -4,12 +4,23 @@
 //! the bean methods a call to an interface method may run, and the collections or tables a
 //! method reads or writes.
 
-use crate::symbols::SymbolTable;
 use cartograph_core::{DataSink, SpringBean, SpringInjection, Symbols, split_symbol_id};
 use std::collections::{HashMap, HashSet};
 
 /// Hops of supertypes walked from a bean's type (as `hierarchy`).
 const SUPER_HOPS: usize = 6;
+
+/// What bean matching reads of the symbol layer (the symbol table implements it, so this
+/// module does not depend on the one that shows its answers).
+pub trait Types {
+    fn spring(&self) -> &SpringTable;
+    /// Ids of the direct supertypes of type `id`, those in the repo.
+    fn supertypes(&self, id: &str) -> Vec<String>;
+    /// Whether a symbol has this id.
+    fn exists(&self, id: &str) -> bool;
+    /// Types defined in a file, as `(name, id)`.
+    fn types_in(&self, file: &str) -> Vec<(String, String)>;
+}
 
 /// Beans, injection points and data sinks, indexed.
 #[derive(Debug, Default)]
@@ -52,17 +63,22 @@ impl SpringTable {
 
     /// Read the beans' supertypes from the symbol table and mark the files `in_tests`
     /// says are tests; once, when the table is built.
-    pub fn link(
-        t: &SymbolTable,
+    pub fn link<T: Types>(
+        t: &T,
         in_tests: impl Fn(&str) -> bool,
     ) -> (Vec<HashSet<String>>, HashSet<String>) {
-        let ancestors = t.spring.beans.iter().map(|b| ancestors(t, &b.ty)).collect();
+        let ancestors = t
+            .spring()
+            .beans
+            .iter()
+            .map(|b| ancestors(t, &b.ty))
+            .collect();
         let tests = t
-            .spring
+            .spring()
             .beans
             .iter()
             .map(|b| &b.file)
-            .chain(t.spring.injections.iter().map(|i| &i.file))
+            .chain(t.spring().injections.iter().map(|i| &i.file))
             .filter(|f| in_tests(f))
             .cloned()
             .collect();
@@ -128,17 +144,15 @@ pub fn bean_label(b: &SpringBean) -> String {
 }
 
 /// Type `ty` and its supertypes up to [`SUPER_HOPS`] hops.
-fn ancestors(t: &SymbolTable, ty: &str) -> HashSet<String> {
+fn ancestors<T: Types>(t: &T, ty: &str) -> HashSet<String> {
     let mut seen: HashSet<String> = HashSet::from([ty.to_string()]);
     let mut level = vec![ty.to_string()];
     for _ in 0..SUPER_HOPS {
         let mut next = Vec::new();
         for cur in &level {
-            for e in t.supers_of(cur) {
-                if let Some(x) = &e.target
-                    && seen.insert(x.clone())
-                {
-                    next.push(x.clone());
+            for x in t.supertypes(cur) {
+                if seen.insert(x.clone()) {
+                    next.push(x);
                 }
             }
         }
@@ -152,18 +166,18 @@ fn ancestors(t: &SymbolTable, ty: &str) -> HashSet<String> {
 
 /// The beans of type `ty` the application has: its own beans and those of its subtypes
 /// (not those declared in a test tree), by label.
-pub fn beans_of<'t>(t: &'t SymbolTable, ty: &str) -> Vec<&'t SpringBean> {
+pub fn beans_of<'t, T: Types>(t: &'t T, ty: &str) -> Vec<&'t SpringBean> {
     beans_where(t, ty, false)
 }
 
 /// The beans an injection point may receive: [`beans_of`] its type, and for one in a test
 /// tree the beans the tests declare too.
-pub fn beans_for<'t>(t: &'t SymbolTable, inj: &SpringInjection) -> Vec<&'t SpringBean> {
-    beans_where(t, &inj.ty, t.spring.tests.contains(&inj.file))
+pub fn beans_for<'t, T: Types>(t: &'t T, inj: &SpringInjection) -> Vec<&'t SpringBean> {
+    beans_where(t, &inj.ty, t.spring().tests.contains(&inj.file))
 }
 
-fn beans_where<'t>(t: &'t SymbolTable, ty: &str, tests: bool) -> Vec<&'t SpringBean> {
-    let sp = &t.spring;
+fn beans_where<'t, T: Types>(t: &'t T, ty: &str, tests: bool) -> Vec<&'t SpringBean> {
+    let sp = t.spring();
     let mut v: Vec<&SpringBean> = sp
         .beans
         .iter()
@@ -239,19 +253,18 @@ pub fn pick<'b>(inj: &SpringInjection, all: &[&'b SpringBean]) -> (Vec<&'b Sprin
 
 /// The id of the type that declares method `id`, as [`SymbolTable::symbol`] knows it: a
 /// type of that name in the method's file.
-pub fn type_of_method(t: &SymbolTable, id: &str) -> Option<String> {
+pub fn type_of_method<T: Types>(t: &T, id: &str) -> Option<String> {
     let (path, q) = split_symbol_id(id)?;
     let (ty, _) = q.rsplit_once('.')?;
     let leaf = ty.rsplit('.').next().unwrap_or(ty);
-    t.of_file(path)
-        .iter()
-        .map(|&i| &t.symbols[i])
-        .find(|s| s.kind.is_type() && s.name == leaf)
-        .map(|s| s.id())
+    t.types_in(path)
+        .into_iter()
+        .find(|(name, _)| name == leaf)
+        .map(|(_, id)| id)
 }
 
 /// Method `m` as type `ty` has it: its own, else the nearest supertype's (not `skip`).
-fn method_on(t: &SymbolTable, ty: &str, m: &str, skip: &str) -> Option<String> {
+fn method_on<T: Types>(t: &T, ty: &str, m: &str, skip: &str) -> Option<String> {
     let mut level = vec![ty.to_string()];
     let mut seen: HashSet<String> = HashSet::new();
     for _ in 0..=SUPER_HOPS {
@@ -262,11 +275,11 @@ fn method_on(t: &SymbolTable, ty: &str, m: &str, skip: &str) -> Option<String> {
             }
             if let Some((p, _)) = split_symbol_id(cur) {
                 let id = format!("sym:{p}#{}.{m}", leaf(cur));
-                if id != skip && t.symbol(&id).is_some() {
+                if id != skip && t.exists(&id) {
                     return Some(id);
                 }
             }
-            next.extend(t.supers_of(cur).filter_map(|e| e.target.clone()));
+            next.extend(t.supertypes(cur));
         }
         if next.is_empty() {
             break;
@@ -276,9 +289,21 @@ fn method_on(t: &SymbolTable, ty: &str, m: &str, skip: &str) -> Option<String> {
     None
 }
 
+/// What a call to method `decl` (declared by type `decl_ty`) runs on bean `b`: the method
+/// its class has, or inherits. `None` when that is not known: the bean is known only by
+/// the declaring type (a `@Bean` method that returns the interface, a generated mapper),
+/// or the method comes from outside the repo.
+pub fn runs<T: Types>(t: &T, b: &SpringBean, decl_ty: &str, decl: &str) -> Option<String> {
+    if b.ty == decl_ty {
+        return None;
+    }
+    let m = split_symbol_id(decl)?.1.rsplit('.').next()?;
+    method_on(t, &b.ty, m, decl)
+}
+
 /// What a call to method `id` (an interface or base class method) may run through Spring:
 /// for each bean of its type, the method that bean has, with the bean.
-pub fn dispatch<'t>(t: &'t SymbolTable, id: &str) -> Vec<(String, &'t SpringBean)> {
+pub fn dispatch<'t, T: Types>(t: &'t T, id: &str) -> Vec<(String, &'t SpringBean)> {
     let Some(ty) = type_of_method(t, id) else {
         return Vec::new();
     };
@@ -300,8 +325,8 @@ pub fn dispatch<'t>(t: &'t SymbolTable, id: &str) -> Vec<(String, &'t SpringBean
 /// method) to a method of type `ty` may reach, when the calling class has injection points
 /// of `ty`: the one whose field or parameter the call is made on, else all of them
 /// together. `None` without one (the receiver is not injected there, or not known).
-pub fn reaching<'t>(
-    t: &'t SymbolTable,
+pub fn reaching<'t, T: Types>(
+    t: &'t T,
     caller: Option<&str>,
     file: &str,
     line: u32,
@@ -309,7 +334,7 @@ pub fn reaching<'t>(
 ) -> Option<Vec<&'t SpringBean>> {
     let points: Vec<&SpringInjection> = caller_classes(t, caller, file)
         .iter()
-        .flat_map(|c| t.spring.injections_into(c))
+        .flat_map(|c| t.spring().injections_into(c))
         .filter(|i| i.ty == ty)
         .collect();
     if points.is_empty() {
@@ -334,18 +359,13 @@ pub fn reaching<'t>(
 
 /// The class around a caller id: `sym:p#C` of `sym:p#C.m`; for a call outside any method
 /// (`None`, a Java constructor or initializer), the classes of the calling file.
-pub fn caller_classes(t: &SymbolTable, caller: Option<&str>, file: &str) -> Vec<String> {
+pub fn caller_classes<T: Types>(t: &T, caller: Option<&str>, file: &str) -> Vec<String> {
     if let Some(c) = caller
         && let Some(ty) = type_of_method(t, c)
     {
         return vec![ty];
     }
-    t.of_file(file)
-        .iter()
-        .map(|&i| &t.symbols[i])
-        .filter(|s| s.kind.is_type())
-        .map(|s| s.id())
-        .collect()
+    t.types_in(file).into_iter().map(|(_, id)| id).collect()
 }
 
 /// `List<PriceRule>`, `PaymentGateway`: an injection point's declared type.

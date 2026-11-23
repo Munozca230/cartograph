@@ -1,7 +1,10 @@
 package com.shop.store;
 
+import com.mongodb.client.MongoDatabase;
+
 public class Counters {
     public static long bump(String name) {
-        return Db.db().getCollection("counters").countDocuments();
+        MongoDatabase db = Db.db();
+        return db.getCollection("counters").countDocuments();
     }
 }

@@ -19,7 +19,10 @@ and Spring Boot 3 (`jakarta.*`) code index the same way.
 | `@Primary`, `@Qualifier("x")` | on the bean class or the `@Bean` method |
 | Injection points | fields with `@Autowired`, `@Inject` (`javax.inject` / `jakarta.inject`) or `@Resource` (`javax.annotation` / `jakarta.annotation`); the parameters of the constructor Spring calls: the one marked `@Autowired` or `@Inject`, else the only constructor of a bean class (the default since Spring 4.3), else the fields a Lombok `@RequiredArgsConstructor` (final fields without a value) or `@AllArgsConstructor` writes the constructor for; the parameters of `@Autowired` setters and methods and of `@Bean` methods |
 | What an injection point receives | `T`, `List<T>`, `Set<T>`, `Collection<T>`, `Iterable<T>`, `Map<String, T>`, `T[]`, `Optional<T>`, `ObjectProvider<T>`, `Provider<T>`; `@Qualifier("x")`, `@Named("x")`, `@Resource(name = "x")` |
-| Data | `@Document(collection = "x")` / `@Document("x")` (Mongo; without a name, the class name decapitalized), `@Entity` / `@Table(name = "x")` (JPA; without a name, the class name in snake case); Spring Data repositories (`extends MongoRepository<E, Id>`, `JpaRepository`, `CrudRepository`…) and any call on one; `getCollection(NAME[, E.class])` with a literal or a constant, `mongoTemplate.find(q, E.class)` and the other `MongoTemplate` / `MongoOperations` calls that name an entity class or a collection, `entityManager.find(E.class, id)` |
+| Data | `@Document(collection = "x")` / `@Document("x")` (Mongo; without a name, the class name decapitalized), `@Entity` / `@Table(name = "x")` (JPA; without a name, the class name in snake case); Spring Data repositories (`extends MongoRepository<E, Id>`, `JpaRepository`, `CrudRepository`…) and any call on one; `getCollection(NAME[, E.class])` with a literal or a constant, in a file that imports the Mongo driver or Spring Data Mongo, `mongoTemplate.find(q, E.class)` and the other `MongoTemplate` / `MongoOperations` calls that name an entity class or a collection, `entityManager.find(E.class, id)` |
+
+`@PostConstruct` (`javax.annotation` or `jakarta.annotation`) injects nothing: such a method
+is read like any other, so its calls on injected fields resolve.
 
 Which beans an injection point receives follows Spring's rules: every bean of the type
 (its own beans and those of its subtypes, through `extends` and `implements`) for a list,
@@ -44,7 +47,9 @@ lambda or loop over an injected list (`rules.stream().flatMap(r -> r.discounts()
   `via PaymentGateway.charge (Spring bean)`; a call whose injected field or parameter
   receives another bean (another qualifier, another `@Primary`) is left out and counted
   (`1 call through PaymentGateway.charge reaches another bean`). A class that implements
-  the interface but is no bean is never reached through an injection point.
+  the interface but is no bean (a test's fake, one built with `new`) keeps its calls as
+  plain supertype calls, and so does a call where Spring's choice is not in the source (no
+  bean of the type, or a `@Bean` method that returns the interface).
 - `path` to a client that calls out over HTTP or IPC (see [mcp.md](mcp.md#slices)): past
   the controller, a call to an interface method goes on to the bean Spring injects there,
   down to the method that reads or writes, shown as `→ collection orders (Mongo, via

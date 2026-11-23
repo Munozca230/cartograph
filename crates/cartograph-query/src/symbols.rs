@@ -53,6 +53,31 @@ pub struct SymbolTable {
     pub spring: crate::spring::SpringTable,
 }
 
+impl crate::spring::Types for SymbolTable {
+    fn spring(&self) -> &crate::spring::SpringTable {
+        &self.spring
+    }
+
+    fn supertypes(&self, id: &str) -> Vec<String> {
+        self.supers_of(id)
+            .filter_map(|e| e.target.clone())
+            .collect()
+    }
+
+    fn exists(&self, id: &str) -> bool {
+        self.symbol(id).is_some()
+    }
+
+    fn types_in(&self, file: &str) -> Vec<(String, String)> {
+        self.of_file(file)
+            .iter()
+            .map(|&i| &self.symbols[i])
+            .filter(|s| s.kind.is_type())
+            .map(|s| (s.name.clone(), s.id()))
+            .collect()
+    }
+}
+
 impl SymbolTable {
     pub fn build(s: &Symbols) -> SymbolTable {
         let mut t = SymbolTable {
@@ -1345,6 +1370,9 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
     for (d, name) in &decls {
         let before = calls.len();
         let decl_ty = crate::spring::type_of_method(t, d);
+        // Only a method some bean runs can be passed over by Spring: a class that is no
+        // bean (a test's fake, one built with `new`) is reached whatever Spring injects.
+        let of_a_bean = crate::spring::dispatch(t, d).iter().any(|(m, _)| *m == id);
         let mut others = 0;
         for &i in t.callers_of(d) {
             let c = &t.calls[i];
@@ -1359,12 +1387,21 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
             let spring = decl_ty.as_deref().and_then(|dt| {
                 crate::spring::reaching(t, c.caller.as_deref(), &c.file, c.line, dt)
             });
-            match spring {
-                Some(beans) if beans.iter().any(|b| Some(&b.ty) == own_ty.as_ref()) => {
+            // What each bean runs there; a bean whose class is not known, or no bean of
+            // the repo (one from a jar), says nothing: the plain hop stays.
+            let ran: Option<Vec<String>> = match (&spring, decl_ty.as_deref()) {
+                (Some(beans), Some(dt)) if !beans.is_empty() => beans
+                    .iter()
+                    .map(|b| crate::spring::runs(t, b, dt, d))
+                    .collect(),
+                _ => None,
+            };
+            match ran {
+                Some(ms) if ms.contains(&id) => {
                     calls.push((c, Some(format!("{name} (Spring bean)"))));
                 }
-                Some(_) => others += 1,
-                None => calls.push((c, Some(name.clone()))),
+                Some(_) if of_a_bean => others += 1,
+                _ => calls.push((c, Some(name.clone()))),
             }
         }
         if calls.len() > before {

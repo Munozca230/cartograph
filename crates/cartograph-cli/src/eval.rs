@@ -470,7 +470,11 @@ fn run_case(servers: &mut Servers, c: &Case, answers: Answers) -> Result<CaseRes
     let budget = c.budget.or_else(|| {
         calls
             .iter()
-            .map(|(_, tool, _)| cartograph_mcp::stats::budget_of(tool))
+            .zip(&texts)
+            .map(|((_, tool, _), text)| {
+                use cartograph_mcp::stats::{budget_of, stats_tool};
+                budget_of(stats_tool(tool, text))
+            })
             .sum()
     });
     if let Some(b) = budget

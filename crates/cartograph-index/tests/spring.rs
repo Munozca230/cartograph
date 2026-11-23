@@ -64,6 +64,9 @@ fn beans_and_injection_points() {
     assert_eq!(
         points,
         [
+            "Desk constructor notifier <Notifier>",
+            "Desk constructor printer <Printer>",
+            "Desk constructor scanner <Scanner>",
             "OrderController constructor orderService <OrderService>",
             "CheckoutService field gateway <PaymentGateway>",
             "CheckoutService field receipts <ReceiptRepository>",

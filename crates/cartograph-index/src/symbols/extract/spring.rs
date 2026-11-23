@@ -173,6 +173,14 @@ impl Imports {
         out
     }
 
+    /// The file imports something of a package.
+    fn any(&self, pkg: &str) -> bool {
+        self.named
+            .values()
+            .chain(&self.globs)
+            .any(|q| q.starts_with(pkg))
+    }
+
     /// The simple name of `written` (`Inject`, `jakarta.inject.Inject`) when it is the
     /// annotation or interface this extraction knows by that name; other names pass as
     /// they are (nothing reads them).
@@ -642,7 +650,13 @@ fn class_literal(n: Node<'_>, src: &[u8]) -> Option<String> {
 }
 
 /// Calls that name a collection or an entity class.
-fn sinks(calls: &[CallCap<'_>], recv_types: &HashMap<usize, String>, src: &[u8]) -> Vec<RawSink> {
+fn sinks(
+    calls: &[CallCap<'_>],
+    recv_types: &HashMap<usize, String>,
+    src: &[u8],
+    imp: &Imports,
+) -> Vec<RawSink> {
+    let mongo = imp.any("com.mongodb.") || imp.any("org.springframework.data.mongodb.");
     let mut out = Vec::new();
     for c in calls {
         if c.node.kind() != "method_invocation" {
@@ -669,7 +683,7 @@ fn sinks(calls: &[CallCap<'_>], recv_types: &HashMap<usize, String>, src: &[u8])
         let mongo_recv = recv_ty.is_some_and(|t| MONGO_OPS.contains(&t))
             || field.ends_with("mongotemplate")
             || field.ends_with("mongooperations");
-        let (store, what, coll) = if name == "getCollection" {
+        let (store, what, coll) = if name == "getCollection" && mongo {
             // `db.getCollection("x")`, `db.getCollection(X, E.class)`.
             let Some(first) = args.first().and_then(named) else {
                 continue;
@@ -726,7 +740,7 @@ pub(super) fn java(
     let mut out = Spring::default();
     let imp = Imports::of(root, src);
     classes(root, src, &imp, &mut out);
-    out.sinks = sinks(calls, recv_types, src);
+    out.sinks = sinks(calls, recv_types, src, &imp);
     out.beans.sort_by_key(|b| b.line);
     out.injections.sort_by_key(|i| i.line);
     out.entities.sort_by_key(|e| e.line);
@@ -882,6 +896,29 @@ class WithLombok {
                 "WithLombok constructor ledger <Ledger>",
             ]
         );
+    }
+
+    #[test]
+    fn get_collection_outside_the_mongo_driver_is_no_sink() {
+        let c = code(r#"class Shelf { void a(Library l) { l.getCollection("novels"); } }"#);
+        assert!(c.sinks.is_empty(), "{:?}", c.sinks);
+    }
+
+    #[test]
+    fn post_construct_methods_call_what_is_injected() {
+        for pkg in ["javax", "jakarta"] {
+            let c = code(&format!(
+                r#"import {pkg}.annotation.PostConstruct; import {pkg}.inject.Inject;
+class Boot {{
+    @Inject private List<Rule> rules;
+    @PostConstruct void init() {{ rules.forEach(r -> r.load()); }}
+}}
+"#
+            ));
+            assert_eq!(injections(&c), ["Boot field rules List<Rule>"], "{pkg}");
+            let load = c.calls.iter().find(|x| x.name == "load").unwrap();
+            assert_eq!(load.recv_type.as_deref(), Some("Rule"), "{pkg}");
+        }
     }
 
     #[test]
