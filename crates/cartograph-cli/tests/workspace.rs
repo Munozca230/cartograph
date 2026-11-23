@@ -81,6 +81,19 @@ fn index_query_and_check_a_workspace() {
         "{out}"
     );
 
+    // Symbol ids are canonical too: the listing's id prefix starts with the member.
+    let (code, out, err) = q(&[
+        "--json",
+        "symbols",
+        "api:src/main/java/com/acme/api/UserController.java",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        v["groups"][0]["id_prefix"], "sym:api/src/main/java/com/acme/api/UserController.java#",
+        "{v}"
+    );
+
     // Rules: the workspace's layers, and the API's own (rebased) layers.
     let (code, out, _) = cartograph(&["check", &root, "--data-dir", &d]);
     assert_eq!(code, 1, "{out}");
