@@ -13,7 +13,8 @@
 //!    with no file is `not_found`.
 //! 4. Node built-in (known list) → External `node:<name>`, `Exact`.
 //! 5. Workspace package of the nearest workspace root → its `exports` (`.` or the subpath),
-//!    `module`, `main`, `src/index.*`, `index.*` → `Resolved`. Two members with the same
+//!    `module`, `main`, `src/index.*`, `index.*` → `Resolved`; a subpath with no source
+//!    file (built output, a stylesheet) goes on to step 7. Two members with the same
 //!    name → `ambiguous`; a member with no matching file → `not_found`.
 //!    5b. In a workspace with package bridges on: a package another member builds,
 //!    declared by the importer's nearest `package.json` → that member's `exports`,
@@ -219,7 +220,7 @@ impl<'i, 'a> Resolver<'i, 'a> {
         let declared = nearest.is_some_and(|p| p.deps.contains(name));
         if declared
             && self.member_packages
-            && let Some(outcome) = self.member_package(importer, name, sub, spec, ts_importer)
+            && let Some(outcome) = self.member_package(importer, name, sub, ts_importer)
         {
             return outcome;
         }
@@ -238,7 +239,6 @@ impl<'i, 'a> Resolver<'i, 'a> {
         importer: &str,
         name: &str,
         sub: &str,
-        spec: &str,
         ts_importer: bool,
     ) -> Option<Outcome> {
         let me = self.ix.mount_root(importer);
@@ -254,12 +254,11 @@ impl<'i, 'a> Resolver<'i, 'a> {
             .collect();
         match dirs.as_slice() {
             [] => None,
-            [dir] => Some(match self.package_file(dir, sub, ts_importer) {
-                Some(p) => Outcome::file(p, Confidence::Resolved),
-                None => Outcome::not_found(format!(
-                    "member package {name} ({dir}) has no file for {spec:?}"
-                )),
-            }),
+            // No source for that subpath (built output, a stylesheet out of the walk): the
+            // package, as before (step 7).
+            [dir] => self
+                .package_file(dir, sub, ts_importer)
+                .map(|p| Outcome::file(p, Confidence::Resolved)),
             many => Some(Outcome::ambiguous(format!(
                 "member package {name} is built in {}",
                 many.join(", ")

@@ -182,3 +182,32 @@ fn copy_dir(from: &Path, to: &Path) {
         }
     }
 }
+
+/// A subpath of a member's package with no source file (built output, a stylesheet left
+/// out of the walk) stays the external package it was, not an unresolved import.
+#[test]
+fn a_member_package_subpath_without_source_stays_external() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    copy_dir(&fixture("workspace-bridges"), &root);
+    std::fs::write(
+        root.join("desktop/src/renderer/theme.ts"),
+        "import '@acme/ui-kit/dist/theme.css';\nexport const theme = 1;\n",
+    )
+    .unwrap();
+    let out = index(&root, &IndexOptions::default()).unwrap();
+    let g = &out.graph;
+    assert!(
+        !g.unresolved
+            .iter()
+            .any(|u| u.file == "desktop/src/renderer/theme.ts"),
+        "{:?}",
+        g.unresolved
+    );
+    assert!(
+        g.edges
+            .iter()
+            .any(|e| e.src == "file:desktop/src/renderer/theme.ts"
+                && e.dst == "external:npm:@acme/ui-kit")
+    );
+}
