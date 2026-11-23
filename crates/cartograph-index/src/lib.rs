@@ -516,8 +516,9 @@ fn index_layout(layout: &Layout, opts: &IndexOptions) -> Result<IndexOutput, Ind
 }
 
 /// How each mount serves HTTP (see [`symbols::resolve::HttpServers`]): `[member.http]` of
-/// the workspace file, the context path defaulting to the mount's Spring
-/// `server.servlet.context-path` (`src/main/resources/application.{properties,yml,yaml}`).
+/// the workspace file, and the `server.servlet.context-path` of each Spring module
+/// (`<module>/src/main/resources/application.{properties,yml,yaml}`), for that module's
+/// files.
 fn http_servers(src: &Source<'_>, configs: &[(String, String)]) -> symbols::resolve::HttpServers {
     let mut out = symbols::resolve::HttpServers::default();
     for m in &src.mounts {
@@ -527,27 +528,25 @@ fn http_servers(src: &Source<'_>, configs: &[(String, String)]) -> symbols::reso
             .and_then(|x| x.get("http"))
             .and_then(|h| serde_json::from_value(h.clone()).ok())
             .unwrap_or_default();
-        let inside = |p: &str| {
-            m.prefix.is_empty()
-                || p.strip_prefix(m.prefix)
-                    .is_some_and(|rest| rest.starts_with('/'))
+        if !declared.hosts.is_empty() || declared.context_path.is_some() || declared.public {
+            out.members.insert(m.prefix.to_string(), declared);
+        }
+    }
+    const RESOURCES: &str = "src/main/resources/application.";
+    let mut seen = HashSet::new();
+    for (p, text) in configs {
+        let Some(at) = p.find(RESOURCES) else {
+            continue;
         };
-        let context = declared.context_path.clone().or_else(|| {
-            configs
-                .iter()
-                .filter(|(p, _)| inside(p) && p.contains("src/main/resources/application."))
-                .find_map(|(p, text)| spring_context_path(p, text))
-        });
-        if declared.hosts.is_empty() && context.is_none() && !declared.public {
+        let module = p[..at].trim_end_matches('/').to_string();
+        // `application.properties` before `.yml`: the first one that sets it.
+        if seen.contains(&module) {
             continue;
         }
-        out.members.insert(
-            m.prefix.to_string(),
-            cartograph_core::MemberHttp {
-                context_path: context,
-                ..declared
-            },
-        );
+        if let Some(c) = spring_context_path(p, text) {
+            seen.insert(module.clone());
+            out.contexts.push((module, c));
+        }
     }
     out
 }
@@ -555,10 +554,19 @@ fn http_servers(src: &Source<'_>, configs: &[(String, String)]) -> symbols::reso
 /// `server.servlet.context-path` of a Spring `application.properties` or `.yml`.
 fn spring_context_path(path: &str, text: &str) -> Option<String> {
     const KEY: &str = "server.servlet.context-path";
+    // `${CTX:/api}` is its default; without one, or not a path, nothing is known.
+    let clean = |v: &str| -> Option<String> {
+        let v = v.trim().trim_matches(['"', '\'']);
+        let v = match v.strip_prefix("${").and_then(|r| r.strip_suffix('}')) {
+            Some(inner) => inner.split_once(':')?.1.trim(),
+            None => v,
+        };
+        (v.starts_with('/') && !v.contains("${")).then(|| v.to_string())
+    };
     if path.ends_with(".properties") {
         return text.lines().find_map(|l| {
             let (k, v) = l.trim().split_once(['=', ':'])?;
-            (k.trim() == KEY).then(|| v.trim().to_string())
+            if k.trim() == KEY { clean(v) } else { None }
         });
     }
     // YAML: the nesting of `server:` / `servlet:` / `context-path:`, or a dotted key.
@@ -577,9 +585,10 @@ fn spring_context_path(path: &str, text: &str) -> Option<String> {
         }
         let mut full: Vec<&str> = stack.iter().map(|(_, k)| k.as_str()).collect();
         full.push(k.trim());
-        let v = v.trim().trim_matches(['"', '\'']);
-        if full.join(".") == KEY && !v.is_empty() {
-            return Some(v.to_string());
+        // A comment after the value (`/api # root`).
+        let v = v.split(" #").next().unwrap_or(v);
+        if full.join(".") == KEY {
+            return clean(v);
         }
         stack.push((indent, k.trim().to_string()));
     }
@@ -1249,4 +1258,34 @@ fn build_graph(
     };
     graph.normalize();
     (graph, manifests)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spring_context_path;
+
+    #[test]
+    fn spring_context_paths_read_defaults_and_drop_comments() {
+        let props = |t: &str| spring_context_path("a/application.properties", t);
+        let yml = |t: &str| spring_context_path("a/application.yml", t);
+        assert_eq!(
+            props("server.servlet.context-path=/api\n").as_deref(),
+            Some("/api")
+        );
+        // A placeholder with a default is its default; without one, nothing known.
+        assert_eq!(
+            props("server.servlet.context-path=${CTX:/api}\n").as_deref(),
+            Some("/api")
+        );
+        assert_eq!(props("server.servlet.context-path=${CTX}\n"), None);
+        assert_eq!(props("server.servlet.context-path=api\n"), None);
+        assert_eq!(
+            yml("server:\n  servlet:\n    context-path: /api # root\n").as_deref(),
+            Some("/api")
+        );
+        assert_eq!(
+            yml("server:\n  servlet:\n    context-path: \"${CTX:/v2}\"\n").as_deref(),
+            Some("/v2")
+        );
+    }
 }

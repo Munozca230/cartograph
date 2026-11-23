@@ -328,6 +328,33 @@ impl Site {
 pub struct HttpServers {
     /// `[member.http]` by member (`""` for a single repo), in name order.
     pub members: BTreeMap<String, cartograph_core::MemberHttp>,
+    /// Context paths of Spring modules: the folder that holds `src/main/resources` (`""`
+    /// at the root) and its `server.servlet.context-path`. A member's declared
+    /// `context_path` wins over them.
+    pub contexts: Vec<(String, String)>,
+}
+
+impl HttpServers {
+    /// The context path of the routes of `file` in `member`.
+    fn context_of(&self, member: &str, file: &str) -> Option<&str> {
+        if let Some(c) = self
+            .members
+            .get(member)
+            .and_then(|m| m.context_path.as_deref())
+        {
+            return Some(c);
+        }
+        self.contexts
+            .iter()
+            .filter(|(dir, _)| {
+                dir.is_empty()
+                    || file
+                        .strip_prefix(dir.as_str())
+                        .is_some_and(|r| r.starts_with('/'))
+            })
+            .max_by_key(|(dir, _)| dir.len())
+            .map(|(_, c)| c.as_str())
+    }
 }
 
 fn is_local_host(name: &str) -> bool {
@@ -626,10 +653,9 @@ fn routes(cx: &Cx<'_, '_>) -> Vec<Route> {
         let member = cx.member(fi);
         let context = cx
             .hosts
-            .members
-            .get(&member)
-            .and_then(|m| m.context_path.clone())
-            .unwrap_or_default();
+            .context_of(&member, f.path)
+            .unwrap_or_default()
+            .to_string();
         let libs = cx.g.libraries(f.path);
         let express_ok = gate_matches("js-http", &libs);
         let mut push = |method: Option<String>,

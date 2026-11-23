@@ -462,3 +462,32 @@ export class Svc {
         "{keys:?}"
     );
 }
+
+/// In one repo of several Spring Boot modules, a module's context path prefixes its own
+/// routes only.
+#[test]
+fn a_context_path_belongs_to_its_module() {
+    let controller = |pkg: &str, path: &str| {
+        format!(
+            "package {pkg};\n@RestController\npublic class C {{\n    @GetMapping(\"{path}\")\n    public String get() {{ return \"\"; }}\n}}\n"
+        )
+    };
+    let a = controller("a", "/x");
+    let b = controller("b", "/y");
+    let s = http_repo(&[
+        (
+            "orders/src/main/resources/application.properties",
+            "server.servlet.context-path=/orders\n",
+        ),
+        ("orders/src/main/java/a/C.java", a.as_str()),
+        ("users/src/main/java/b/C.java", b.as_str()),
+        (
+            "src/client.ts",
+            "export function x() { return fetch('/orders/x'); }\nexport function y() { return fetch('/y'); }\n",
+        ),
+    ]);
+    assert_eq!(
+        http_keys(&s),
+        vec!["GET /orders/x src/client.ts:1", "GET /y src/client.ts:2"]
+    );
+}
