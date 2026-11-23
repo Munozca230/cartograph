@@ -41,6 +41,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: cargo test
         run: cargo test --workspace --locked
+      - name: cartograph check (this repo's architecture rules)
+        if: runner.os == 'Linux'
+        run: |
+          cargo run --locked -q -p cartograph-cli -- index .
+          cargo run --locked -q -p cartograph-cli -- check .
 
   web:
     runs-on: ubuntu-24.04
