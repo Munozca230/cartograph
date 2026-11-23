@@ -45,23 +45,21 @@ lambda or loop over an injected list (`rules.stream().flatMap(r -> r.discounts()
 `rules.forEach(r -> …)`, `for (var r : rules)`, `rules.get(0).m()`, `map.values()…`,
 `provider.getObject().m()`).
 
-## What a call runs
+## What a call may run
 
-Flows, slices and `callers` share one rule. A call names the method its receiver's type has
-or inherits; what runs is that method on the object the receiver holds:
+Flows, slices and `callers` share one rule: what Spring chooses is annotated, never
+subtracted. A call names the method its receiver's type has or inherits. `super.m()` (and
+`Type.super.m()`), a private and a static method run as they are. Any other call may run:
 
-- `super.m()` (and `Type.super.m()`), a private and a static method run as they are;
-- on what Spring injects, the beans that injection point receives;
-- else every bean below the receiver's type: the type a variable or field is declared with,
-  the calling class for a call on itself, else the class that declares the method. An
-  inherited method called on a `CardService` never runs a `WireService`.
+- the method it names, kept whenever it has a body; one without a body (abstract, or an
+  interface's) gives its place to what the beans run, when there are any;
+- what the beans of the receiver's type and below have or inherit under that name (with
+  one of its numbers of parameters; a class's method before an interface's default): first
+  the beans Spring injects where the call is made, then the others, marked as such
+  ("another Spring bean"). A slice follows those only once the rest is walked.
 
-Each bean runs the method its class has or inherits: overloads are told apart by their
-number of parameters, a class's method wins over an interface's default, and a method
-without a body runs nothing. The method named may run too when a bean inherits it, or when
-it has a body and the receiver is not known to be injected. A call no bean serves stays as
-it is written. Flows and slices go from the caller straight to what the beans run; a flow
-that starts at an interface's or an abstract method shows its beans.
+A flow that gets to a method without a body other than by a call (it starts there, or a
+route is declared on it) goes on to its beans.
 
 ## Where it shows up
 
@@ -70,17 +68,15 @@ that starts at an interface's or an abstract method shows its beans.
   `injected into PricingEngine (constructor, List<PriceRule>) path:19: 3 beans: CouponRule,
   SeasonRule, VolumeRule`, `the same 3 beans` for the next one, `CardGateway (@Primary, of
   2)` or `WireGateway (qualified)` for a single bean.
-- `callers` of a bean's method: the calls through its interface that reach it are marked
-  `via PaymentGateway.charge (Spring bean)`; a call whose injected field or parameter
-  receives another bean (another qualifier, another `@Primary`) is left out and counted
-  (`1 call through PaymentGateway.charge reaches another bean`). A class that implements
-  the interface but is no bean (a test's fake, one built with `new`) keeps its calls as
-  plain supertype calls, and so does a call where Spring's choice is not in the source (no
-  bean of the type, or a `@Bean` method that returns the interface) or whose receiver is
-  not what Spring injects (another parameter, a local variable). The receiver is followed
-  from a constructor or setter parameter into the field it is assigned to
-  (`this.x = x`, `requireNonNull(x)`, `List.copyOf(x)`, `new ArrayList<>(x)`; not when the parameter or the field is given another value), and from a
-  collection into the loops and lambdas over it.
+- `callers` of a method that others declare: every call through those declarations, with
+  what Spring makes of it: `via PaymentGateway.charge (Spring bean)` where a bean it
+  injects runs the method, `(Spring injects CardGateway here (@Primary))` where it injects
+  others. Nothing is noted where that is not known: no bean of the type in the source, a
+  class only a `@Bean` method makes, or a receiver that is not what Spring injects
+  (another parameter, a local variable). The receiver is followed from a constructor or
+  setter parameter into the field it is assigned to (`this.x = x`, `requireNonNull(x)`,
+  `List.copyOf(x)`, `new ArrayList<>(x)`; not when the parameter or the field is given
+  another value), and from a collection into the loops and lambdas over it.
 - `path` to a client that calls out over HTTP or IPC (see [mcp.md](mcp.md#slices)): past
   the controller, a call to an interface method goes on to the bean Spring injects there,
   down to the method that reads or writes, shown as `→ collection orders (Mongo, via
@@ -104,8 +100,10 @@ that starts at an interface's or an abstract method shows its beans.
 - The table of an entity without an annotation in a repository whose interface does not say
   its store (`CrudRepository` in Spring Data JDBC): `R2dbcRepository`, `CassandraRepository`
   and `MongoRepository` give the store's default name.
-- Overloads with the same number of parameters are not told apart, and neither are two
-  calls to one method on one line when one is made on what Spring injects.
+- Overloads with the same number of parameters are not told apart, and what Spring injects
+  is known by line: two calls to one method on one line are given the same note.
+- Types written with their outer class (`Outer.Inner x`) or imported from inside one
+  (`import a.Outer.Inner`): as receivers they are not typed.
 - Generic type arguments of beans (`Handler<Order>` against `Handler<Invoice>`): beans are
   matched by their raw type.
 - Collections named at run time, JDBC SQL strings and `@Query` texts.
