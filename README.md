@@ -162,6 +162,16 @@ after a global npm install (see [With npm](#with-npm)), or the path of the binar
 [docs/mcp.md](docs/mcp.md) covers the tools, a recommended agent workflow, and the
 server's freshness and robustness guarantees.
 
+## Several repositories
+
+A system split over several repositories maps as one: put a `cartograph-workspace.toml`
+listing them in the folder that holds them (`cartograph workspace init` proposes it), then
+index, serve, query, check or serve MCP on that folder. Each repository becomes a
+top-level folder of the map named after it (`api:src/main.ts` is accepted for
+`api/src/main.ts`), imports resolve across repositories, each keeps its own git history
+and its own `cartograph.toml` rules, and `diff`/`check --base` compare each one with its own
+base. See [docs/workspace.md](docs/workspace.md).
+
 ## Configuration and docs
 
 - [`cartograph.toml`](docs/cartograph-toml.md): layers, rules (`max_fan_out`,
@@ -169,6 +179,7 @@ server's freshness and robustness guarantees.
   writes a first one.
 - [docs/mcp.md](docs/mcp.md): the MCP server, its tools, evals and usage stats.
 - [docs/diff.md](docs/diff.md): `diff` and `check --base`.
+- [docs/workspace.md](docs/workspace.md): several repositories as one map.
 - [docs/api-f2.md](docs/api-f2.md): the HTTP API behind the web UI.
 - [docs/release.md](docs/release.md): building release archives and publishing to npm.
 - [web/README.md](web/README.md) and [web/DESIGN.md](web/DESIGN.md): the web UI.

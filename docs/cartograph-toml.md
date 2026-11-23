@@ -82,6 +82,17 @@ Los hallazgos que miden el repo contra sí mismo usan la valla de Tukey sobre la
 ## `ignore`
 Lista de rutas cuyos archivos quedan fuera de todos los hallazgos (no aparecen ni rompen reglas). No cambia el índice ni las consultas como `explain` o `deps`.
 
+## En un workspace
+
+En un `cartograph-workspace.toml` (ver [workspace.md](workspace.md)) valen `[[layers]]`,
+`[rules]`, `ignore`, `[thresholds]` y `[findings]` con esta misma gramática; las rutas
+empiezan por el nombre de un miembro (`paths = ["api"]`) y juzgan todas las dependencias.
+El `cartograph.toml` propio de cada miembro se rebasa: sus capas se llaman
+`<miembro>.<capa>` (`api.web`), sus rutas quedan bajo la carpeta del miembro y juzgan solo
+las dependencias dentro de él (`layer_violation:api.web->api.db`). Su `ignore`,
+`no_cycles` y `max_fan_out` se aplican rebasados; sus `[thresholds]` y `[findings]` no se
+leen. `[workspace]`, `[[member]]` y `[bridges]` solo valen en el archivo del workspace.
+
 ## Errores
 Cualquier clave desconocida, tipo incorrecto, capa inexistente o glob inválido es un error con archivo, línea y clave, por ejemplo:
 

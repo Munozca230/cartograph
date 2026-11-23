@@ -215,6 +215,27 @@ has an index. Without an MCP client, the same answers come from the CLI:
 `cartograph query <overview|explain|deps|impact|find|path|symbols|callers|hierarchy|entries|findings|hotspots> …`,
 `cartograph check` and `cartograph diff`.
 
+### A workspace of several repositories
+
+`cartograph mcp <parent>` on a folder with a `cartograph-workspace.toml` serves every
+member at once (see [workspace.md](workspace.md)): paths are `member/path`, the alias
+`member:path` works in every argument, and a path relative to a member resolves when only
+one member has it. From inside a member, serve the workspace with that member first:
+
+```json
+{
+  "mcpServers": {
+    "cartograph": {
+      "command": "cartograph",
+      "args": ["mcp", "--workspace", "../cartograph-workspace.toml", "--member", "api"]
+    }
+  }
+}
+```
+
+`diff` and `check` then take `base: "main"` (each member resolves it) or
+`"api=feat,lib=main"`.
+
 ## Recommended agent workflow
 
 Instructions you can give a coding agent (in its rules or prompt file) so it works from
