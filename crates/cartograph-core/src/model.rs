@@ -44,6 +44,10 @@ pub enum EdgeKind {
     Implements,
     Route,
     Uses,
+    /// Derived: File → File over a matched HTTP or IPC bridge (see [`crate::bridge`]).
+    /// `weight` = number of bridged sites, confidence = the best of them. Not an import:
+    /// cycles, layer rules and size measures never see it.
+    Bridge,
 }
 
 /// How sure the indexer is about an edge.
@@ -139,6 +143,7 @@ str_enum!(EdgeKind {
     Contains => "contains", Manifest => "manifest", Import => "import",
     ImportExternal => "import_external", DependsOn => "depends_on", Call => "call",
     Extends => "extends", Implements => "implements", Route => "route", Uses => "uses",
+    Bridge => "bridge",
 });
 str_enum!(Confidence { Exact => "exact", Resolved => "resolved", Heuristic => "heuristic" });
 str_enum!(SkipReason {
@@ -553,6 +558,12 @@ pub struct Symbols {
     /// What imported SCIP indexes (N3) changed here; empty without one.
     #[serde(default, skip_serializing_if = "crate::scip::ScipCoverage::is_empty")]
     pub scip: crate::scip::ScipCoverage,
+    /// Both sides of every bridge found, matched or not (see [`crate::bridge`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub endpoints: Vec<crate::bridge::BridgeEndpoint>,
+    /// The bridges matched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bridges: Vec<crate::bridge::Bridge>,
 }
 
 impl Symbols {
@@ -576,6 +587,10 @@ impl Symbols {
         self.supers.sort_by(|a, b| a.sub.cmp(&b.sub));
         self.supers.dedup();
         self.scip.normalize();
+        self.endpoints.sort();
+        self.endpoints.dedup();
+        self.bridges.sort();
+        self.bridges.dedup();
     }
 }
 

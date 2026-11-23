@@ -9,8 +9,8 @@
 //!
 //! This module reads the members. The architecture rules of the file (`[[layers]]`,
 //! `[rules]`, `ignore`, `[thresholds]`, `[findings]`) are read by `cartograph-query` with
-//! the grammar of `cartograph.toml`; `[bridges]`, `[member.http]` and `produces` are
-//! accepted and left to the features that read them.
+//! the grammar of `cartograph.toml`; `[bridges]` is read here; `[member.http]` and
+//! `produces` are accepted and left to the features that read them.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -50,6 +50,8 @@ pub struct Workspace {
     pub name: String,
     /// In the order of the file.
     pub members: Vec<Member>,
+    /// `[bridges]` as written (see [`crate::bridge::BridgeSettings`]).
+    pub bridges: crate::bridge::BridgeSettings,
 }
 
 /// A problem in a workspace file: where (file, line, key) and what.
@@ -97,7 +99,7 @@ struct RawFile {
     findings: Option<toml::Value>,
     // Cross-repository links (HTTP, IPC, packages): read by the features that build them.
     #[serde(default)]
-    bridges: Option<toml::Value>,
+    bridges: Option<Spanned<toml::Value>>,
 }
 
 #[derive(Deserialize)]
@@ -238,8 +240,12 @@ impl Workspace {
             &raw.ignore,
             &raw.thresholds,
             &raw.findings,
-            &raw.bridges,
         );
+        let bridges = match &raw.bridges {
+            Some(b) => crate::bridge::BridgeSettings::parse(b.get_ref())
+                .map_err(|m| err(at(b.span()), Some("bridges".into()), m))?,
+            None => crate::bridge::BridgeSettings::default(),
+        };
         let name = raw
             .workspace
             .and_then(|w| w.name)
@@ -256,6 +262,7 @@ impl Workspace {
             dir: dir.to_path_buf(),
             name,
             members,
+            bridges,
         })
     }
 
@@ -407,6 +414,19 @@ paths = ["lib"]
         );
         assert_eq!(w.to_disk("api"), Some(clean(Path::new("/ws/backend-api"))));
         assert_eq!(w.to_disk("logs/app.log"), None);
+        assert_eq!(w.bridges.http, Some(true));
+        assert_eq!(w.bridges.ipc, None);
+        let bad = parse(
+            "[[member]]
+name = \"api\"
+path = \"a\"
+[bridges]
+https = true
+",
+        )
+        .unwrap_err();
+        assert_eq!(bad.key.as_deref(), Some("bridges"));
+        assert_eq!(bad.line, Some(4));
     }
 
     #[test]

@@ -104,6 +104,20 @@ pub struct Dep {
     pub implicit: bool,
 }
 
+/// One file → file bridge (from the point of view of its owner list: `file` is the other
+/// end): a derived edge of kind `bridge` (an HTTP call or an IPC channel matched to its
+/// other side). Kept apart from [`Dep`]: no import-based measure (cycles, layers, fan-in,
+/// orphans, god modules, hubs, chains) ever sees one; `deps`, `impact`, `path` and flows
+/// read them on purpose, and layer rules only with `[rules] layers_count_bridges`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeDep {
+    pub file: FileIx,
+    /// Number of bridged sites.
+    pub weight: u64,
+    /// Every bridged site was a guess.
+    pub heuristic: bool,
+}
+
 /// What an import site resolved to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -149,6 +163,10 @@ pub struct RepoGraph {
     pub out: Vec<Vec<Dep>>,
     /// Dependents of each file, sorted by source (`Dep::file` is the source).
     pub inn: Vec<Vec<Dep>>,
+    /// Bridges out of each file, sorted by target (see [`BridgeDep`]).
+    pub bridge_out: Vec<Vec<BridgeDep>>,
+    /// Bridges into each file, sorted by source.
+    pub bridge_in: Vec<Vec<BridgeDep>>,
     /// External packages each file imports.
     pub ext_out: Vec<Vec<ExtIx>>,
     /// Files importing each external package.
@@ -409,10 +427,25 @@ impl RepoGraph {
         let mut pairs: BTreeMap<(FileIx, FileIx), Dep> = BTreeMap::new();
         let mut ext_pairs: BTreeSet<(FileIx, ExtIx)> = BTreeSet::new();
         let mut dir_imports = 0u64;
+        let mut bridge_pairs: BTreeMap<(FileIx, FileIx), BridgeDep> = BTreeMap::new();
         for e in &graph.edges {
             let Some(src) = lookup_file(&e.src) else {
                 continue;
             };
+            if e.kind == EdgeKind::Bridge {
+                if let Some(dst) = lookup_file(&e.dst)
+                    && dst != src
+                {
+                    let b = bridge_pairs.entry((src, dst)).or_insert(BridgeDep {
+                        file: dst,
+                        weight: 0,
+                        heuristic: true,
+                    });
+                    b.weight += e.weight;
+                    b.heuristic &= e.confidence == Confidence::Heuristic;
+                }
+                continue;
+            }
             if e.kind == EdgeKind::ImportExternal {
                 if let Some(&x) = ext_ix.get(&e.dst) {
                     ext_pairs.insert((src, x));
@@ -466,6 +499,15 @@ impl RepoGraph {
         for v in &mut inn {
             v.sort_by_key(|d| d.file);
         }
+        let mut bridge_out: Vec<Vec<BridgeDep>> = vec![Vec::new(); n];
+        let mut bridge_in: Vec<Vec<BridgeDep>> = vec![Vec::new(); n];
+        for (&(src, dst), b) in &bridge_pairs {
+            bridge_out[src as usize].push(*b);
+            bridge_in[dst as usize].push(BridgeDep { file: src, ..*b });
+        }
+        for v in &mut bridge_in {
+            v.sort_by_key(|d| d.file);
+        }
         let mut ext_out: Vec<Vec<ExtIx>> = vec![Vec::new(); n];
         let mut ext_in: Vec<Vec<FileIx>> = vec![Vec::new(); externals.len()];
         for &(f, x) in &ext_pairs {
@@ -516,6 +558,8 @@ impl RepoGraph {
             externals,
             out,
             inn,
+            bridge_out,
+            bridge_in,
             ext_out,
             ext_in,
             sites,
@@ -659,6 +703,11 @@ impl RepoGraph {
         self.out[src as usize].iter().find(|d| d.file == dst)
     }
 
+    /// The bridge `src → dst`, if there is one.
+    pub fn bridge(&self, src: FileIx, dst: FileIx) -> Option<&BridgeDep> {
+        self.bridge_out[src as usize].iter().find(|d| d.file == dst)
+    }
+
     /// Whether `src → dst` is a type-only dependency.
     pub fn type_only(&self, src: FileIx, dst: FileIx) -> bool {
         self.dep(src, dst).is_some_and(|d| d.type_only)
@@ -686,7 +735,11 @@ impl RepoGraph {
                     .find(|x| x.file == dst)
                     .map_or(Vec::new(), |x| kind_names(x.kinds));
                 if kinds.is_empty() {
-                    format!("{s} → {d}")
+                    if self.bridge(src, dst).is_some() {
+                        format!("{s} → {d} (bridge)")
+                    } else {
+                        format!("{s} → {d}")
+                    }
                 } else {
                     format!("{s} → {d} ({})", kinds.join(","))
                 }

@@ -12,6 +12,7 @@
     )
 )]
 
+pub mod bridge;
 pub mod history;
 pub mod manifest_entry;
 pub mod model;
@@ -19,6 +20,7 @@ pub mod scip;
 pub mod store;
 pub mod workspace;
 
+pub use bridge::{Bridge, BridgeEndpoint, BridgeKind, BridgeRole, BridgeSettings, Bridges};
 pub use history::{
     AuthorShare, ChangeKind, CoChange, FileHistory, GitAuthor, GitChange, GitCommit, GitRaw,
     GitState, GitStatus, History,

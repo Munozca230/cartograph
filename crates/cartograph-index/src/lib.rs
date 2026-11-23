@@ -18,6 +18,7 @@
 )]
 
 pub mod aggregate;
+pub mod bridges;
 pub mod git;
 pub mod godot;
 pub mod grammars;
@@ -331,6 +332,8 @@ pub struct Layout {
     pub name: String,
     pub mounts: Vec<Mount>,
     pub workspace: Option<cartograph_core::Workspace>,
+    /// The bridges to build (`[bridges]` of the workspace file or of `cartograph.toml`).
+    pub bridges: cartograph_core::Bridges,
 }
 
 impl Layout {
@@ -341,8 +344,10 @@ impl Layout {
                 name: repo_name(root),
                 mounts: vec![Mount::new("", root)],
                 workspace: None,
+                bridges: cartograph_core::BridgeSettings::of_repo(root).resolve(false),
             },
             Some(ws) => Layout {
+                bridges: ws.bridges.resolve(true),
                 name: ws.name.clone(),
                 mounts: ws
                     .members
@@ -398,6 +403,8 @@ struct Source<'a> {
     /// SCIP indexes to merge (N3), with the prefix of the mount each belongs to; used only
     /// with `symbols`.
     scip: &'a [scip::Loaded],
+    /// The bridges to build; used only with `symbols`.
+    bridges: cartograph_core::Bridges,
 }
 
 impl<'a> Source<'a> {
@@ -412,10 +419,11 @@ impl<'a> Source<'a> {
             name: repo_name(root),
             symbols: true,
             scip: &[],
+            bridges: cartograph_core::BridgeSettings::of_repo(root).resolve(false),
         }
     }
 
-    fn of_mounts(name: &str, mounts: &'a [Mount]) -> Source<'a> {
+    fn of_mounts(name: &str, mounts: &'a [Mount], bridges: cartograph_core::Bridges) -> Source<'a> {
         Source {
             mounts: mounts
                 .iter()
@@ -429,6 +437,7 @@ impl<'a> Source<'a> {
             name: name.to_string(),
             symbols: true,
             scip: &[],
+            bridges,
         }
     }
 }
@@ -481,6 +490,7 @@ pub fn index_mounts(
         name: name.to_string(),
         mounts: mounts.to_vec(),
         workspace: None,
+        bridges: cartograph_core::BridgeSettings::default().resolve(false),
     };
     index_layout(&layout, opts)
 }
@@ -492,7 +502,7 @@ fn index_layout(layout: &Layout, opts: &IndexOptions) -> Result<IndexOutput, Ind
     let load_ms = started.elapsed().as_millis();
     let src = Source {
         scip: &loaded,
-        ..Source::of_mounts(&layout.name, &layout.mounts)
+        ..Source::of_mounts(&layout.name, &layout.mounts, layout.bridges)
     };
     let (mut out, _) = index_inner(&src, opts, None)?;
     out.timings.scip_ms += load_ms;
@@ -722,7 +732,7 @@ fn index_inner(
             .iter()
             .map(|(path, lang, code)| symbols::resolve::FileCode { path, lang, code })
             .collect();
-        let mut s = symbols::resolve::resolve(&graph, &files, &rust_call_paths);
+        let mut s = symbols::resolve::resolve(&graph, &files, &rust_call_paths, src.bridges);
         let pages: Vec<(&str, &str)> = configs
             .iter()
             .filter(|(p, _)| p.rsplit('/').next() == Some("index.html"))
@@ -748,6 +758,11 @@ fn index_inner(
         let started = Instant::now();
         p.merge_symbols(&mut symbols);
         scip_ms += started.elapsed().as_millis();
+    }
+    // Matched bridges become derived edges (never counted by `aggregate`).
+    if !symbols.bridges.is_empty() {
+        graph.edges.extend(bridges::edges(&symbols.bridges));
+        graph.normalize();
     }
 
     let timings = Timings {
@@ -842,7 +857,7 @@ pub fn index_working_tree(
     let layout = Layout::of(root)?;
     let src = Source {
         symbols: false,
-        ..Source::of_mounts(&layout.name, &layout.mounts)
+        ..Source::of_mounts(&layout.name, &layout.mounts, layout.bridges)
     };
     // The data dir is left out of the walk, as when indexing to it (when it exists).
     let opts = IndexOptions {
@@ -893,7 +908,7 @@ pub fn index_to_store(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, I
     }
     let src = Source {
         scip: &loaded,
-        ..Source::of_mounts(&layout.name, &layout.mounts)
+        ..Source::of_mounts(&layout.name, &layout.mounts, layout.bridges)
     };
     let scip_load_ms = scip_started.elapsed().as_millis();
     let (mut out, delta) = index_inner(&src, &opts, Some(&cache))?;

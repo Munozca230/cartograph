@@ -31,7 +31,7 @@ fn set_violations(cx: &Ctx<'_>, layers: &[Layer]) -> Vec<Finding> {
         })
         .collect();
     let mut pairs: BTreeMap<(usize, usize), Vec<(FileIx, FileIx)>> = BTreeMap::new();
-    for (a, deps) in cx.adj.iter().enumerate() {
+    for (a, deps) in cx.layer_adj.iter().enumerate() {
         let Some(la) = layer[a] else { continue };
         for &b in deps {
             let Some(lb) = layer[b as usize] else {

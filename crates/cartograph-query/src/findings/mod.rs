@@ -149,6 +149,9 @@ pub(crate) struct Ctx<'a> {
     pub code_adj: crate::algo::Adj,
     /// Every dependency between active code files, type-only ones included (deep chains).
     pub chain_adj: crate::algo::Adj,
+    /// What layer rules judge: [`Ctx::adj`], plus bridges between active files with
+    /// `[rules] layers_count_bridges`.
+    pub layer_adj: crate::algo::Adj,
 }
 
 /// Files that take part in the findings: not tests, not ignored by the config. Tests depend
@@ -184,7 +187,31 @@ fn active_deps(g: &RepoGraph, active: &[bool], runtime: bool) -> crate::algo::Ad
 /// detectors see them ([`Ctx::adj`]): what `diff` and `check --base` compare to tell
 /// whether a violation got worse.
 pub(crate) fn rule_deps(g: &RepoGraph, cfg: &Config) -> crate::algo::Adj {
-    active_deps(g, &active_files(g, cfg), false)
+    let active = active_files(g, cfg);
+    layer_deps(g, cfg, &active, active_deps(g, &active, false))
+}
+
+/// `adj` plus the bridges between active files when `[rules] layers_count_bridges` is on.
+fn layer_deps(
+    g: &RepoGraph,
+    cfg: &Config,
+    active: &[bool],
+    mut adj: crate::algo::Adj,
+) -> crate::algo::Adj {
+    if cfg.layers_count_bridges {
+        for (i, bs) in g.bridge_out.iter().enumerate() {
+            if !active[i] {
+                continue;
+            }
+            for b in bs {
+                if active[b.file as usize] && !adj[i].contains(&b.file) {
+                    adj[i].push(b.file);
+                }
+            }
+            adj[i].sort_unstable();
+        }
+    }
+    adj
 }
 
 impl<'a> Ctx<'a> {
@@ -209,6 +236,7 @@ impl<'a> Ctx<'a> {
         let rt_adj = deps_of(true);
         let code_adj = code_only(&rt_adj);
         let chain_adj = code_only(&adj);
+        let layer_adj = layer_deps(g, cfg, &active, adj.clone());
         Ctx {
             g,
             cfg,
@@ -217,6 +245,7 @@ impl<'a> Ctx<'a> {
             rt_adj,
             code_adj,
             chain_adj,
+            layer_adj,
         }
     }
 }
@@ -385,5 +414,81 @@ mod tests {
         assert_eq!(json["nodes_more"], 5);
         let keys: Vec<&String> = json.as_object().unwrap().keys().collect();
         assert!(!keys.iter().any(|k| k.starts_with("dropped")), "{keys:?}");
+    }
+
+    /// `ui/a.ts` imports `core/b.ts`, and `core/b.ts` reaches `ui/a.ts` over a bridge.
+    fn bridged() -> RepoGraph {
+        let mut g = Graph::default();
+        g.nodes.push(node(NodeKind::Repo, ""));
+        for p in ["ui", "core"] {
+            g.nodes.push(node(NodeKind::Dir, p));
+        }
+        for p in ["ui/a.ts", "core/b.ts"] {
+            g.nodes.push(node(NodeKind::File, p));
+        }
+        let f = |p: &str| node_id(NodeKind::File, p);
+        g.edges.push(Edge::new(
+            f("ui/a.ts"),
+            f("core/b.ts"),
+            EdgeKind::Import,
+            Confidence::Exact,
+        ));
+        g.edges.push(Edge {
+            weight: 2,
+            ..Edge::new(
+                f("core/b.ts"),
+                f("ui/a.ts"),
+                EdgeKind::Bridge,
+                Confidence::Resolved,
+            )
+        });
+        RepoGraph::build(&g)
+    }
+
+    #[test]
+    fn a_bridge_is_no_import_for_cycles_or_layers_unless_layers_count_it() {
+        let g = bridged();
+        let (a, b) = (
+            g.file_by_path("ui/a.ts").unwrap(),
+            g.file_by_path("core/b.ts").unwrap(),
+        );
+        assert_eq!(g.bridge(b, a).map(|d| d.weight), Some(2));
+        assert!(g.dep(b, a).is_none(), "a bridge is not a Dep");
+        assert_eq!(g.fan_in(a), 0);
+        let rules = "[[layers]]
+name = \"ui\"
+paths = [\"ui\"]
+[[layers]]
+name = \"core\"
+paths = [\"core\"]
+forbid = [\"ui\"]
+";
+        let cfg = Config::parse(rules, "cartograph.toml").unwrap();
+        let found = analyze(&g, &cfg, &crate::history::GitTable::default());
+        assert!(
+            !found
+                .iter()
+                .any(|f| matches!(f.kind, FindingKind::Cycle | FindingKind::LayerViolation)),
+            "{found:#?}"
+        );
+        let counted = Config::parse(
+            &format!(
+                "{rules}[rules]
+layers_count_bridges = true
+"
+            ),
+            "cartograph.toml",
+        )
+        .unwrap();
+        let found = analyze(&g, &counted, &crate::history::GitTable::default());
+        let v: Vec<&Finding> = found
+            .iter()
+            .filter(|f| f.kind == FindingKind::LayerViolation)
+            .collect();
+        assert_eq!(v.len(), 1, "{found:#?}");
+        assert!(v[0].id.ends_with("core->ui"), "{}", v[0].id);
+        assert!(!found.iter().any(|f| f.kind == FindingKind::Cycle));
+        assert_eq!(rule_deps(&g, &counted)[b as usize], vec![a]);
+        assert!(rule_deps(&g, &cfg)[b as usize].is_empty());
     }
 }

@@ -51,6 +51,7 @@
 //! file) stops there: it is never matched by name elsewhere. Several candidates with
 //! different ids are *ambiguous*; nothing is guessed.
 
+mod bridge;
 mod hier;
 
 use super::RustCallPaths;
@@ -845,7 +846,12 @@ struct FileResult {
 
 /// Resolve every file's calls and entry points. `files` are the extractions of the files
 /// of `graph` (import sites and edges must already be resolved).
-pub fn resolve(graph: &Graph, files: &[FileCode<'_>], rust_paths: &RustCallPaths) -> Symbols {
+pub fn resolve(
+    graph: &Graph,
+    files: &[FileCode<'_>],
+    rust_paths: &RustCallPaths,
+    bridges: cartograph_core::Bridges,
+) -> Symbols {
     let manifests: HashSet<&str> = graph
         .nodes_of(NodeKind::File)
         .filter(|n| n.path.rsplit('/').next() == Some("Cargo.toml"))
@@ -877,6 +883,9 @@ pub fn resolve(graph: &Graph, files: &[FileCode<'_>], rust_paths: &RustCallPaths
     }
     out.entries.extend(godot_entries(graph));
     out.entries.extend(npm_main_entries(graph));
+    let found = bridge::run(&ctx, &binds, &g, bridges);
+    out.endpoints = found.endpoints;
+    out.bridges = found.bridges;
     out.normalize();
     out
 }

@@ -376,6 +376,7 @@ fn snapshot_of(
             name: crate::repo_name(root),
             symbols: false,
             scip: &[],
+            bridges: cartograph_core::Bridges::OFF,
         };
         let walk_opts = IndexOptions {
             data_dir: None,
@@ -642,6 +643,7 @@ pub fn workspace_snapshot(
             name: ws.name.clone(),
             symbols: false,
             scip: &[],
+            bridges: cartograph_core::Bridges::OFF,
         };
         let stored;
         let cache = match cache {

@@ -232,6 +232,34 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE git_commits ADD COLUMN member TEXT NOT NULL DEFAULT '';
     "#,
+    // v12: bridges (HTTP, IPC, packages; see `crate::bridge`): both sides of each one
+    // found, and the ones matched. They belong to the symbol layer and are cleared with it.
+    // Self-contained: no other table changes.
+    r#"
+    CREATE TABLE bridge_endpoints (
+        kind       TEXT NOT NULL,
+        role       TEXT NOT NULL,
+        key        TEXT NOT NULL,
+        label      TEXT NOT NULL,
+        file       TEXT NOT NULL,
+        line       INTEGER NOT NULL,
+        symbol     TEXT,
+        confidence TEXT NOT NULL,
+        detail     TEXT
+    );
+    CREATE TABLE bridges (
+        kind       TEXT NOT NULL,
+        subtype    TEXT NOT NULL,
+        src_file   TEXT NOT NULL,
+        src_line   INTEGER NOT NULL,
+        src        TEXT,
+        dst_file   TEXT NOT NULL,
+        dst_line   INTEGER NOT NULL,
+        dst        TEXT,
+        key        TEXT NOT NULL,
+        confidence TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// One row of the SCIP cache: the decoded form (`data`, opaque to the store) of the SCIP
@@ -1075,6 +1103,9 @@ fn clear_symbols(conn: &Connection) -> Result<()> {
         conn.execute_batch("DELETE FROM scip_files; DELETE FROM scip_symbols;")?;
     }
     conn.execute("DELETE FROM meta WHERE key = ?1", [SCIP_STATS])?;
+    if has_table(conn, "bridges")? {
+        conn.execute_batch("DELETE FROM bridge_endpoints; DELETE FROM bridges;")?;
+    }
     Ok(())
 }
 
@@ -1170,6 +1201,49 @@ fn insert_symbols(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
         }
         if let Some(st) = &s.scip.stats {
             set_meta(tx, SCIP_STATS, &serde_json::to_string(st)?)?;
+        }
+    }
+    // A database held at an older version by a test has no bridge tables.
+    let bridges = (!s.endpoints.is_empty() || !s.bridges.is_empty()) && has_table(tx, "bridges")?;
+    if bridges && !s.endpoints.is_empty() {
+        let mut stmt = tx.prepare(
+            "INSERT INTO bridge_endpoints
+             (kind, role, key, label, file, line, symbol, confidence, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )?;
+        for e in &s.endpoints {
+            stmt.execute(params![
+                e.kind.as_str(),
+                e.role.as_str(),
+                e.key,
+                e.label,
+                e.file,
+                e.line,
+                e.symbol,
+                e.confidence.as_str(),
+                e.detail
+            ])?;
+        }
+    }
+    if bridges && !s.bridges.is_empty() {
+        let mut stmt = tx.prepare(
+            "INSERT INTO bridges
+             (kind, subtype, src_file, src_line, src, dst_file, dst_line, dst, key, confidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )?;
+        for b in &s.bridges {
+            stmt.execute(params![
+                b.kind.as_str(),
+                b.subtype,
+                b.src_file,
+                b.src_line,
+                b.src,
+                b.dst_file,
+                b.dst_line,
+                b.dst,
+                b.key,
+                b.confidence.as_str()
+            ])?;
         }
     }
     Ok(())
@@ -1314,8 +1388,80 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
         })
         .optional()?;
     out.scip.stats = stats.map(|v| serde_json::from_str(&v)).transpose()?;
+    if has_table(conn, "bridges")? {
+        read_bridges(conn, &mut out)?;
+    }
     out.normalize();
     Ok(out)
+}
+
+fn read_bridges(conn: &Connection, out: &mut Symbols) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT kind, role, key, label, file, line, symbol, confidence, detail
+         FROM bridge_endpoints",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, u32>(5)?,
+            r.get::<_, Option<String>>(6)?,
+            r.get::<_, String>(7)?,
+            r.get::<_, Option<String>>(8)?,
+        ))
+    })?;
+    for row in rows {
+        let (kind, role, key, label, file, line, symbol, confidence, detail) = row?;
+        out.endpoints.push(crate::bridge::BridgeEndpoint {
+            kind: kind.parse()?,
+            role: role.parse()?,
+            key,
+            label,
+            file,
+            line,
+            symbol,
+            confidence: confidence.parse()?,
+            detail,
+        });
+    }
+    let mut stmt = conn.prepare(
+        "SELECT kind, subtype, src_file, src_line, src, dst_file, dst_line, dst, key, confidence
+         FROM bridges",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, u32>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, u32>(6)?,
+            r.get::<_, Option<String>>(7)?,
+            r.get::<_, String>(8)?,
+            r.get::<_, String>(9)?,
+        ))
+    })?;
+    for row in rows {
+        let (kind, subtype, src_file, src_line, src, dst_file, dst_line, dst, key, confidence) =
+            row?;
+        out.bridges.push(crate::bridge::Bridge {
+            kind: kind.parse()?,
+            subtype,
+            src_file,
+            src_line,
+            src,
+            dst_file,
+            dst_line,
+            dst,
+            key,
+            confidence: confidence.parse()?,
+        });
+    }
+    Ok(())
 }
 
 fn insert_graph(tx: &Transaction<'_>, graph: &Graph) -> Result<()> {
@@ -1888,9 +2034,81 @@ mod tests {
             ],
             indexed: true,
             scip: Default::default(),
+            endpoints: Vec::new(),
+            bridges: Vec::new(),
         };
         s.normalize();
         s
+    }
+
+    /// [`sample_symbols`] with bridges (schema v12).
+    fn sample_bridged() -> Symbols {
+        let mut s = Symbols {
+            endpoints: vec![
+                crate::BridgeEndpoint {
+                    kind: crate::BridgeKind::Ipc,
+                    role: crate::BridgeRole::Provide,
+                    key: "users:get".into(),
+                    label: "ipcMain.handle".into(),
+                    file: "src/main.ts".into(),
+                    line: 3,
+                    symbol: Some("sym:src/main.ts#getUser".into()),
+                    confidence: Confidence::Resolved,
+                    detail: None,
+                },
+                crate::BridgeEndpoint {
+                    kind: crate::BridgeKind::Ipc,
+                    role: crate::BridgeRole::Consume,
+                    key: String::new(),
+                    label: "invoke".into(),
+                    file: "src/preload.ts".into(),
+                    line: 9,
+                    symbol: None,
+                    confidence: Confidence::Heuristic,
+                    detail: Some("dynamic".into()),
+                },
+            ],
+            bridges: vec![crate::Bridge {
+                kind: crate::BridgeKind::Ipc,
+                subtype: "invoke".into(),
+                src_file: "src/preload.ts".into(),
+                src_line: 4,
+                src: Some("sym:src/preload.ts#api.getUser".into()),
+                dst_file: "src/main.ts".into(),
+                dst_line: 3,
+                dst: None,
+                key: "users:get".into(),
+                confidence: Confidence::Exact,
+            }],
+            ..sample_symbols()
+        };
+        s.normalize();
+        s
+    }
+
+    #[test]
+    fn migrates_a_v11_db_to_v12_with_no_bridges() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let mut store = Store { conn };
+            store.migrate_to(11).unwrap();
+            let tx = store.begin_replace().unwrap();
+            tx.write_graph(&sample()).unwrap();
+            tx.write_symbols(&sample_symbols()).unwrap();
+            tx.commit().unwrap();
+        }
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        assert_eq!(store.load_symbols().unwrap(), sample_symbols());
+        let tx = store.begin_replace().unwrap();
+        tx.write_symbols(&sample_bridged()).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(store.load_symbols().unwrap(), sample_bridged());
+        // A new graph clears them with the rest of the layer.
+        store.replace_graph(&other()).unwrap();
+        assert_eq!(store.load_symbols().unwrap(), Symbols::default());
     }
 
     #[test]

@@ -209,6 +209,9 @@ pub struct Config {
     pub thresholds: Thresholds,
     /// Finding kinds turned off.
     pub disabled: BTreeSet<FindingKind>,
+    /// `[rules] layers_count_bridges`: layer rules judge HTTP and IPC bridges as they
+    /// judge imports (off: a client may call a layer it must not import).
+    pub layers_count_bridges: bool,
 }
 
 #[derive(Deserialize)]
@@ -252,6 +255,8 @@ struct RawRules {
     max_fan_out: Option<Spanned<i64>>,
     #[serde(default)]
     no_cycles: Option<Spanned<NoCyclesRaw>>,
+    #[serde(default)]
+    layers_count_bridges: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -493,12 +498,14 @@ impl Config {
             err(line, None, msg)
         })?;
         let at = |s: std::ops::Range<usize>| Some(line_of(text, s.start));
+        // `[bridges]` is read by the indexer (`cartograph_core::BridgeSettings`); checked
+        // here so a mistake is reported with the rest of the file.
+        if let Some(b) = &raw.bridges {
+            cartograph_core::BridgeSettings::parse(b.get_ref())
+                .map_err(|m| err(at(b.span()), Some("bridges".into()), m))?;
+        }
         if !workspace {
-            for (key, v) in [
-                ("workspace", &raw.workspace),
-                ("member", &raw.member),
-                ("bridges", &raw.bridges),
-            ] {
+            for (key, v) in [("workspace", &raw.workspace), ("member", &raw.member)] {
                 if let Some(v) = v {
                     return Err(err(
                         at(v.span()),
@@ -600,6 +607,9 @@ impl Config {
                     ));
                 }
                 cfg.max_fan_out = Some(v as usize);
+            }
+            if let Some(b) = rules.layers_count_bridges {
+                cfg.layers_count_bridges = b;
             }
             if let Some(nc) = &rules.no_cycles {
                 cfg.no_cycles = match nc.get_ref() {
