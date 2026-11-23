@@ -725,3 +725,48 @@ tool = "deps"
 args = { node = "desktop:src/renderer/App.tsx" }
 contains = ["ui/src/index.ts"]
 not_contains = ["npm:@acme/ui-kit"]
+
+[[case]]
+id = "br-http-callers-of-route"
+repo = "bridges"
+question = "Which client code calls GET /api/users/{id} (UserController.get), in any repository?"
+tool = "callers"
+args = { symbol = "UserController.get" }
+contains = ["over HTTP", "desktop/src/main/http/UsersApi.ts", "web/src/users.ts"]
+not_contains = ["UsersApi.me"]
+budget = 1000
+
+[[case]]
+id = "br-http-findings"
+repo = "bridges"
+question = "Does every API route the clients call exist, with the method they use?"
+tool = "findings"
+args = { kind = ["http_unmatched_call", "http_method_mismatch"] }
+contains = ["POST /api/reports/generate", "PUT /api/users/me"]
+not_contains = ["audit.example.com", "/api/users/search"]
+
+[[case]]
+id = "br-http-explain-unmatched"
+repo = "bridges"
+question = "Which calls of the desktop's users API have no route on the server?"
+tool = "explain"
+args = { node = "desktop:src/main/http/UsersApi.ts" }
+contains = ["left without the other side", "/api/reports/generate"]
+budget = 1000
+
+[[case]]
+id = "br-http-bridges-unmatched"
+repo = "bridges"
+question = "What HTTP is left without its other side?"
+tool = "bridges"
+args = { kind = "http", unmatched = true }
+contains = ["unmatched", "method_mismatch", "external", "dynamic", "POST /v2/jobs/{}"]
+budget = 1000
+
+[[case]]
+id = "br-http-path-client-to-gateway"
+repo = "bridges"
+question = "How does the web app reach the gateway's jobs router?"
+tool = "path"
+args = { from = "web:src/users.ts", to = "gateway:src/jobs.ts" }
+contains = ["http fetch POST /v1/jobs/{}", "gateway/src/jobs.ts"]
