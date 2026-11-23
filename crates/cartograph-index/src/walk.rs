@@ -101,6 +101,9 @@ pub struct WalkOutput {
     pub read_ms: u128,
 }
 
+/// A path the walk leaves out, with why when it is not one of the fixed names.
+type Excluded = (String, Option<String>);
+
 /// Walk `root` and read every candidate file in parallel. `extra_excluded` holds
 /// repo-relative paths to skip as well (a custom data dir inside the repo, or the database
 /// files when the data dir is the repo root); they are recorded as
@@ -112,7 +115,7 @@ pub fn walk(
     hooks: WalkHooks<'_>,
 ) -> WalkOutput {
     let started = std::time::Instant::now();
-    let excluded: Arc<Mutex<Vec<(String, Option<String>)>>> = Arc::default();
+    let excluded: Arc<Mutex<Vec<Excluded>>> = Arc::default();
     let excluded_sink = Arc::clone(&excluded);
     let filter_root = root.to_path_buf();
     let extra: Vec<String> = extra_excluded.to_vec();
