@@ -188,6 +188,13 @@ fn active_deps(g: &RepoGraph, active: &[bool], runtime: bool) -> crate::algo::Ad
 /// detectors see them ([`Ctx::adj`]): what `diff` and `check --base` compare to tell
 /// whether a violation got worse.
 pub(crate) fn rule_deps(g: &RepoGraph, cfg: &Config) -> crate::algo::Adj {
+    active_deps(g, &active_files(g, cfg), false)
+}
+
+/// What layer rules judge ([`Ctx::layer_adj`]): [`rule_deps`], plus the bridges between
+/// active files with `[rules] layers_count_bridges`. Never `max_fan_out`: a bridge is no
+/// dependency of the file.
+pub(crate) fn layer_rule_deps(g: &RepoGraph, cfg: &Config) -> crate::algo::Adj {
     let active = active_files(g, cfg);
     layer_deps(g, cfg, &active, active_deps(g, &active, false))
 }
@@ -511,7 +518,11 @@ forbid = ["ui"]
         assert_eq!(v.len(), 1, "{found:#?}");
         assert!(v[0].id.ends_with("core->ui"), "{}", v[0].id);
         assert!(!found.iter().any(|f| f.kind == FindingKind::Cycle));
-        assert_eq!(rule_deps(&g, &counted)[b as usize], vec![a]);
+        assert_eq!(layer_rule_deps(&g, &counted)[b as usize], vec![a]);
+        assert!(
+            rule_deps(&g, &counted)[b as usize].is_empty(),
+            "no fan-out over a bridge"
+        );
         assert!(rule_deps(&g, &cfg)[b as usize].is_empty());
     }
 }

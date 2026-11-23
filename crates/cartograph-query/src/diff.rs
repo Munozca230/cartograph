@@ -21,7 +21,7 @@
 use crate::Repo;
 use crate::algo::Adj;
 use crate::budget::{Answer, clip, fit, limits};
-use crate::findings::{Finding, FindingKind, WITHIN_PACKAGE, rule_deps};
+use crate::findings::{Finding, FindingKind, WITHIN_PACKAGE, layer_rule_deps, rule_deps};
 use crate::graph::{FileIx, ROOT, RepoGraph};
 use crate::list::{Brief, render_brief};
 use serde::Serialize;
@@ -67,6 +67,10 @@ pub fn compare<'a>(base: &'a Repo, head: &'a Repo) -> Compared<'a> {
     let base_adj = rule_deps(&base.graph, &base.config);
     let head_adj = rule_deps(&head.graph, &head.config);
     let base_deps = dep_set(&base.graph, &base_adj);
+    // Layer rules may count bridges too (`layers_count_bridges`): their own dependencies.
+    let base_layer_adj = layer_rule_deps(&base.graph, &base.config);
+    let head_layer_adj = layer_rule_deps(&head.graph, &head.config);
+    let base_layer_deps = dep_set(&base.graph, &base_layer_adj);
     // Findings of each side by id, and the nodes of their cycles by kind: a cycle matches
     // one of the other side that shares a node. A cycle inside one Java package (info,
     // never a violation) does not stand for a cycle violation: once it crosses packages
@@ -106,11 +110,14 @@ pub fn compare<'a>(base: &'a Repo, head: &'a Repo) -> Compared<'a> {
             let change = if !matched(f, &base_ids, &base_cyc) {
                 Change::New
             } else if f.violation {
-                let fresh: Vec<(FileIx, FileIx)> = edges_of(head, &head_adj, f)
+                let (adj, deps) = if f.kind == FindingKind::LayerViolation {
+                    (&head_layer_adj, &base_layer_deps)
+                } else {
+                    (&head_adj, &base_deps)
+                };
+                let fresh: Vec<(FileIx, FileIx)> = edges_of(head, adj, f)
                     .into_iter()
-                    .filter(|&(a, b)| {
-                        !base_deps.contains(&(head.graph.path(a), head.graph.path(b)))
-                    })
+                    .filter(|&(a, b)| !deps.contains(&(head.graph.path(a), head.graph.path(b))))
                     .collect();
                 if fresh.is_empty() {
                     Change::Same
@@ -740,4 +747,89 @@ fn render(r: &DiffResult) -> String {
         s.push_str(&more(r.bridges_removed_more));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Config;
+    use cartograph_core::{Confidence, Edge, EdgeKind, Graph, Node, NodeKind, node_id};
+
+    fn node(kind: NodeKind, path: &str) -> Node {
+        Node {
+            id: node_id(kind, path),
+            kind,
+            path: path.to_string(),
+            name: path.rsplit('/').next().unwrap_or(path).to_string(),
+            lang: (kind == NodeKind::File).then(|| "typescript".to_string()),
+            loc: 1,
+            bytes: 1,
+            hash: None,
+            meta: serde_json::Value::Null,
+        }
+    }
+
+    /// `core/a.ts` imports `core/b.ts` and `core/c.ts`, `core/b.ts` reaches `ui/u.ts` over a
+    /// bridge; `extra` adds a bridge `core/a.ts` → `ui/u.ts`.
+    fn repo(extra: bool, cfg: &Config) -> Repo {
+        let mut g = Graph::default();
+        g.nodes.push(node(NodeKind::Repo, ""));
+        for d in ["core", "ui"] {
+            g.nodes.push(node(NodeKind::Dir, d));
+        }
+        for f in ["core/a.ts", "core/b.ts", "core/c.ts", "ui/u.ts"] {
+            g.nodes.push(node(NodeKind::File, f));
+        }
+        let f = |p: &str| node_id(NodeKind::File, p);
+        for (a, b, kind) in [
+            ("core/a.ts", "core/b.ts", EdgeKind::Import),
+            ("core/a.ts", "core/c.ts", EdgeKind::Import),
+            ("core/b.ts", "ui/u.ts", EdgeKind::Bridge),
+        ] {
+            g.edges.push(Edge::new(f(a), f(b), kind, Confidence::Exact));
+        }
+        if extra {
+            g.edges.push(Edge::new(
+                f("core/a.ts"),
+                f("ui/u.ts"),
+                EdgeKind::Bridge,
+                Confidence::Exact,
+            ));
+        }
+        Repo::new(&g, cfg.clone())
+    }
+
+    #[test]
+    fn bridges_make_only_layer_violations_worse() {
+        let cfg = Config::parse(
+            r#"
+[[layers]]
+name = "ui"
+paths = ["ui"]
+[[layers]]
+name = "core"
+paths = ["core"]
+forbid = ["ui"]
+[rules]
+max_fan_out = 1
+layers_count_bridges = true
+"#,
+            "cartograph.toml",
+        )
+        .unwrap();
+        // Nothing changed: the bridge in both sides is no new evidence.
+        let (base, head) = (repo(false, &cfg), repo(false, &cfg));
+        let c = compare(&base, &head);
+        assert!(
+            c.introduced().next().is_none(),
+            "{:?}",
+            c.head.iter().map(|(f, _)| &f.id).collect::<Vec<_>>()
+        );
+        // A new bridge: the layer violation is worse, the fan-out one is not (bridges are no
+        // dependency of the file).
+        let head = repo(true, &cfg);
+        let c = compare(&base, &head);
+        let worse: Vec<&str> = c.introduced().map(|(f, _)| f.id.as_str()).collect();
+        assert_eq!(worse, vec!["layer_violation:core->ui"]);
+    }
 }
