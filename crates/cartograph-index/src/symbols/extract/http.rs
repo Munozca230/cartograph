@@ -1051,6 +1051,28 @@ export class Client {
         );
     }
 
+    /// `String.format` fills every placeholder (`%d`, `%5s`, `%x`) with its argument and
+    /// reads `%%` as `%`.
+    #[test]
+    fn string_format_placeholders_take_their_arguments() {
+        let c = code(
+            "java",
+            r#"
+package a;
+class C {
+    RestTemplate rest;
+    void run(long id, String x) {
+        rest.getForObject(String.format("/users/%d/items/%5s/%x?p=%%", id, x, id), String.class);
+    }
+}
+"#,
+        );
+        assert_eq!(
+            clients(&c),
+            vec!["rest.getForObject GET '/users/' $0 '/items/' $1 '/' $0 '?p=%' L6 frame 7"]
+        );
+    }
+
     #[test]
     fn spring_routes_with_constants_arrays_and_methods() {
         let c = code(

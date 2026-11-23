@@ -412,18 +412,47 @@ fn java_build_call(n: Node<'_>, src: &[u8], out: &mut StrExpr, depth: u8) -> boo
             let Some(fmt) = string_value(*f, src) else {
                 return false;
             };
+            // `%[flags][width][.precision]conversion`: each takes the next argument; `%%`
+            // is `%` and `%n` a line break.
             let mut rest = rest.iter();
-            let mut pieces = fmt.split("%s").peekable();
-            while let Some(piece) = pieces.next() {
-                if !piece.is_empty() {
-                    out.push(Part::Lit(piece.to_string()));
+            let mut lit = String::new();
+            let mut chars = fmt.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if ch != '%' {
+                    lit.push(ch);
+                    continue;
                 }
-                if pieces.peek().is_some() {
-                    match rest.next() {
-                        Some(a) => build(lang, *a, src, out, depth + 1),
-                        None => out.push(Part::Hole("%s".into())),
+                let mut spec = String::from("%");
+                while let Some(&c) = chars.peek() {
+                    if c.is_ascii_digit() || "-#+ 0,(.$".contains(c) {
+                        spec.push(c);
+                        chars.next();
+                    } else {
+                        break;
                     }
                 }
+                match chars.next() {
+                    Some('%') => lit.push('%'),
+                    Some('n') => lit.push('\n'),
+                    Some(c) if c.is_ascii_alphabetic() => {
+                        if !lit.is_empty() {
+                            out.push(Part::Lit(std::mem::take(&mut lit)));
+                        }
+                        spec.push(c);
+                        match rest.next() {
+                            Some(a) => build(lang, *a, src, out, depth + 1),
+                            None => out.push(Part::Hole(spec)),
+                        }
+                    }
+                    Some(c) => {
+                        lit.push_str(&spec);
+                        lit.push(c);
+                    }
+                    None => lit.push_str(&spec),
+                }
+            }
+            if !lit.is_empty() {
+                out.push(Part::Lit(lit));
             }
             true
         }
