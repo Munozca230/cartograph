@@ -164,6 +164,9 @@ pub struct RepoGraph {
     ext_ix: HashMap<String, ExtIx>,
     /// Manifest and Godot entry data, to work out entries again from inside a folder.
     entries: Entries,
+    /// The members of a workspace (top-level folders whose Dir node says so); none for a
+    /// single repo.
+    pub members: crate::workspace::Members,
 }
 
 fn parent_of(path: &str) -> &str {
@@ -495,7 +498,17 @@ impl RepoGraph {
         }
 
         let dir_kind = dir_kinds(&files, &dirs);
+        let mut member_names: Vec<String> = graph
+            .nodes_of(NodeKind::Dir)
+            .filter(|n| !n.path.contains('/') && n.meta.get("member").is_some())
+            .map(|n| n.path.clone())
+            .collect();
+        member_names.sort();
         RepoGraph {
+            members: crate::workspace::Members {
+                names: member_names,
+                default: None,
+            },
             repo_name,
             dir_kind,
             files,

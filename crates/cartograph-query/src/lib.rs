@@ -43,6 +43,7 @@ pub mod path;
 pub mod symbols;
 mod test_trees;
 mod text;
+pub mod workspace;
 
 pub use budget::Answer;
 pub use config::{Config, ConfigError};
@@ -67,6 +68,12 @@ pub enum QueryError {
     Ambiguous {
         input: String,
         count: usize,
+        candidates: Vec<String>,
+    },
+    /// A path relative to a member that several members of the workspace have.
+    #[error("{input:?} is in {} members; pass one: {}", .candidates.len(), .candidates.join(", "))]
+    AmbiguousPath {
+        input: String,
         candidates: Vec<String>,
     },
 }
@@ -109,10 +116,19 @@ impl Repo {
     /// A repo with its symbol layer. Findings never read it: file-level results are the same
     /// as with [`Repo::new`].
     pub fn with_symbols(graph: &Graph, symbols: &Symbols, config: Config) -> Repo {
+        let repo = Repo::new(graph, config);
+        let mut table = symbols::SymbolTable::build(symbols);
+        table.members = repo.graph.members.clone();
         Repo {
-            symbols: symbols::SymbolTable::build(symbols),
-            ..Repo::new(graph, config)
+            symbols: table,
+            ..repo
         }
+    }
+
+    /// In a workspace, the member plain paths are looked for in first (`--member`).
+    pub fn set_default_member(&mut self, member: Option<String>) {
+        self.graph.members.default = member.clone();
+        self.symbols.members.default = member;
     }
 
     /// Add the git history (churn, owners, co-change): `explain`, `impact` and `hotspots`

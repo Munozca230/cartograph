@@ -559,9 +559,9 @@ fn query_error(e: cartograph_query::QueryError) -> ApiError {
     use cartograph_query::QueryError;
     match e {
         QueryError::UnknownNode { .. } => ApiError::not_found(e.to_string()),
-        QueryError::BadArgument(_) | QueryError::Ambiguous { .. } => {
-            ApiError::bad_request(e.to_string())
-        }
+        QueryError::BadArgument(_)
+        | QueryError::Ambiguous { .. }
+        | QueryError::AmbiguousPath { .. } => ApiError::bad_request(e.to_string()),
     }
 }
 

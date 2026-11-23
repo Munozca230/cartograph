@@ -1,23 +1,30 @@
 //! Rules of `cartograph.toml`: layer dependencies and `max_fan_out`.
 
 use super::{Ctx, Finding, FindingKind, Severity};
+use crate::config::{Layer, allowed_in};
 use crate::graph::{FileIx, NodeRef};
 use std::collections::BTreeMap;
 
-/// One finding per forbidden layer pair (`ui → infra`), with every crossing edge.
+/// One finding per forbidden layer pair (`ui → infra`), with every crossing edge, for each
+/// layer set (in a workspace: the workspace's, then each member's, whose layers only match
+/// that member's files).
 pub(super) fn layer_violations(cx: &Ctx<'_>) -> Vec<Finding> {
+    cx.cfg
+        .layer_sets()
+        .into_iter()
+        .flat_map(|set| set_violations(cx, set))
+        .collect()
+}
+
+fn set_violations(cx: &Ctx<'_>, layers: &[Layer]) -> Vec<Finding> {
     let g = cx.g;
-    let cfg = cx.cfg;
-    if cfg.layers.is_empty() {
-        return Vec::new();
-    }
     let layer: Vec<Option<usize>> = g
         .files
         .iter()
         .enumerate()
         .map(|(i, f)| {
             if cx.active[i] {
-                cfg.layer_of(&f.path)
+                layers.iter().position(|l| l.paths.matches(&f.path))
             } else {
                 None
             }
@@ -30,7 +37,7 @@ pub(super) fn layer_violations(cx: &Ctx<'_>) -> Vec<Finding> {
             let Some(lb) = layer[b as usize] else {
                 continue;
             };
-            if !cfg.allowed(la, lb) {
+            if !allowed_in(layers, la, lb) {
                 pairs.entry((la, lb)).or_default().push((a as FileIx, b));
             }
         }
@@ -38,8 +45,8 @@ pub(super) fn layer_violations(cx: &Ctx<'_>) -> Vec<Finding> {
     pairs
         .into_iter()
         .map(|((la, lb), edges)| {
-            let (from, to) = (&cfg.layers[la].name, &cfg.layers[lb].name);
-            let why = if cfg.layers[la].forbid.contains(&lb) {
+            let (from, to) = (&layers[la].name, &layers[lb].name);
+            let why = if layers[la].forbid.contains(&lb) {
                 "forbidden"
             } else {
                 "not in its allow list"
@@ -70,11 +77,11 @@ pub(super) fn layer_violations(cx: &Ctx<'_>) -> Vec<Finding> {
 /// Files that depend on more files than `rules.max_fan_out`.
 pub(super) fn fan_out_limits(cx: &Ctx<'_>) -> Vec<Finding> {
     let g = cx.g;
-    let Some(max) = cx.cfg.max_fan_out else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
     for (a, deps) in cx.adj.iter().enumerate() {
+        let Some(max) = cx.cfg.max_fan_out_for(&g.files[a].path) else {
+            continue;
+        };
         if deps.len() <= max {
             continue;
         }

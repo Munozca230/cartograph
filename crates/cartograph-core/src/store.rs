@@ -521,6 +521,12 @@ impl WriteTx<'_> {
         set_meta(&self.tx, key, value)
     }
 
+    /// Remove a run-metadata value (nothing when it is not set).
+    pub fn delete_meta(&self, key: &str) -> Result<()> {
+        self.tx.execute("DELETE FROM meta WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
     /// Insert (or overwrite) extraction-cache rows for extractor version `extractor`.
     pub fn put_extract_cache(&self, extractor: &str, entries: &[CacheEntry]) -> Result<()> {
         let mut stmt = self.tx.prepare(

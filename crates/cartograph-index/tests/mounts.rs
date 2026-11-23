@@ -244,6 +244,8 @@ fn fixtures() -> Vec<String> {
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        // A workspace is mounts already; it cannot be a member.
+        .filter(|e| !e.path().join(cartograph_core::WORKSPACE_FILE).exists())
         .filter_map(|e| e.file_name().to_str().map(str::to_string))
         .collect();
     names.sort();

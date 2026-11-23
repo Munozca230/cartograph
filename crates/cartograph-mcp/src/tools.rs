@@ -220,7 +220,7 @@ fn query_error(e: &QueryError, structured: bool) -> CallToolResult {
             suggestions.clone(),
         ),
         QueryError::BadArgument(m) => ("bad_argument", m.clone(), Vec::new()),
-        QueryError::Ambiguous { candidates, .. } => {
+        QueryError::Ambiguous { candidates, .. } | QueryError::AmbiguousPath { candidates, .. } => {
             ("ambiguous", e.to_string(), candidates.clone())
         }
     };

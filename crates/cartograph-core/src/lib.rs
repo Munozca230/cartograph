@@ -17,6 +17,7 @@ pub mod manifest_entry;
 pub mod model;
 pub mod scip;
 pub mod store;
+pub mod workspace;
 
 pub use history::{
     AuthorShare, ChangeKind, CoChange, FileHistory, GitAuthor, GitChange, GitCommit, GitRaw,
@@ -30,6 +31,7 @@ pub use model::{
 };
 pub use scip::{ScipCoverage, ScipIndexStats, ScipStats, ScipSymbol};
 pub use store::{BUSY_TIMEOUT, CacheEntry, GIT_META, SCHEMA_VERSION, ScipCacheRow, Store, WriteTx};
+pub use workspace::{Member, WORKSPACE_FILE, Workspace, WorkspaceError, expand_alias};
 
 /// Errors from the core crate.
 #[derive(Debug, thiserror::Error)]

@@ -415,7 +415,10 @@ fn render(r: &FindResult) -> String {
 /// package name if exactly one external has it. Anything else is an error that lists the
 /// closest matches.
 pub fn resolve(g: &RepoGraph, input: &str) -> Result<NodeRef, QueryError> {
-    let raw = input.trim();
+    let canonical = g.members.canonical(input, |p| {
+        g.file_by_path(p).is_some() || g.dir_by_path(p).is_some()
+    })?;
+    let raw = canonical.as_str();
     let s = raw.replace('\\', "/");
     let s = s.as_str();
     if matches!(

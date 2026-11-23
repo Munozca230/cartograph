@@ -43,6 +43,8 @@ pub struct SymbolTable {
     scip_added: HashSet<(String, u32)>,
     /// Counts of the last SCIP import, when there was one.
     pub scip: Option<cartograph_core::ScipStats>,
+    /// The members of a workspace, to read `api:src/a.ts#f` and member-relative paths.
+    pub members: crate::workspace::Members,
 }
 
 impl SymbolTable {
@@ -153,7 +155,10 @@ impl SymbolTable {
     /// an [`QueryError::Ambiguous`] listing them; none is an unknown node with the closest
     /// names.
     pub fn resolve(&self, input: &str) -> Result<String, QueryError> {
-        let raw = input.trim();
+        let canonical = self
+            .members
+            .canonical(input, |p| self.by_file.contains_key(p))?;
+        let raw = canonical.as_str();
         if !self.indexed {
             return Err(QueryError::BadArgument(
                 "this index has no symbols; re-run `cartograph index`".into(),

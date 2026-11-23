@@ -14,6 +14,7 @@ use toml::Spanned;
 
 /// File name at the repo root.
 pub const CONFIG_FILE: &str = "cartograph.toml";
+pub use cartograph_core::WORKSPACE_FILE;
 
 /// A problem in `cartograph.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,12 +181,27 @@ impl Default for Thresholds {
     }
 }
 
-/// A validated `cartograph.toml` (or the defaults when there is none).
+/// The rules of one member's own `cartograph.toml` in a workspace, rebased: its layers are
+/// named `<member>.<layer>` and their paths start with the member's folder, so they judge
+/// the dependencies inside the member only.
+#[derive(Debug, Clone)]
+pub struct MemberRules {
+    pub member: String,
+    pub layers: Vec<Layer>,
+    pub max_fan_out: Option<usize>,
+}
+
+/// A validated `cartograph.toml` (or the defaults when there is none). In a workspace, the
+/// rules of `cartograph-workspace.toml`, plus each member's own rules ([`MemberRules`];
+/// their `ignore` and `no_cycles` are merged into these, rebased; their thresholds and
+/// disabled findings are not read).
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// Where it was read from; `None` = defaults.
     pub origin: Option<String>,
     pub layers: Vec<Layer>,
+    /// Member rules, in a workspace.
+    pub members: Vec<MemberRules>,
     pub max_fan_out: Option<usize>,
     pub no_cycles: NoCycles,
     /// Files left out of every finding.
@@ -198,6 +214,14 @@ pub struct Config {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
+    // Tables of `cartograph-workspace.toml` (read by `cartograph_core::workspace`); an error
+    // anywhere else.
+    #[serde(default)]
+    workspace: Option<Spanned<toml::Value>>,
+    #[serde(default)]
+    member: Option<Spanned<toml::Value>>,
+    #[serde(default)]
+    bridges: Option<Spanned<toml::Value>>,
     #[serde(default)]
     layers: Vec<Spanned<RawLayer>>,
     #[serde(default)]
@@ -253,16 +277,138 @@ fn line_of(text: &str, offset: usize) -> usize {
 }
 
 impl Config {
-    /// Read `<root>/cartograph.toml`; the defaults when it does not exist.
-    /// Errors and `origin` name it `cartograph.toml` (relative to the repo).
+    /// Read `<root>/cartograph.toml`; the defaults when it does not exist. A folder with a
+    /// `cartograph-workspace.toml` reads that instead, with its members' own rules (see
+    /// [`Config::load_workspace`]). Errors and `origin` name the file relative to the repo.
     pub fn load(root: &Path) -> Result<Config, ConfigError> {
+        let ws = root.join(WORKSPACE_FILE);
+        if ws.is_file() {
+            return Config::load_workspace(&ws, WORKSPACE_FILE);
+        }
         Config::read(&root.join(CONFIG_FILE), true, CONFIG_FILE.to_string())
     }
 
-    /// Read a config file. With `optional`, a missing file gives the defaults.
+    /// Read a config file. With `optional`, a missing file gives the defaults. A file named
+    /// `cartograph-workspace.toml` is read as a workspace.
     pub fn load_file(path: &Path, optional: bool) -> Result<Config, ConfigError> {
         let origin = path.display().to_string().replace('\\', "/");
+        if path.file_name().and_then(|n| n.to_str()) == Some(WORKSPACE_FILE) && path.is_file() {
+            return Config::load_workspace(path, &origin);
+        }
         Config::read(path, optional, origin)
+    }
+
+    /// The rules of a workspace file (the grammar of `cartograph.toml`, beside its members),
+    /// plus each member's own `cartograph.toml`, rebased (see [`MemberRules`]).
+    pub fn load_workspace(file: &Path, origin: &str) -> Result<Config, ConfigError> {
+        let err = |e: cartograph_core::WorkspaceError| ConfigError {
+            origin: origin.to_string(),
+            line: e.line,
+            key: e.key,
+            message: e.message,
+        };
+        let ws = cartograph_core::Workspace::load(file).map_err(err)?;
+        let text = std::fs::read_to_string(file).map_err(|e| ConfigError {
+            origin: origin.to_string(),
+            line: None,
+            key: None,
+            message: format!("cannot read: {e}"),
+        })?;
+        let mut cfg = Config::parse_as(&text, origin, true)?;
+        for m in &ws.members {
+            let own = Config::read(
+                &m.root.join(CONFIG_FILE),
+                true,
+                format!("{}:{CONFIG_FILE}", m.name),
+            )?;
+            cfg.add_member(&m.name, own);
+        }
+        Ok(cfg)
+    }
+
+    /// Add the rules of member `name` (its own config), rebased under its folder.
+    fn add_member(&mut self, name: &str, own: Config) {
+        let rebase = |patterns: &[String]| -> Vec<String> {
+            patterns
+                .iter()
+                .map(|p| {
+                    let p = p.trim().replace('\\', "/");
+                    let p = p.strip_prefix("./").unwrap_or(&p).trim_end_matches('/');
+                    if p.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{name}/{p}")
+                    }
+                })
+                .collect()
+        };
+        // Rebased patterns are valid when the originals are.
+        let set = |patterns: Vec<String>| PathSet::new(&patterns).unwrap_or_default();
+        if !own.ignore.is_empty() {
+            let mut all = self.ignore.patterns.clone();
+            all.extend(rebase(&own.ignore.patterns));
+            self.ignore = set(all);
+        }
+        let scope = match &own.no_cycles {
+            NoCycles::Off => Vec::new(),
+            NoCycles::All => vec![name.to_string()],
+            NoCycles::Scopes(s) => rebase(&s.patterns),
+        };
+        if !scope.is_empty() {
+            self.no_cycles = match std::mem::take(&mut self.no_cycles) {
+                NoCycles::All => NoCycles::All,
+                NoCycles::Off => NoCycles::Scopes(set(scope)),
+                NoCycles::Scopes(s) => {
+                    let mut all = s.patterns.clone();
+                    all.extend(scope);
+                    NoCycles::Scopes(set(all))
+                }
+            };
+        }
+        if own.layers.is_empty() && own.max_fan_out.is_none() {
+            return;
+        }
+        let layers = own
+            .layers
+            .into_iter()
+            .map(|l| Layer {
+                name: format!("{name}.{}", l.name),
+                paths: set(rebase(&l.paths.patterns)),
+                ..l
+            })
+            .collect();
+        self.members.push(MemberRules {
+            member: name.to_string(),
+            layers,
+            max_fan_out: own.max_fan_out,
+        });
+    }
+
+    /// The `max_fan_out` that applies to the file at `path`: its member's own, else this
+    /// config's.
+    pub fn max_fan_out_for(&self, path: &str) -> Option<usize> {
+        self.members
+            .iter()
+            .find(|m| path.split('/').next() == Some(m.member.as_str()))
+            .and_then(|m| m.max_fan_out)
+            .or(self.max_fan_out)
+    }
+
+    /// Every layer set: this config's layers, then each member's (rebased).
+    pub fn layer_sets(&self) -> Vec<&[Layer]> {
+        std::iter::once(self.layers.as_slice())
+            .chain(self.members.iter().map(|m| m.layers.as_slice()))
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// The layer the file at `path` is in: the first matching layer of this config, else of
+    /// its member's rules.
+    pub fn layer_name(&self, path: &str) -> Option<String> {
+        self.layer_sets()
+            .into_iter()
+            .find_map(|set| set.iter().find(|l| l.paths.matches(path)))
+            .map(|l| l.name.clone())
     }
 
     /// Only the top-level `ignore` of `<root>/cartograph.toml` (for `infer`, which proposes
@@ -323,6 +469,12 @@ impl Config {
 
     /// Parse and validate config text. `origin` names it in errors.
     pub fn parse(text: &str, origin: &str) -> Result<Config, ConfigError> {
+        Config::parse_as(text, origin, false)
+    }
+
+    /// [`Config::parse`]; `workspace` allows the tables of a workspace file (members are
+    /// not read here).
+    fn parse_as(text: &str, origin: &str, workspace: bool) -> Result<Config, ConfigError> {
         let err = |line: Option<usize>, key: Option<String>, message: String| ConfigError {
             origin: origin.to_string(),
             line,
@@ -341,6 +493,21 @@ impl Config {
             err(line, None, msg)
         })?;
         let at = |s: std::ops::Range<usize>| Some(line_of(text, s.start));
+        if !workspace {
+            for (key, v) in [
+                ("workspace", &raw.workspace),
+                ("member", &raw.member),
+                ("bridges", &raw.bridges),
+            ] {
+                if let Some(v) = v {
+                    return Err(err(
+                        at(v.span()),
+                        Some(key.into()),
+                        format!("only in {WORKSPACE_FILE}"),
+                    ));
+                }
+            }
+        }
 
         let mut cfg = Config {
             origin: Some(origin.to_string()),
@@ -510,14 +677,7 @@ impl Config {
 
     /// Whether `from` may depend on `to` (two layer indexes).
     pub fn allowed(&self, from: usize, to: usize) -> bool {
-        if from == to {
-            return true;
-        }
-        let l = &self.layers[from];
-        if l.forbid.contains(&to) {
-            return false;
-        }
-        l.allow.as_ref().is_none_or(|a| a.contains(&to))
+        allowed_in(&self.layers, from, to)
     }
 
     pub fn enabled(&self, kind: FindingKind) -> bool {
@@ -528,8 +688,21 @@ impl Config {
     pub fn has_rules(&self) -> bool {
         !self.layers.is_empty()
             || self.max_fan_out.is_some()
+            || !self.members.is_empty()
             || !matches!(self.no_cycles, NoCycles::Off)
     }
+}
+
+/// Whether layer `from` of `layers` may depend on layer `to` (two indexes of it).
+pub fn allowed_in(layers: &[Layer], from: usize, to: usize) -> bool {
+    if from == to {
+        return true;
+    }
+    let l = &layers[from];
+    if l.forbid.contains(&to) {
+        return false;
+    }
+    l.allow.as_ref().is_none_or(|a| a.contains(&to))
 }
 
 #[cfg(test)]

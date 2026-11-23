@@ -194,7 +194,8 @@ fn query_error(e: &QueryError, json: bool) -> Result<ExitCode> {
         let (code, suggestions) = match e {
             QueryError::UnknownNode { suggestions, .. } => ("unknown_node", suggestions.clone()),
             QueryError::BadArgument(_) => ("bad_argument", Vec::new()),
-            QueryError::Ambiguous { candidates, .. } => ("ambiguous", candidates.clone()),
+            QueryError::Ambiguous { candidates, .. }
+            | QueryError::AmbiguousPath { candidates, .. } => ("ambiguous", candidates.clone()),
         };
         let body = serde_json::json!({
             "error": { "code": code, "message": e.to_string(), "suggestions": suggestions }

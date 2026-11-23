@@ -103,6 +103,9 @@ pub enum IndexError {
     /// Reading a git revision failed (unknown revision, no repository, damaged objects).
     #[error("{0}")]
     Git(String),
+    /// The folder's `cartograph-workspace.toml` is not valid.
+    #[error("{0}")]
+    Workspace(#[from] cartograph_core::WorkspaceError),
 }
 
 /// Indexing options.
@@ -278,11 +281,15 @@ fn data_dir_exclusions(root: &Path, dir: &Path) -> Vec<String> {
     }
 }
 
-/// Index `root` in memory (no extraction cache; SCIP indexes are decoded, not cached).
+/// Index `root` in memory (no extraction cache; SCIP indexes are decoded, not cached). A
+/// folder with a `cartograph-workspace.toml` is indexed as that workspace.
 pub fn index(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, IndexError> {
+    let layout = Layout::of(root)?;
+    if layout.workspace.is_some() {
+        return index_mounts(&layout.name, &layout.mounts, opts);
+    }
     let started = Instant::now();
-    let mounts = [Mount::new("", root)];
-    let loaded = scip_loads(&mounts, &opts.scip, &[], opts.no_scip, None);
+    let loaded = scip_loads(&layout, &opts.scip, &[], opts.no_scip, None);
     let load_ms = started.elapsed().as_millis();
     let src = Source {
         scip: &loaded,
@@ -314,6 +321,56 @@ impl Mount {
         }
     }
 }
+
+/// What indexing a folder reads: the folder itself, or the members of the workspace its
+/// `cartograph-workspace.toml` declares (never looked for above it).
+#[derive(Debug, Clone)]
+pub struct Layout {
+    /// Name of the repo node: the folder's, or the workspace's.
+    pub name: String,
+    pub mounts: Vec<Mount>,
+    pub workspace: Option<cartograph_core::Workspace>,
+}
+
+impl Layout {
+    /// The layout of `root` (see [`Layout`]); an invalid workspace file is an error.
+    pub fn of(root: &Path) -> Result<Layout, IndexError> {
+        Ok(match cartograph_core::Workspace::find(root)? {
+            None => Layout {
+                name: repo_name(root),
+                mounts: vec![Mount::new("", root)],
+                workspace: None,
+            },
+            Some(ws) => Layout {
+                name: ws.name.clone(),
+                mounts: ws
+                    .members
+                    .iter()
+                    .map(|m| Mount {
+                        meta: json!({ MEMBER_META: { "name": m.name, "path": m.path } }),
+                        ..Mount::new(m.name.clone(), m.root.clone())
+                    })
+                    .collect(),
+                workspace: Some(ws),
+            },
+        })
+    }
+
+    /// Where a path of the graph is on disk.
+    pub fn to_disk(&self, path: &str) -> Option<PathBuf> {
+        match &self.workspace {
+            Some(ws) => ws.to_disk(path),
+            None => self.mounts.first().map(|m| m.root.join(path)),
+        }
+    }
+}
+
+/// Key of a member's Dir node `meta` (in a workspace): `{name, path}`, `path` as the
+/// workspace file writes it.
+pub const MEMBER_META: &str = "member";
+/// Run-metadata key of the workspace's members (JSON list of [`cartograph_core::Member`]);
+/// absent for a single repo.
+pub const META_WORKSPACE: &str = "workspace";
 
 /// One mount as [`index_inner`] reads it.
 struct SourceMount<'a> {
@@ -375,19 +432,22 @@ impl<'a> Source<'a> {
     }
 }
 
-/// The SCIP indexes to import for `mounts`: per mount, its own `index.scip`, plus the
+/// The SCIP indexes to import for `layout`: per mount, its own `index.scip`, plus the
 /// `explicit` and `remembered` files that lie in it (with a single mount, all of them).
 fn scip_loads(
-    mounts: &[Mount],
+    layout: &Layout,
     explicit: &[PathBuf],
     remembered: &[PathBuf],
     no_scip: bool,
     store: Option<&Store>,
 ) -> Vec<scip::Loaded> {
-    let single = mounts.len() == 1;
-    let inside = |m: &Mount, p: &Path| single || scip::absolute(p).starts_with(&m.root);
+    let single = layout.mounts.len() == 1;
+    let inside = |m: &Mount, p: &Path| {
+        let p = cartograph_core::workspace::clean(&scip::absolute(p));
+        single || p.starts_with(cartograph_core::workspace::clean(&m.root))
+    };
     let mut out = Vec::new();
-    for m in mounts {
+    for m in &layout.mounts {
         let mine = |list: &[PathBuf]| -> Vec<PathBuf> {
             list.iter().filter(|p| inside(m, p)).cloned().collect()
         };
@@ -399,7 +459,7 @@ fn scip_loads(
     }
     for p in explicit
         .iter()
-        .filter(|p| !mounts.iter().any(|m| inside(m, p)))
+        .filter(|p| !layout.mounts.iter().any(|m| inside(m, p)))
     {
         tracing::warn!(path = %p.display(), "scip index outside every member: not imported");
     }
@@ -415,7 +475,12 @@ pub fn index_mounts(
     opts: &IndexOptions,
 ) -> Result<IndexOutput, IndexError> {
     let started = Instant::now();
-    let loaded = scip_loads(mounts, &opts.scip, &[], opts.no_scip, None);
+    let layout = Layout {
+        name: name.to_string(),
+        mounts: mounts.to_vec(),
+        workspace: None,
+    };
+    let loaded = scip_loads(&layout, &opts.scip, &[], opts.no_scip, None);
     let load_ms = started.elapsed().as_millis();
     let src = Source {
         scip: &loaded,
@@ -766,9 +831,10 @@ pub fn index_working_tree(
     let data_dir = data_dir(root, opts.data_dir.as_deref());
     git::snapshot::clean_legacy(root, &data_dir);
     let mut cache = read_cache(&data_dir);
+    let layout = Layout::of(root)?;
     let src = Source {
         symbols: false,
-        ..Source::of(root)
+        ..Source::of_mounts(&layout.name, &layout.mounts)
     };
     // The data dir is left out of the walk, as when indexing to it (when it exists).
     let opts = IndexOptions {
@@ -810,8 +876,8 @@ pub fn index_to_store(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, I
     let explicit: Vec<PathBuf> = opts.scip.iter().map(|p| scip::absolute(p)).collect();
     let scip_started = Instant::now();
     let remembered = scip::remembered(&store);
-    let mounts = [Mount::new("", root)];
-    let loaded = scip_loads(&mounts, &explicit, &remembered, opts.no_scip, Some(&store));
+    let layout = Layout::of(root)?;
+    let loaded = scip_loads(&layout, &explicit, &remembered, opts.no_scip, Some(&store));
     for l in &loaded {
         if let Err(e) = &l.data {
             tracing::warn!(path = %l.label, error = %e, "scip index not imported");
@@ -819,7 +885,7 @@ pub fn index_to_store(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, I
     }
     let src = Source {
         scip: &loaded,
-        ..Source::of(root)
+        ..Source::of_mounts(&layout.name, &layout.mounts)
     };
     let scip_load_ms = scip_started.elapsed().as_millis();
     let (mut out, delta) = index_inner(&src, &opts, Some(&cache))?;
@@ -867,7 +933,11 @@ pub fn index_to_store(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, I
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    tx.set_meta("repo_name", &repo_name(root))?;
+    tx.set_meta("repo_name", &layout.name)?;
+    match &layout.workspace {
+        Some(ws) => tx.set_meta(META_WORKSPACE, &serde_json::to_string(&ws.members)?)?,
+        None => tx.delete_meta(META_WORKSPACE)?,
+    }
     tx.set_meta("manifests", &serde_json::to_string(&out.manifests)?)?;
     tx.set_meta("timings", &serde_json::to_string(&out.timings)?)?;
     tx.set_meta("indexer_version", env!("CARGO_PKG_VERSION"))?;

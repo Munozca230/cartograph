@@ -245,9 +245,7 @@ pub fn explain_with(
         }
         NodeRef::Ext(_) => (None, 0, 0, None, None, 0, None),
     };
-    let layer = layer_path
-        .and_then(|p| repo.config.layer_of(&p))
-        .map(|i| repo.config.layers[i].name.clone());
+    let layer = layer_path.and_then(|p| repo.config.layer_name(&p));
     let mut subs: Vec<DirIx> = match n {
         NodeRef::Dir(d) => g.dirs[d as usize].dirs.clone(),
         _ => Vec::new(),
