@@ -7,7 +7,7 @@ use super::{Ctx, Finding, FindingKind, Severity};
 use crate::algo::{betweenness, upper_fence};
 use crate::graph::{DirIx, FileIx, NodeRef};
 use crate::kind::FileKind;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Betweenness is exact up to this many files, sampled above.
 const BETWEENNESS_SOURCES: usize = 1500;
@@ -62,11 +62,39 @@ fn importers<'a>(cx: &'a Ctx<'a>, f: FileIx) -> impl Iterator<Item = FileIx> + '
         .filter(move |&s| is_code(cx, s as usize) && cx.code_adj[s as usize].contains(&f))
 }
 
+/// The population a file's statistics are judged in: its workspace member (`None` for a
+/// single repo, one population).
+fn population<'g>(cx: &Ctx<'g>, f: usize) -> Option<&'g str> {
+    cx.g.members.member_of(&cx.g.files[f].path)
+}
+
+/// `files` split by [`population`], in the order of their first file.
+fn by_population(cx: &Ctx<'_>, files: Vec<usize>) -> Vec<Vec<usize>> {
+    let mut groups: Vec<(Option<&str>, Vec<usize>)> = Vec::new();
+    for f in files {
+        let p = population(cx, f);
+        match groups.iter_mut().find(|(q, _)| *q == p) {
+            Some((_, v)) => v.push(f),
+            None => groups.push((p, vec![f])),
+        }
+    }
+    groups.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Files far above their population (in a workspace, their member) in fan-in, fan-out and
+/// size at once.
 pub(super) fn god_modules(cx: &Ctx<'_>) -> Vec<Finding> {
+    let all: Vec<usize> = (0..cx.g.files.len()).filter(|&f| per_file(cx, f)).collect();
+    by_population(cx, all)
+        .into_iter()
+        .flat_map(|code| god_modules_in(cx, &code))
+        .collect()
+}
+
+fn god_modules_in(cx: &Ctx<'_>, code: &[usize]) -> Vec<Finding> {
     let g = cx.g;
     let t = &cx.cfg.thresholds;
     let indeg = in_degree(cx);
-    let code: Vec<usize> = (0..g.files.len()).filter(|&f| per_file(cx, f)).collect();
     let fan_in: Vec<f64> = code.iter().map(|&f| indeg[f] as f64).collect();
     let fan_out: Vec<f64> = code.iter().map(|&f| cx.code_adj[f].len() as f64).collect();
     let loc: Vec<f64> = code.iter().map(|&f| g.files[f].loc as f64).collect();
@@ -74,7 +102,7 @@ pub(super) fn god_modules(cx: &Ctx<'_>) -> Vec<Finding> {
     let fo = upper_fence(&fan_out, t.fence).max(t.god_min_fan_out as f64);
     let fl = upper_fence(&loc, t.fence).max(t.god_min_loc as f64);
     let mut out = Vec::new();
-    for &f in &code {
+    for &f in code {
         let (i, o, l) = (indeg[f], cx.code_adj[f].len(), g.files[f].loc);
         if (i as f64) < fi || (o as f64) < fo || (l as f64) < fl {
             continue;
@@ -125,8 +153,23 @@ pub(super) fn hubs(cx: &Ctx<'_>) -> Vec<Finding> {
     if pairs <= 0.0 {
         return Vec::new();
     }
-    let positive: Vec<f64> = b.iter().copied().filter(|&x| x > 0.0).collect();
-    let fence = upper_fence(&positive, t.fence);
+    // The fence of each population (in a workspace, each member).
+    let mut positive: HashMap<Option<&str>, Vec<f64>> = HashMap::new();
+    for (f, &x) in b.iter().enumerate() {
+        if x > 0.0 {
+            positive.entry(population(cx, f)).or_default().push(x);
+        }
+    }
+    let fences: HashMap<Option<&str>, f64> = positive
+        .iter()
+        .map(|(p, v)| (*p, upper_fence(v, t.fence)))
+        .collect();
+    let fence = |f: usize| {
+        fences
+            .get(&population(cx, f))
+            .copied()
+            .unwrap_or(f64::INFINITY)
+    };
     let god = god_modules(cx);
     let indeg = in_degree(cx);
     let mut cands: Vec<(f64, usize)> = b
@@ -137,7 +180,7 @@ pub(super) fn hubs(cx: &Ctx<'_>) -> Vec<Finding> {
             // only imports) sits on many paths but bottlenecks nothing.
             per_file(cx, f)
                 && indeg[f] >= 2
-                && v > fence
+                && v > fence(f)
                 && v / pairs >= t.hub_min_share
                 && !god
                     .iter()

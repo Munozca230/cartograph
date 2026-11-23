@@ -80,6 +80,49 @@ pub struct Overview {
     /// What an imported SCIP index made precise (N3).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scip: Option<crate::symbols::ScipOverview>,
+    /// In a workspace, seen from its root: the dependencies between members (`n` = file
+    /// pairs), most first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub across_members: Vec<MemberLink>,
+}
+
+/// Files of member `from` depending on files of member `to`.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemberLink {
+    pub from: String,
+    pub to: String,
+    pub n: usize,
+}
+
+/// The dependencies between the members of a workspace (none for a single repo).
+fn member_links(g: &RepoGraph) -> Vec<MemberLink> {
+    let mut pairs: std::collections::BTreeMap<(&str, &str), usize> = Default::default();
+    for (a, deps) in g.out.iter().enumerate() {
+        let Some(ma) = g.members.member_of(&g.files[a].path) else {
+            continue;
+        };
+        for d in deps {
+            if let Some(mb) = g.members.member_of(&g.files[d.file as usize].path)
+                && mb != ma
+            {
+                *pairs.entry((ma, mb)).or_default() += 1;
+            }
+        }
+    }
+    let mut out: Vec<MemberLink> = pairs
+        .into_iter()
+        .map(|((from, to), n)| MemberLink {
+            from: from.to_string(),
+            to: to.to_string(),
+            n,
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.n.cmp(&a.n)
+            .then(a.from.cmp(&b.from))
+            .then(a.to.cmp(&b.to))
+    });
+    out
 }
 
 /// Entry reasons worth listing (tests, scripts and config are entries too, but noise here).
@@ -285,6 +328,11 @@ pub fn overview(
         .map(|&f| g.files[f as usize].unresolved as u64)
         .sum();
     let dir = &g.dirs[root as usize];
+    let across = if root == crate::graph::ROOT {
+        member_links(g)
+    } else {
+        Vec::new()
+    };
 
     Ok(fit(
         limits::OVERVIEW,
@@ -330,6 +378,7 @@ pub fn overview(
                 unresolved_imports: unresolved,
                 flows: crate::symbols::flows_under(repo, NodeRef::Dir(root), (limit / 4).max(1)),
                 scip: crate::symbols::scip_overview(repo),
+                across_members: across.clone(),
             }
         },
         |o| render(g, o),
@@ -441,6 +490,17 @@ fn render(g: &RepoGraph, o: &Overview) -> String {
             "+ {} files directly in {}\n",
             o.loose_files,
             short(&o.root)
+        ));
+    }
+    if !o.across_members.is_empty() {
+        let list: Vec<String> = o
+            .across_members
+            .iter()
+            .map(|l| format!("{} → {} {}", l.from, l.to, l.n))
+            .collect();
+        s.push_str(&format!(
+            "across members (file pairs): {}\n",
+            list.join(", ")
         ));
     }
     if !o.entries.is_empty() {
