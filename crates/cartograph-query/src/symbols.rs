@@ -785,9 +785,30 @@ fn super_decls(t: &SymbolTable, id: &str) -> Vec<(String, String)> {
     let Some((ty, m)) = q.rsplit_once('.') else {
         return Vec::new();
     };
-    let start = format!("sym:{path}#{ty}");
-    let mut seen = HashSet::from([start.clone()]);
-    let mut level = vec![start];
+    // The method's type: its id carries only the innermost name (`Inner.m` of a type
+    // `Outer.Inner`), and a Rust `impl` or a C++ out-of-line definition may sit in another
+    // file than the type. A type of that name in the method's file, else the only one in
+    // the repo.
+    let is_type = |i: &usize| t.symbols[*i].kind.is_type() && t.symbols[*i].name == ty;
+    let mut level: Vec<String> = t
+        .of_file(path)
+        .iter()
+        .filter(|i| is_type(i))
+        .map(|&i| t.symbols[i].id())
+        .collect();
+    if level.is_empty()
+        && let [one] = t
+            .by_name
+            .get(ty)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .filter(|i| is_type(i))
+            .collect::<Vec<_>>()
+            .as_slice()
+    {
+        level.push(t.symbols[**one].id());
+    }
+    let mut seen: HashSet<String> = level.iter().cloned().collect();
     let mut out = Vec::new();
     for _ in 0..SUPER_HOPS {
         let mut next = Vec::new();
@@ -852,12 +873,23 @@ pub fn callers(repo: &Repo, sym: &str) -> Result<Answer<CallersResult>, QueryErr
         .map(|&i| (&t.calls[i], None))
         .collect();
     let mut through_decls = Vec::new();
+    // A method of the symbol's own type calling the supertype's declaration does it on
+    // purpose (`super.m()` in the override): not a call that may run the override.
+    let own = split_symbol_id(&id)
+        .and_then(|(p, q)| q.rsplit_once('.').map(|(ty, _)| format!("sym:{p}#{ty}.")));
     for (d, name) in &decls {
         let before = calls.len();
         calls.extend(
             t.callers_of(d)
                 .iter()
-                .map(|&i| (&t.calls[i], Some(name.as_str()))),
+                .map(|&i| (&t.calls[i], Some(name.as_str())))
+                .filter(|(c, _)| {
+                    !own.as_ref().is_some_and(|o| {
+                        c.caller
+                            .as_deref()
+                            .is_some_and(|x| x.starts_with(o.as_str()))
+                    })
+                }),
         );
         if calls.len() > before {
             through_decls.push(clip(name, 120));

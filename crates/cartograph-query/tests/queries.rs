@@ -399,3 +399,22 @@ fn bad_arguments_are_errors_not_panics() {
     assert!(overview::overview(r, None, 0).is_ok());
     assert!(overview::overview(r, None, 99).is_ok());
 }
+
+#[test]
+fn callers_through_a_supertype_of_a_nested_type_but_not_its_own_super_call() {
+    let r = common::fixture("java-receivers");
+    let shapes = "src/main/java/com/acme/shapes";
+    // `Inner` is nested in `Outer`: a call through its interface still reaches it.
+    let c = symbols::callers(&r, &format!("{shapes}/Outer.java#Inner.draw"))
+        .unwrap()
+        .data;
+    assert_eq!(c.through, 1, "{c:?}");
+    assert_eq!(c.groups[0].file, format!("file:{shapes}/Painter.java"));
+    assert_eq!(c.groups[0].sites[0].via.as_deref(), Some("Shape.draw"));
+    // The override's own `super.area()` is not a caller of the override.
+    let c = symbols::callers(&r, &format!("{shapes}/Square.java#Square.area"))
+        .unwrap()
+        .data;
+    let files: Vec<&str> = c.groups.iter().map(|g| g.file.as_str()).collect();
+    assert_eq!(files, vec![format!("file:{shapes}/Painter.java")], "{c:?}");
+}
