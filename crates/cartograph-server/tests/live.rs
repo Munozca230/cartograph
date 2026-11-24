@@ -316,8 +316,7 @@ async fn index_errors_are_reported_and_the_server_keeps_serving() {
 
 #[tokio::test]
 async fn an_explicit_taken_port_fails_and_the_default_one_moves_on() {
-    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = taken.local_addr().unwrap().port();
+    let (_taken, port) = taken_port_with_a_free_neighbour();
     // Explicit port: a clean error.
     match bind(Some(port), 7878) {
         Err(ServeError::PortInUse { port: p, .. }) => assert_eq!(p, port),
@@ -339,6 +338,23 @@ async fn an_explicit_taken_port_fails_and_the_default_one_moves_on() {
     let got = l.local_addr().unwrap().port();
     assert!(got > port && got <= port + 10, "{got} vs {port}");
     assert!(l.local_addr().unwrap().ip().is_loopback());
+}
+
+/// A port the OS hands out, held, whose next port can be bound too. An ephemeral port can
+/// sit just below a range the system reserves (Windows excludes blocks of ports), and then
+/// no port after it is free: the default port would rightly find none, which is not what
+/// the test above checks.
+fn taken_port_with_a_free_neighbour() -> (std::net::TcpListener, u16) {
+    for _ in 0..50 {
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = taken.local_addr().unwrap().port();
+        if port <= u16::MAX - cartograph_server::PORT_TRIES
+            && std::net::TcpListener::bind(("127.0.0.1", port + 1)).is_ok()
+        {
+            return (taken, port);
+        }
+    }
+    panic!("no ephemeral port with a bindable next port in 50 tries");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
