@@ -214,6 +214,7 @@ base. See [docs/workspace.md](docs/workspace.md).
   schemas, and the contract breaks `diff` reports.
 - [docs/api-f2.md](docs/api-f2.md): the HTTP API behind the web UI.
 - [docs/release.md](docs/release.md): building release archives and publishing to npm.
+- [docs/perf.md](docs/perf.md): the performance budget CI checks, and what the index stores.
 - [web/README.md](web/README.md) and [web/DESIGN.md](web/DESIGN.md): the web UI.
 
 The web UI is in Spanish.

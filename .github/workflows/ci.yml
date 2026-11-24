@@ -65,6 +65,86 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  # Performance budget (docs/perf.md): this change against its base, both built and run on
+  # this runner. It fails past the limits on a pull request; on a push to main it only
+  # reports (the commit is in already, and runner noise is not measured there).
+  perf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    env:
+      # Apache DolphinScheduler 3.4.3: Java (Spring) and TypeScript, ~4.9k files.
+      CORPUS_URL: https://github.com/apache/dolphinscheduler.git
+      CORPUS_SHA: a190201acffa03d199d4ca216288734a6513de3d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base commit is built too, and this repo is a corpus with its history.
+          fetch-depth: 0
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Base commit
+        id: base
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$PR_BASE" ]; then base=$(git merge-base HEAD "$PR_BASE"); else base=$(git rev-parse HEAD~1); fi
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          echo "rustc=$(rustc -V | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+      - name: Build head
+        run: |
+          cargo build --release --locked -p cartograph-cli
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/perf-bin"
+          cp target/release/cartograph "$RUNNER_TEMP/bin/head"
+      # A binary built here on a push to main is the base of the next runs: kept by commit
+      # (and compiler), so a pull request builds only its own head.
+      - name: Restore the base binary
+        id: base-bin
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/perf-bin/cartograph
+          key: perf-bin-${{ runner.os }}-${{ steps.base.outputs.rustc }}-${{ steps.base.outputs.sha }}
+      - name: Build base
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+          HIT: ${{ steps.base-bin.outputs.cache-hit }}
+        run: |
+          if [ "$HIT" = true ]; then
+            cp "$RUNNER_TEMP/perf-bin/cartograph" "$RUNNER_TEMP/bin/base"
+          else
+            git worktree add --detach "$RUNNER_TEMP/base-src" "$BASE"
+            cargo build --release --locked -p cartograph-cli \
+              --manifest-path "$RUNNER_TEMP/base-src/Cargo.toml" --target-dir target
+            cp target/release/cartograph "$RUNNER_TEMP/bin/base"
+          fi
+      - name: Corpora
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/self" HEAD
+          git init -q "$RUNNER_TEMP/corpus"
+          git -C "$RUNNER_TEMP/corpus" fetch -q --depth 1 "$CORPUS_URL" "$CORPUS_SHA"
+          git -C "$RUNNER_TEMP/corpus" checkout -q --detach FETCH_HEAD
+          [ -x /usr/bin/time ] || { sudo apt-get update -q && sudo apt-get install -y -q time; }
+      - name: Measure
+        run: |
+          node scripts/perf-gate.mjs \
+            --base "$RUNNER_TEMP/bin/base" --head "$RUNNER_TEMP/bin/head" \
+            --corpus "self=$RUNNER_TEMP/self" --corpus "dolphinscheduler=$RUNNER_TEMP/corpus" \
+            --query "self:find Store" --query "self:callers Store.open" --query "self:findings" \
+            --query "dolphinscheduler:find Controller" --query "dolphinscheduler:findings" \
+            --query "dolphinscheduler:bridges --unmatched" \
+            --work "$RUNNER_TEMP/perf"
+      - name: Keep the head binary as a base
+        if: github.event_name == 'push'
+        run: cp "$RUNNER_TEMP/bin/head" "$RUNNER_TEMP/perf-bin/cartograph"
+      - if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/perf-bin/cartograph
+          key: perf-bin-${{ runner.os }}-${{ steps.base.outputs.rustc }}-${{ github.sha }}
+
   # The eval suite measures the tools (evals/cases.toml). A case that fails because a tool
   # is wrong is a finding to fix, not a broken build, so this job reports without blocking.
   evals:
