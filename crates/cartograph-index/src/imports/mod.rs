@@ -84,7 +84,17 @@ pub const EXTRACTOR_REVISION: u32 = 6;
 /// Resolved `name@version` of every tree-sitter crate, from `Cargo.lock` (see `build.rs`).
 pub const GRAMMAR_VERSIONS: &str = env!("CARTOGRAPH_GRAMMAR_VERSIONS");
 
-/// Version of the extraction, the extraction-cache key. It combines:
+/// Version of the extraction, the extraction-cache key: the revision and a digest of
+/// [`extractor_descriptor`] (every row of the cache carries it, so it stays short).
+pub fn extractor_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        let digest = blake3::hash(extractor_descriptor().as_bytes()).to_hex();
+        format!("r{EXTRACTOR_REVISION}-{}", &digest.as_str()[..16])
+    })
+}
+
+/// What the extraction depends on, written out. It combines:
 /// - [`EXTRACTOR_REVISION`];
 /// - this crate's version;
 /// - the resolved version of every tree-sitter crate ([`GRAMMAR_VERSIONS`]), so a
@@ -96,9 +106,9 @@ pub const GRAMMAR_VERSIONS: &str = env!("CARTOGRAPH_GRAMMAR_VERSIONS");
 /// - the symbol extractor's revision ([`crate::symbols::REVISION`]).
 ///
 /// None of these needs a manual bump, apart from the revisions when Rust code changes.
-pub fn extractor_version() -> &'static str {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION.get_or_init(|| {
+pub fn extractor_descriptor() -> &'static str {
+    static DESCRIPTOR: OnceLock<String> = OnceLock::new();
+    DESCRIPTOR.get_or_init(|| {
         let mut h = blake3::Hasher::new();
         for q in [
             JS_QUERY, TS_QUERY, PY_QUERY, RUST_QUERY, C_QUERY, CPP_QUERY, GO_QUERY, JAVA_QUERY,

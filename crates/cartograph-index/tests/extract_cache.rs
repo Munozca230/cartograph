@@ -145,13 +145,24 @@ fn locked_grammars() -> Vec<(String, String)> {
 fn the_extractor_version_pins_every_resolved_grammar_version() {
     let locked = locked_grammars();
     assert!(locked.iter().any(|(n, _)| n == "tree-sitter-typescript"));
-    let v = imports::extractor_version();
+    let v = imports::extractor_descriptor();
     for (name, version) in locked {
         assert!(
             v.contains(&format!("{name}@{version}")),
             "{name}@{version} missing from {v}"
         );
     }
+    // The key each cache row carries is a short digest of all that.
+    let key = imports::extractor_version();
+    let digest = blake3::hash(v.as_bytes()).to_hex();
+    assert_eq!(
+        key,
+        format!(
+            "r{}-{}",
+            imports::EXTRACTOR_REVISION,
+            &digest.as_str()[..16]
+        )
+    );
 }
 
 #[test]
