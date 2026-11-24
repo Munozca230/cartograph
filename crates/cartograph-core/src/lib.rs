@@ -58,6 +58,11 @@ pub enum Error {
     SchemaTooNew { found: i64, supported: i64 },
     #[error("could not enable WAL journal mode (got {0:?})")]
     NotWal(String),
+    #[error(
+        "index written by an older cartograph (schema version {found}); re-index with write access to {}",
+        dir.display()
+    )]
+    OlderReadOnly { found: i64, dir: std::path::PathBuf },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

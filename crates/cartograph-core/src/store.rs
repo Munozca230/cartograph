@@ -408,6 +408,12 @@ pub struct CacheEntry {
 /// Latest schema version this build understands.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
+/// Oldest schema version read as it is when the database cannot be written to migrate it
+/// (a read-only file or folder): v15 differs from v16 only in what it stores, not in what
+/// it answers (comment rows of `key_sites` read as mentions). An older one needs a
+/// re-index.
+pub const READABLE_UNMIGRATED: i64 = 15;
+
 /// Handle to a graph database.
 pub struct Store {
     conn: Connection,
@@ -417,12 +423,35 @@ impl Store {
     /// Open (or create) the database at `path` in WAL mode and migrate it to
     /// [`SCHEMA_VERSION`]. WAL lets readers (UI, MCP) keep reading while the indexer
     /// writes; [`BUSY_TIMEOUT`] absorbs short write-write contention.
+    ///
+    /// A database that needs migrating but cannot be written (a read-only file or folder)
+    /// is read as it is from [`READABLE_UNMIGRATED`] on; an older one is
+    /// [`Error::OlderReadOnly`], which says to re-index.
     pub fn open(path: impl AsRef<Path>) -> Result<Store> {
+        let path = path.as_ref();
         let conn = Connection::open(path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
         enable_wal(&conn)?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        Self::init(conn)
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let mut store = Store { conn };
+        match store.migrate_to(SCHEMA_VERSION) {
+            Ok(()) => Ok(store),
+            Err(Error::Sqlite(rusqlite::Error::SqliteFailure(e, _)))
+                if e.code == rusqlite::ErrorCode::ReadOnly =>
+            {
+                let found = store.schema_version()?;
+                if found >= READABLE_UNMIGRATED {
+                    Ok(store)
+                } else {
+                    Err(Error::OlderReadOnly {
+                        found,
+                        dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+                    })
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Journal mode reported by SQLite (`wal` for file databases opened with [`Store::open`]).
@@ -1574,8 +1603,17 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
     if has_table(conn, "bridges")? {
         read_bridges(conn, &mut out)?;
     }
-    if has_table(conn, "key_mentions")? {
-        let mut stmt = conn.prepare("SELECT key, file FROM key_mentions")?;
+    // A v15 database read as it is (a read-only one) keeps them as comment rows of
+    // `key_sites`, one per comment.
+    let mentions = if has_table(conn, "key_mentions")? {
+        Some("SELECT key, file FROM key_mentions")
+    } else if has_table(conn, "key_sites")? {
+        Some("SELECT DISTINCT key, file FROM key_sites WHERE form = 'comment'")
+    } else {
+        None
+    };
+    if let Some(sql) = mentions {
+        let mut stmt = conn.prepare(sql)?;
         out.mentions = stmt
             .query_map([], |r| {
                 Ok(crate::key::KeyMention {
@@ -1890,7 +1928,7 @@ fn read_keys(conn: &Connection, out: &mut Symbols) -> Result<()> {
     let mut stmt = conn.prepare(
         "SELECT key, role, form, name, container, container_file, container_line, file, line,
                 symbol, target, confidence
-         FROM key_sites",
+         FROM key_sites WHERE form <> 'comment'",
     )?;
     let rows = stmt.query_map([], |r| {
         Ok((
@@ -2742,6 +2780,91 @@ mod tests {
             )
             .unwrap();
         assert!(edges_sql.contains("WITHOUT ROWID"), "{edges_sql}");
+    }
+
+    /// A database at `version` with [`sample`] and [`sample_keyed`], plus (from v13 on)
+    /// the comment rows a v15 index kept, its file then made read-only.
+    fn read_only_db_at(version: i64) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.db");
+        {
+            let mut store = Store {
+                conn: Connection::open(&path).unwrap(),
+            };
+            enable_wal(&store.conn).unwrap();
+            store.migrate_to(version).unwrap();
+            let tx = store.begin_replace().unwrap();
+            tx.write_graph(&sample()).unwrap();
+            tx.write_symbols(&sample_keyed()).unwrap();
+            tx.commit().unwrap();
+            if version >= 13 {
+                store
+                    .conn
+                    .execute_batch(
+                        "INSERT INTO key_sites (key, role, form, container, container_file,
+                             container_line, file, line, confidence)
+                         VALUES ('READ-FILE', 'use', 'comment', '', '', 0, 'src/Files.java',
+                                 2, 'exact'),
+                                ('READ-FILE', 'use', 'comment', '', '', 0, 'src/Files.java',
+                                 9, 'exact'),
+                                ('READ-FILE', 'use', 'comment', '', '', 0,
+                                 'src/Runner.java', 1, 'exact');",
+                    )
+                    .unwrap();
+            }
+            // Checkpointed and closed: a later reader finds the whole database in the file.
+            store
+                .conn
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .unwrap();
+        }
+        set_read_only(&path, true);
+        (dir, path)
+    }
+
+    fn set_read_only(path: &Path, on: bool) {
+        let mut p = std::fs::metadata(path).unwrap().permissions();
+        p.set_readonly(on);
+        std::fs::set_permissions(path, p).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_v15_db_is_read_as_it_is() {
+        let (_dir, path) = read_only_db_at(15);
+        let store = Store::open(&path).unwrap();
+        // Not migrated (it cannot be written), and answering as a migrated one would.
+        assert_eq!(store.schema_version().unwrap(), 15);
+        assert_eq!(store.load_graph().unwrap(), sample());
+        assert_eq!(store.load_symbols().unwrap(), sample_mentioned());
+        drop(store);
+        set_read_only(&path, false);
+        // Writable again: it migrates.
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        assert_eq!(store.load_symbols().unwrap(), sample_mentioned());
+    }
+
+    #[test]
+    fn a_read_only_db_older_than_v15_says_to_reindex() {
+        let (dir, path) = read_only_db_at(14);
+        let err = Store::open(&path).err().unwrap();
+        assert!(
+            matches!(err, Error::OlderReadOnly { found: 14, .. }),
+            "{err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("index written by an older cartograph"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains(&format!(
+                "re-index with write access to {}",
+                dir.path().display()
+            )),
+            "{msg}"
+        );
+        set_read_only(&path, false);
     }
 
     /// [`sample_symbols`] with Spring beans, injection points and data sinks (schema v14).
