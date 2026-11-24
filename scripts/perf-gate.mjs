@@ -9,7 +9,9 @@
 //   `/usr/bin/time -l` on macOS, the process's peak working set on Windows);
 // - DB size: graph.db (and its -wal, if any) after a cold index;
 // - warm index: a re-index of an unchanged corpus, the median of --runs runs;
-// - queries: the sum of the median time of each --query.
+// - queries: the sum of the median time of each --query. A query that fails on both sides
+//   is left out (noted), one that fails only on the base is not compared (noted), and one
+//   that fails only on the head fails the gate.
 // A metric fails when the head exceeds the base by more than its limit (a time also by
 // more than --min-time-delta seconds, so a fast corpus does not fail on jitter). The
 // table is printed either way, and appended to $GITHUB_STEP_SUMMARY when set.
@@ -126,7 +128,8 @@ $ms = $sw.Elapsed.TotalMilliseconds
 `;
 
 let winScript;
-function runOnce(bin, args, work) {
+function runOnce(bin, args, work, tolerant = false) {
+  const failed = (r) => (tolerant ? null : fail(bin, args, r));
   if (process.platform === "win32") {
     if (!winScript) {
       winScript = join(work, "peak.ps1");
@@ -143,8 +146,8 @@ function runOnce(bin, args, work) {
       },
     );
     const m = /@@perf-gate ms=([\d.,]+) peak=(\d+) exit=(-?\d+)/.exec(r.stdout ?? "");
-    if (!m) fail(bin, args, r);
-    if (m[3] !== "0") fail(bin, args, { ...r, status: Number(m[3]) });
+    if (!m) return failed(r);
+    if (m[3] !== "0") return failed({ ...r, status: Number(m[3]) });
     const peak = Number(m[2]);
     return {
       secs: Number(m[1].replace(",", ".")) / 1000,
@@ -161,7 +164,7 @@ function runOnce(bin, args, work) {
   const t0 = process.hrtime.bigint();
   const r = spawnSync(cmd, full, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   const secs = Number(process.hrtime.bigint() - t0) / 1e9;
-  if (r.status !== 0) fail(bin, args, r);
+  if (r.status !== 0) return failed(r);
   let rss = null;
   if (timed) {
     const text = readFileSync(report, "utf8");
@@ -236,17 +239,32 @@ function measure(o) {
       r[side].warm = median(warm[side]);
       r[side].query = queries.length ? 0 : null;
     }
+    r.queries = [];
+    r.skipped = [];
+    r.broken = [];
     for (const q of queries) {
+      const name = q.args.join(" ");
+      const args = (side) => ["query", "-C", c.path, "--data-dir", dir(side), ...q.args];
+      // One untimed run per side first: a query that fails on both sides (a symbol the
+      // corpus no longer has) is left out; one that fails only on the head is a failure;
+      // one that fails only on the base (it asks for something new) cannot be compared.
+      const ok = {};
+      for (const side of ["base", "head"]) ok[side] = runOnce(bins[side], args(side), work, true);
+      if (!ok.base || !ok.head) {
+        if (ok.base) r.broken.push(name);
+        else r.skipped.push(`${name} (fails on ${ok.head ? "the base only" : "both"})`);
+        continue;
+      }
       const t = { base: [], head: [] };
       for (let i = 0; i < o.runs; i++) {
         for (const side of i % 2 ? ["head", "base"] : ["base", "head"]) {
-          const args = ["query", "-C", c.path, "--data-dir", dir(side), ...q.args];
-          t[side].push(runOnce(bins[side], args, work).secs);
+          t[side].push(runOnce(bins[side], args(side), work).secs);
         }
       }
       for (const side of ["base", "head"]) r[side].query += median(t[side]);
+      r.queries.push(name);
     }
-    r.queries = queries.map((q) => q.args.join(" "));
+    if (!r.queries.length) r.base.query = r.head.query = null;
     results.push(r);
   }
   if (!o.work) rmSync(work, { recursive: true, force: true });
@@ -291,6 +309,18 @@ function judge(o, results) {
         verdict,
       });
     }
+    for (const q of r.broken) {
+      rows.push({
+        corpus: r.corpus,
+        metric: `query \`${q}\``,
+        base: "ok",
+        head: "fails",
+        change: "-",
+        limit: "-",
+        verdict: "FAIL",
+      });
+      failed = true;
+    }
   }
   return { rows, failed };
 }
@@ -312,7 +342,8 @@ const { rows, failed } = judge(o, results);
 const notes = results.map(
   (r) =>
     `- ${r.corpus}: ${r.files || "indexed"}` +
-    (r.queries.length ? `; queries: ${r.queries.map((q) => `\`${q}\``).join(", ")}` : ""),
+    (r.queries.length ? `; queries: ${r.queries.map((q) => `\`${q}\``).join(", ")}` : "") +
+    (r.skipped.length ? `; left out: ${r.skipped.map((q) => `\`${q}\``).join(", ")}` : ""),
 );
 const text =
   `${table(rows)}\n\n${notes.join("\n")}\n\n` +

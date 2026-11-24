@@ -86,15 +86,26 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # A pull request against its merge base; a push against the commit the branch was at
+      # before it (all of a push of several commits); anything else against HEAD~1.
       - name: Base commit
         id: base
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ -n "$PR_BASE" ]; then base=$(git merge-base HEAD "$PR_BASE"); else base=$(git rev-parse HEAD~1); fi
+          if [ -n "$PR_BASE" ]; then
+            base=$(git merge-base HEAD "$PR_BASE")
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+            && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base=$BEFORE
+          else
+            base=$(git rev-parse HEAD~1)
+          fi
           echo "sha=$base" >> "$GITHUB_OUTPUT"
           echo "rustc=$(rustc -V | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
       - name: Build head
+        id: head
         run: |
           cargo build --release --locked -p cartograph-cli
           mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/perf-bin"
@@ -136,10 +147,11 @@ jobs:
             --query "dolphinscheduler:find Controller" --query "dolphinscheduler:findings" \
             --query "dolphinscheduler:bridges --unmatched" \
             --work "$RUNNER_TEMP/perf"
+      # Kept even when Measure fails: the next run's base is this commit either way.
       - name: Keep the head binary as a base
-        if: github.event_name == 'push'
+        if: always() && github.event_name == 'push' && steps.head.outcome == 'success'
         run: cp "$RUNNER_TEMP/bin/head" "$RUNNER_TEMP/perf-bin/cartograph"
-      - if: github.event_name == 'push'
+      - if: always() && github.event_name == 'push' && steps.head.outcome == 'success'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/perf-bin/cartograph

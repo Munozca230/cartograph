@@ -9,7 +9,9 @@ to `main`, with `scripts/perf-gate.mjs`.
 Runners differ from one run to the next, so there are no absolute numbers to meet. The job
 builds two binaries on the same runner, the change (head) and its base, and compares them:
 
-- base: the merge base of a pull request with its target branch; `HEAD~1` on a push;
+- base: the merge base of a pull request with its target branch; on a push, the commit the
+  branch was at before it (`github.event.before`), so a push of several commits is measured
+  whole; `HEAD~1` otherwise (a manual run, a new branch);
 - both binaries index the same corpora, each into a fresh data dir outside the corpus,
   after one untimed run that warms the disk cache; base and head runs alternate, so a
   drift of the runner hits both alike.
@@ -25,6 +27,10 @@ builds two binaries on the same runner, the change (head) and its base, and comp
 A metric fails when the head exceeds the base by more than its limit; a time must also
 exceed it by more than 0.25 s, so a corpus that indexes in a second does not fail on
 jitter. The table is printed in the log and in the job summary either way.
+
+A query that fails on both sides (it names a symbol the corpus no longer has, say after a
+rename in this repo) is left out and noted; one that fails only on the base asks for
+something new and is not compared; one that fails only on the head fails the gate.
 
 The job **blocks pull requests** and **only reports on a push to main** (the commit is in
 already). Warm index and query times are reported, not gated: they are short and dominated
@@ -63,7 +69,8 @@ A release build takes a few minutes, so the job keeps it small:
 - `Swatinem/rust-cache` keeps the compiled dependencies;
 - base and head share one target dir, so the base build only recompiles the workspace
   crates;
-- on a push to main the head binary is saved in the Actions cache, keyed by commit and
+- on a push to main the head binary is saved in the Actions cache (even when the
+  measurement fails), keyed by commit and
   compiler version; a pull request whose base is that commit restores it and builds only
   its own head.
 
