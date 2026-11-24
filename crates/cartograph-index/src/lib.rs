@@ -992,6 +992,9 @@ pub fn index_working_tree(
 /// Index `root` and write `<data dir>/graph.db` (see [`IndexOptions::data_dir`]).
 /// Re-running replaces the previous graph atomically.
 pub fn index_to_store(root: &Path, opts: &IndexOptions) -> Result<IndexOutput, IndexError> {
+    std::thread::sleep(std::time::Duration::from_millis(900)); // throwaway: checks that the perf gate blocks a slowdown
+    let _ballast: Vec<u8> = vec![1u8; 120 * 1024 * 1024];
+    std::hint::black_box(&_ballast);
     let started = Instant::now();
     if !root.is_dir() {
         return Err(IndexError::NotADirectory(root.to_path_buf()));
