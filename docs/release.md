@@ -197,7 +197,9 @@ Measured for 0.1.0 (2026-11-21): the zip is 10.3 MB (10,831,034 bytes), the bina
 - `web`: `npm test`, `tsc --noEmit`, `npm run lint`, `npm run build`;
 - `evals`: `cartograph eval` (see [mcp.md](mcp.md#evals)). It may fail without failing the
   workflow (`continue-on-error`): a failing case is a defect of a tool to fix, not a
-  broken build.
+  broken build;
+- `perf`: the change against its base on one runner (index time, peak memory, database
+  size), blocking on pull requests and informational on pushes (see [perf.md](perf.md)).
 
 ## License and third-party notices
 

@@ -10,9 +10,9 @@ build = "build.rs"
 
 [dependencies]
 axum = "0.8.9"
-cartograph-core = { version = "0.1.0", path = "../cartograph-core" }
-cartograph-index = { version = "0.1.0", path = "../cartograph-index" }
-cartograph-query = { version = "0.1.0", path = "../cartograph-query" }
+cartograph-core = { version = "0.2.0", path = "../cartograph-core" }
+cartograph-index = { version = "0.2.0", path = "../cartograph-index" }
+cartograph-query = { version = "0.2.0", path = "../cartograph-query" }
 dunce = "1.0.5"
 humantime = "2.4.0"
 ignore = "0.4.34"

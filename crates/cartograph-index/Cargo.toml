@@ -11,7 +11,7 @@ description = "Indexer of cartograph: files, imports, symbols, calls and git his
 blake3 = "1.8.7"
 gix = { version = "0.90.0", default-features = false, features = ["sha1", "blob-diff", "mailmap", "max-performance"] }
 globset = "0.4.21"
-cartograph-core = { version = "0.1.0", path = "../cartograph-core" }
+cartograph-core = { version = "0.2.0", path = "../cartograph-core" }
 ignore = "0.4.34"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
