@@ -57,6 +57,145 @@ fixture = "../tests/fixtures/workspace-keys"
 [repos.slice]
 fixture = "../tests/fixtures/workspace-slice"
 
+# Contracts: a client type posted and patched to two DTOs, a required field a `Pick`
+# leaves out, an MCP server's zod tools.
+[repos.contracts]
+fixture = "../tests/fixtures/workspace-contracts"
+
+# Contract breaks. main: a client posts ItemPayload to a Spring route, calls an archive
+# route, invokes an IPC channel; an MCP server declares two tools. Branch rename: the DTO
+# reads `description` instead of `summary`, the archive route is renamed, the IPC handler
+# is gone, a tool is removed and another loses a parameter and requires one it had
+# optional.
+[repos.contracts-git]
+
+[[repos.contracts-git.commits]]
+message = "base"
+
+[repos.contracts-git.commits.files]
+"cartograph.toml" = '''
+[bridges]
+http = true
+'''
+"src/main/java/app/ItemController.java" = '''
+package app;
+
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/items")
+public class ItemController {
+    @PostMapping
+    public String create(@Valid @RequestBody CreateItemDto dto) {
+        return "created";
+    }
+
+    @PostMapping("/archive")
+    public String archive() {
+        return "archived";
+    }
+}
+'''
+"src/main/java/app/CreateItemDto.java" = '''
+package app;
+
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
+@Data
+public class CreateItemDto {
+    @NotBlank
+    private String title;
+    private String summary;
+}
+'''
+"web/client.ts" = '''
+export interface ItemPayload {
+  title: string;
+  summary?: string;
+}
+
+async function send(path: string, method: string, body?: unknown) {
+  return fetch(path, { method, body: JSON.stringify(body) });
+}
+
+export async function createItem(item: ItemPayload) {
+  return send('/api/items', 'POST', item);
+}
+
+export async function archiveItems() {
+  return send('/api/items/archive', 'POST');
+}
+'''
+"web/main.ts" = '''
+import { ipcMain } from 'electron';
+
+ipcMain.handle('items:list', async () => []);
+'''
+"web/preload.ts" = '''
+import { ipcRenderer } from 'electron';
+
+export const listItems = () => ipcRenderer.invoke('items:list');
+'''
+"mcp/tools.ts" = '''
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+export function registerTools(server: McpServer): void {
+  server.tool('create_item', 'Create an item', { title: z.string(), summary: z.string().optional(), projectId: z.string().optional() }, async () => ({ content: [] }));
+  server.tool('list_items', 'List the items', { projectId: z.string() }, async () => ({ content: [] }));
+}
+'''
+
+[[repos.contracts-git.commits]]
+message = "rename summary"
+branch = "rename"
+remove = ["web/main.ts"]
+
+[repos.contracts-git.commits.files]
+"src/main/java/app/ItemController.java" = '''
+package app;
+
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/items")
+public class ItemController {
+    @PostMapping
+    public String create(@Valid @RequestBody CreateItemDto dto) {
+        return "created";
+    }
+
+    @PostMapping("/archive-all")
+    public String archive() {
+        return "archived";
+    }
+}
+'''
+"src/main/java/app/CreateItemDto.java" = '''
+package app;
+
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
+@Data
+public class CreateItemDto {
+    @NotBlank
+    private String title;
+    private String description;
+}
+'''
+"mcp/tools.ts" = '''
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+export function registerTools(server: McpServer): void {
+  server.tool('create_item', 'Create an item', { title: z.string(), projectId: z.string() }, async () => ({ content: [] }));
+}
+'''
+
 # A layered app. main: an old cycle and an old ui -> db violation. Branch feature: a new
 # cycle (model <-> service) and a new core -> ui import. Uncommitted: an unresolved import.
 [repos.layered]
@@ -898,3 +1037,46 @@ contains = [
 ]
 in_order = true
 budget = 1500
+
+# =====================================================================================
+# Contracts: HTTP bodies and MCP tools (tests/fixtures/workspace-contracts)
+# =====================================================================================
+
+[[case]]
+id = "ct-explain-create-dto"
+repo = "contracts"
+question = "Does what the desktop client posts to POST /api/items match CreateItemDto?"
+tool = "explain"
+args = { node = "api:src/main/java/com/acme/items/dto/CreateItemDto.java" }
+contains = [
+  "POST /api/items: ItemPayload",
+  "desktop/src/api/ItemsApi.ts",
+  "technology (optional)",
+  "tags (UpdateItemDto of PATCH /api/items/{} reads it)",
+]
+budget = 1000
+
+[[case]]
+id = "ct-missing-required-field"
+repo = "contracts"
+question = "Does any route require a field its clients never send?"
+tool = "findings"
+args = { kind = ["contract_missing_field"] }
+contains = ["POST /api/items/tags", "TagDto requires `name`"]
+not_contains = ["NoteDto", "CreateItemDto"]
+
+[[case]]
+id = "ct-diff-contract-breaks"
+repo = "contracts-git"
+question = "What does this branch break for the clients of the API, the IPC channels and the MCP tools?"
+tool = "diff"
+args = { base = "main" }
+contains = [
+  "CreateItemDto no longer reads `summary` (now description?), which ItemPayload",
+  "ipc_no_handler",
+  "http_unmatched_call",
+  "POST /api/items/archive",
+  "MCP tool `list_items` removed",
+  "MCP tool `create_item`: parameter `summary` removed",
+  "MCP tool `create_item`: parameter `projectId` is now required",
+]

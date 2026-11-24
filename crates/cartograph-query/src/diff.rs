@@ -892,6 +892,47 @@ mod tests {
         Repo::new(&g, cfg.clone())
     }
 
+    /// A call that reached a route in the base and reaches none now, with no finding to
+    /// say so (its server is no longer known): a contract break.
+    #[test]
+    fn a_call_left_without_its_route_is_a_break() {
+        use cartograph_core::{Bridge, BridgeEndpoint, BridgeKind, BridgeRole};
+        let call = |detail: Option<&str>| BridgeEndpoint {
+            kind: BridgeKind::Http,
+            role: BridgeRole::Consume,
+            key: "POST /items".into(),
+            label: "api.post".into(),
+            file: "ui/u.ts".into(),
+            line: 4,
+            symbol: Some("sym:ui/u.ts#save".into()),
+            confidence: Confidence::Resolved,
+            detail: detail.map(str::to_string),
+        };
+        let bridge = Bridge {
+            kind: BridgeKind::Http,
+            subtype: "wrapper".into(),
+            src_file: "ui/u.ts".into(),
+            src_line: 4,
+            src: None,
+            dst_file: "core/a.ts".into(),
+            dst_line: 9,
+            dst: None,
+            key: "POST /api/items".into(),
+            confidence: Confidence::Resolved,
+        };
+        let cfg = Config::default();
+        let base = repo(false, &cfg).with_bridges(&[call(None)], &[bridge]);
+        let head = repo(false, &cfg).with_bridges(&[call(Some("no_server"))], &[]);
+        let c = compare(&base, &head);
+        assert_eq!(
+            contract_breaks(&base, &head, &c),
+            vec![
+                "HTTP call POST /items (ui/u.ts:4) reached POST /api/items in the base; no route serves it now (no_server)"
+            ]
+        );
+        assert!(contract_breaks(&base, &base, &compare(&base, &base)).is_empty());
+    }
+
     #[test]
     fn bridges_make_only_layer_violations_worse() {
         let cfg = Config::parse(

@@ -374,3 +374,152 @@ pub fn breaks(base: &[HttpBody], head: &[HttpBody], tb: &[McpTool], th: &[McpToo
     }
     out.into_iter().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cartograph_core::ToolParam;
+
+    fn field(name: &str, required: bool) -> ContractField {
+        ContractField {
+            name: name.into(),
+            aliases: Vec::new(),
+            required,
+            optional: false,
+        }
+    }
+
+    fn ty(name: &str, file: &str, fields: Option<Vec<ContractField>>) -> BodyType {
+        BodyType {
+            written: name.into(),
+            name: Some(name.into()),
+            file: Some(file.into()),
+            line: 1,
+            array: false,
+            fields,
+        }
+    }
+
+    fn body(key: &str, client: Option<BodyType>, server: BodyType) -> HttpBody {
+        HttpBody {
+            src_file: "web/api.ts".into(),
+            src_line: 3,
+            dst_file: "api/Items.java".into(),
+            dst_line: 9,
+            key: key.into(),
+            client,
+            server: Some(server),
+        }
+    }
+
+    fn payload(fields: &[&str]) -> BodyType {
+        ty(
+            "Payload",
+            "web/types.ts",
+            Some(fields.iter().map(|f| field(f, false)).collect()),
+        )
+    }
+
+    /// One client type for the create and the update: a field only the update reads is
+    /// named with its route, never a missing field.
+    #[test]
+    fn a_client_type_shared_by_two_routes_names_the_one_that_reads_a_field() {
+        let create = ty(
+            "CreateDto",
+            "api/CreateDto.java",
+            Some(vec![field("title", true), field("tech", false)]),
+        );
+        let update = ty(
+            "UpdateDto",
+            "api/UpdateDto.java",
+            Some(vec![field("title", false), field("tags", false)]),
+        );
+        let bodies = vec![
+            body("POST /items", Some(payload(&["title", "tags"])), create),
+            body("PATCH /items/{}", Some(payload(&["title", "tags"])), update),
+        ];
+        let files = BTreeSet::from(["api/CreateDto.java".to_string()]);
+        let r = rows(&bodies, &files);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].server_only, vec!["tech (optional)"]);
+        assert_eq!(
+            r[0].client_only,
+            vec!["tags (UpdateDto of PATCH /items/{} reads it)"]
+        );
+        assert!(missing_required(&bodies).is_empty());
+    }
+
+    /// A required field no client type declares is certain only when every client shape of
+    /// the route is known.
+    #[test]
+    fn missing_required_needs_every_client_shape() {
+        let dto = ty("TagDto", "api/TagDto.java", Some(vec![field("name", true)]));
+        let known = body("POST /tags", Some(payload(&["hex"])), dto.clone());
+        let got = missing_required(std::slice::from_ref(&known));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].2, vec!["name"]);
+        let mut unknown = known.clone();
+        unknown.src_line = 7;
+        unknown.client = None;
+        assert!(missing_required(&[known, unknown]).is_empty());
+    }
+
+    #[test]
+    fn breaks_of_fields_and_tools() {
+        let before = body(
+            "POST /items",
+            Some(payload(&["title", "summary"])),
+            ty(
+                "CreateDto",
+                "api/CreateDto.java",
+                Some(vec![field("title", true), field("summary", false)]),
+            ),
+        );
+        let mut after = before.clone();
+        after.server = Some(ty(
+            "CreateDto",
+            "api/CreateDto.java",
+            Some(vec![field("title", true), field("description", false)]),
+        ));
+        let tool = |name: &str, params: &[(&str, Option<bool>)]| McpTool {
+            name: name.into(),
+            file: "mcp/src/tools.ts".into(),
+            line: 4,
+            params: Some(
+                params
+                    .iter()
+                    .map(|(n, r)| ToolParam {
+                        name: n.to_string(),
+                        required: *r,
+                    })
+                    .collect(),
+            ),
+        };
+        let tb = vec![
+            tool(
+                "create",
+                &[
+                    ("title", Some(true)),
+                    ("summary", Some(false)),
+                    ("team", None),
+                ],
+            ),
+            tool("list", &[]),
+        ];
+        let th = vec![tool(
+            "create",
+            &[("title", Some(true)), ("team", Some(true))],
+        )];
+        let got = breaks(&[before.clone()], &[after], &tb, &th);
+        assert_eq!(
+            got,
+            vec![
+                "MCP tool `create`: parameter `summary` removed (mcp/src/tools.ts:4)",
+                "MCP tool `list` removed (was mcp/src/tools.ts:4)",
+                "POST /items api/Items.java: CreateDto no longer reads `summary` (now description?), which Payload (web/api.ts:3) still sends",
+            ]
+        );
+        // Nothing changed, nothing broken.
+        assert!(breaks(&[before.clone()], &[before], &tb, &tb).is_empty());
+    }
+}
