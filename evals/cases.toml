@@ -64,7 +64,7 @@ fixture = "../tests/fixtures/workspace-contracts"
 
 # Contract breaks. main: a client posts ItemPayload to a Spring route, calls an archive
 # route, invokes an IPC channel; an MCP server declares two tools. Branch rename: the DTO
-# reads `description` instead of `summary`, the archive route is renamed, the IPC handler
+# reads `details` instead of `notes`, the archive route is renamed, the IPC handler
 # is gone, a tool is removed and another loses a parameter and requires one it had
 # optional.
 [repos.contracts-git]
@@ -106,14 +106,14 @@ import lombok.Data;
 @Data
 public class CreateItemDto {
     @NotBlank
-    private String title;
-    private String summary;
+    private String label;
+    private String notes;
 }
 '''
 "web/client.ts" = '''
 export interface ItemPayload {
-  title: string;
-  summary?: string;
+  label: string;
+  notes?: string;
 }
 
 async function send(path: string, method: string, body?: unknown) {
@@ -143,13 +143,13 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 export function registerTools(server: McpServer): void {
-  server.tool('create_item', 'Create an item', { title: z.string(), summary: z.string().optional(), projectId: z.string().optional() }, async () => ({ content: [] }));
-  server.tool('list_items', 'List the items', { projectId: z.string() }, async () => ({ content: [] }));
+  server.tool('create_item', 'Create an item', { label: z.string(), notes: z.string().optional(), ownerId: z.string().optional() }, async () => ({ content: [] }));
+  server.tool('list_items', 'List the items', { ownerId: z.string() }, async () => ({ content: [] }));
 }
 '''
 
 [[repos.contracts-git.commits]]
-message = "rename summary"
+message = "rename notes"
 branch = "rename"
 remove = ["web/main.ts"]
 
@@ -183,8 +183,8 @@ import lombok.Data;
 @Data
 public class CreateItemDto {
     @NotBlank
-    private String title;
-    private String description;
+    private String label;
+    private String details;
 }
 '''
 "mcp/tools.ts" = '''
@@ -192,7 +192,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 export function registerTools(server: McpServer): void {
-  server.tool('create_item', 'Create an item', { title: z.string(), projectId: z.string() }, async () => ({ content: [] }));
+  server.tool('create_item', 'Create an item', { label: z.string(), ownerId: z.string() }, async () => ({ content: [] }));
 }
 '''
 
@@ -1051,7 +1051,7 @@ args = { node = "api:src/main/java/com/acme/items/dto/CreateItemDto.java" }
 contains = [
   "POST /api/items: ItemPayload",
   "desktop/src/api/ItemsApi.ts",
-  "technology (optional)",
+  "category (optional)",
   "tags (UpdateItemDto of PATCH /api/items/{} reads it)",
 ]
 budget = 1000
@@ -1072,11 +1072,11 @@ question = "What does this branch break for the clients of the API, the IPC chan
 tool = "diff"
 args = { base = "main" }
 contains = [
-  "CreateItemDto no longer reads `summary` (now description?), which ItemPayload",
+  "CreateItemDto no longer reads `notes` (now details?), which ItemPayload",
   "ipc_no_handler",
   "http_unmatched_call",
   "POST /api/items/archive",
   "MCP tool `list_items` removed",
-  "MCP tool `create_item`: parameter `summary` removed",
-  "MCP tool `create_item`: parameter `projectId` is now required",
+  "MCP tool `create_item`: parameter `notes` removed",
+  "MCP tool `create_item`: parameter `ownerId` is now required",
 ]

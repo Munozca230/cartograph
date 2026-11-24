@@ -9,7 +9,8 @@ whole is shown as unknown and never compared.
 
 For every HTTP bridge (see [bridges.md](bridges.md)) whose route takes a body or whose
 client sends a typed one, the index keeps the client's type and the server's, with their
-fields when they can be read.
+fields when they can be read. A heuristic bridge (several routes tied, a method or a base
+not known) keeps no bodies: they would be a guess.
 
 **Server** (Spring): the `@RequestBody` parameter of the handler, with `@Valid` /
 `@Validated` noted. A list (`List<T>`, `Set<T>`, `T[]`) is a list of `T`. Feign interfaces
@@ -41,8 +42,9 @@ after resolution), and only those are stored.
   `@Data`, `@Getter`, `@Setter` or `@Value` on the class or the field, a public field,
   `@JsonProperty`, or an accessor (`setX`, `getX`, `isX`) of the class. `@NotNull`,
   `@NotBlank` and `@NotEmpty` (Bean Validation, `javax` or `jakarta`) make a field
-  required, only on a body Spring validates (`@Valid`), and never in a list (`@Valid
-  List<T>` does not validate its elements unless the controller turns on method
+  required, only on a body Spring validates (`@Valid`), never with `groups`, never on a
+  primitive (`int`, `boolean`…: Jackson sets its default), and never in a list
+  (`@Valid List<T>` does not validate its elements unless the controller turns on method
   validation).
 - TypeScript: interfaces (with what they extend), type aliases of object types,
   intersections, `Partial`, `Required`, `Readonly`, `Pick` and `Omit` with literal keys,
@@ -50,9 +52,10 @@ after resolution), and only those are stored.
 
 Unknown (never compared): a superclass or an extended type that is not a type of the repo
 or cannot be found, `@JsonTypeInfo`, `@JsonSubTypes`, `@JsonNaming`, `@JsonDeserialize`,
-`@JsonFormat` on the class, `@JsonUnwrapped`, `@JsonAnySetter`, `@JsonCreator`, an index
-signature, a union, a computed key, a TS class, an object literal passed directly
-(`post(url, { title })`), a value of no declared type, `String`, `Map`, `JsonNode` and
+`@JsonFormat` on the class, `@JsonUnwrapped`, `@JsonAnySetter`, `@JsonSetter` on a field,
+`@JsonCreator`, a Jackson annotation on an accessor (`@JsonProperty` on `getX`), a TS
+interface declared twice (declaration merging), an index signature, a union, a computed key, a TS class, an object literal passed directly
+(`post(url, { label })`), a value of no declared type, `String`, `Map`, `JsonNode` and
 the like. A list is compared only with a list.
 
 ## Where contracts show up
@@ -64,7 +67,7 @@ type has (marked required or optional) and the fields only the client type has:
 ```
 contracts (HTTP bodies, client → server):
   POST /api/items: ItemPayload (desktop/src/api/ItemsApi.ts:5) → CreateItemDto (api/…/CreateItemDto.java:10)
-    only the server type has: technology (optional)
+    only the server type has: category (optional)
     only the client type has: tags (UpdateItemDto of PATCH /api/items/{} reads it)
 ```
 
@@ -97,7 +100,8 @@ Tools declared in the source of a file that imports the MCP SDK
 A zod field is required unless its chain has `.optional()`, `.nullish()`, `.default()` or
 `.catch()`, or is `z.optional(…)`; a field built by a helper (`labelField()`) has an
 unknown requiredness. A schema that is not a literal (`config.input.shape`) leaves the
-tool's parameters unknown.
+tool's parameters unknown; a name built at run time leaves the tool without a name, and no
+tool of its member is then reported as removed.
 
 ## diff and check --base
 

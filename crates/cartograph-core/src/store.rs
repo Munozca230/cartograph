@@ -2700,7 +2700,7 @@ mod tests {
             line: 3,
             array: false,
             fields: Some(vec![crate::ContractField {
-                name: "title".into(),
+                name: "label".into(),
                 aliases: vec!["name".into()],
                 required: true,
                 optional: false,
@@ -2722,7 +2722,7 @@ mod tests {
                     file: "mcp/src/tools.ts".into(),
                     line: 4,
                     params: Some(vec![crate::ToolParam {
-                        name: "title".into(),
+                        name: "label".into(),
                         required: Some(true),
                     }]),
                 },
