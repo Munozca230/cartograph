@@ -59,7 +59,8 @@ fn bodies_pair_client_and_server_types_with_their_shapes() {
         // superclass brings `projectId`.
         "PATCH /api/items/{}: ItemPayload {colour? kind? projectId? summary? tags? title?} -> UpdateItemDto {projectId summary tags title}",
         "POST /api/items: ItemPayload {colour? kind? projectId? summary? tags? title?} -> CreateItemDto {kind projectId! shade|color|colour summary technology title!}",
-        "POST /api/items/batch: ItemPayload[] {colour? kind? projectId? summary? tags? title?} -> CreateItemDto[] {kind projectId! shade|color|colour summary technology title!}",
+        // A list: its element's fields are never required.
+        "POST /api/items/batch: ItemPayload[] {colour? kind? projectId? summary? tags? title?} -> CreateItemDto[] {kind projectId shade|color|colour summary technology title}",
         // A superclass outside the repo: unknown.
         "POST /api/items/external: ItemPayload {colour? kind? projectId? summary? tags? title?} -> ExternalDto (unknown)",
         // An object literal: no known type.
@@ -68,6 +69,8 @@ fn bodies_pair_client_and_server_types_with_their_shapes() {
         "POST /api/items/tags: Pick<TagInput,'hex'> {hex?} -> TagDto {hex name!}",
         // Not validated: nothing required; a field without accessor is not read.
         "PUT /api/items/notes: NoteInput {extra text} -> NoteDto {text}",
+        // A TS class: unknown.
+        "PUT /api/items/notes: NoteDraft (unknown) -> NoteDto {text}",
     ];
     want.sort();
     assert_eq!(got, want);

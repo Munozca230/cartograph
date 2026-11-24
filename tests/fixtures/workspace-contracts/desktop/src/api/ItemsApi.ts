@@ -15,6 +15,11 @@ interface NoteInput {
   extra: string;
 }
 
+// A class: its shape is not read.
+class NoteDraft {
+  text = '';
+}
+
 export class ItemsApi {
   constructor(private readonly client: ApiClient) {}
 
@@ -41,6 +46,10 @@ export class ItemsApi {
   // The route does not validate its body: nothing is required.
   async note(note: NoteInput): Promise<void> {
     await this.client.put<void>('/api/items/notes', note);
+  }
+
+  async draft(draft: NoteDraft): Promise<void> {
+    await this.client.put<void>('/api/items/notes', draft);
   }
 
   // Leaves out `name`, which the route requires.

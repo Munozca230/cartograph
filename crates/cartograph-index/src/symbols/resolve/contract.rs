@@ -167,7 +167,7 @@ impl<'c, 'a> Shapes<'c, 'a> {
     }
 
     /// The type written `written` in file `fi`, with its shape. `validated`: Bean
-    /// Validation runs on it (else no field is required).
+    /// Validation runs on it (else no field is required; nor for a list).
     pub(super) fn body(&mut self, fi: usize, written: &str, validated: bool) -> BodyType {
         let java = self.ctx.files[fi].fam == super::Fam::Java;
         let (array, inner) = strip_array(written, java);
@@ -201,7 +201,11 @@ impl<'c, 'a> Shapes<'c, 'a> {
         } else if !java {
             out.fields = self.ts_written(fi, inner);
         }
-        if !validated && let Some(fs) = out.fields.as_mut() {
+        // `@Valid List<T>` does not validate the elements unless the controller asks for
+        // method validation: a field of a list's element is never required.
+        if (!validated || array)
+            && let Some(fs) = out.fields.as_mut()
+        {
             for f in fs {
                 f.required = false;
             }
@@ -306,7 +310,9 @@ impl<'c, 'a> Shapes<'c, 'a> {
             let p = self.parsed(fi)?;
             let decl = find_decl(p.tree.root_node(), &sym.name, sym.line, &p.src)?;
             match decl.kind() {
-                "class_declaration" | "record_declaration" => {
+                "class_declaration" | "record_declaration"
+                    if self.ctx.files[fi].fam == super::Fam::Java =>
+                {
                     self.java_fields(fi, decl, &p.src, depth)
                 }
                 "interface_declaration" if self.ctx.files[fi].fam == super::Fam::Js => {

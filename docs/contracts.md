@@ -40,7 +40,9 @@ after resolution), and only those are stored.
   `@Data`, `@Getter`, `@Setter` or `@Value` on the class or the field, a public field,
   `@JsonProperty`, or an accessor (`setX`, `getX`, `isX`) of the class. `@NotNull`,
   `@NotBlank` and `@NotEmpty` (Bean Validation, `javax` or `jakarta`) make a field
-  required, only on a body Spring validates (`@Valid`).
+  required, only on a body Spring validates (`@Valid`), and never in a list (`@Valid
+  List<T>` does not validate its elements unless the controller turns on method
+  validation).
 - TypeScript: interfaces (with what they extend), type aliases of object types,
   intersections, `Partial`, `Required`, `Readonly`, `Pick` and `Omit` with literal keys,
   a generic interface by its own fields (`Page<T>`); `name?:` is optional.
