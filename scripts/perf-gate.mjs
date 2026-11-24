@@ -221,6 +221,8 @@ function measure(o) {
         process.stderr.write(`${c.name} cold ${side} ${x.secs.toFixed(2)} s\n`);
       }
     }
+    // The size a cold index leaves, before any re-index rewrites the database.
+    for (const side of ["base", "head"]) r[side].size = dbBytes(dir(side));
     const warm = { base: [], head: [] };
     for (let i = 0; i < o.runs; i++) {
       for (const side of i % 2 ? ["head", "base"] : ["base", "head"]) {
@@ -231,7 +233,6 @@ function measure(o) {
     for (const side of ["base", "head"]) {
       r[side].cold = median(cold[side]);
       r[side].rss = median(rss[side]);
-      r[side].size = dbBytes(dir(side));
       r[side].warm = median(warm[side]);
       r[side].query = queries.length ? 0 : null;
     }
