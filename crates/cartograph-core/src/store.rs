@@ -385,6 +385,25 @@ const MIGRATIONS: &[&str] = &[
     "#,
 ];
 
+/// `file:` URI of an absolute path, for [`rusqlite::OpenFlags::SQLITE_OPEN_URI`]: forward
+/// slashes, a leading one before a drive letter, and every byte that is not a plain path
+/// character percent-encoded (`?`, `#`, `%`, spaces, non-ASCII).
+fn file_uri(path: &Path) -> String {
+    let p = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("file:");
+    if !p.starts_with('/') {
+        out.push('/');
+    }
+    for b in p.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~:".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// One row of the SCIP cache: the decoded form (`data`, opaque to the store) of the SCIP
 /// file at `path`, with the size, mtime (nanoseconds since the epoch) and hash it had.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,6 +448,9 @@ impl Store {
     /// [`Error::OlderReadOnly`], which says to re-index.
     pub fn open(path: impl AsRef<Path>) -> Result<Store> {
         let path = path.as_ref();
+        if std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly()) {
+            return Self::open_read_only(path);
+        }
         let conn = Connection::open(path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
         enable_wal(&conn)?;
@@ -437,20 +459,57 @@ impl Store {
         let mut store = Store { conn };
         match store.migrate_to(SCHEMA_VERSION) {
             Ok(()) => Ok(store),
+            // Writable by its mode but not by this process (another owner, a read-only
+            // folder or mount).
             Err(Error::Sqlite(rusqlite::Error::SqliteFailure(e, _)))
                 if e.code == rusqlite::ErrorCode::ReadOnly =>
             {
-                let found = store.schema_version()?;
-                if found >= READABLE_UNMIGRATED {
-                    Ok(store)
-                } else {
-                    Err(Error::OlderReadOnly {
-                        found,
-                        dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
-                    })
-                }
+                drop(store);
+                Self::open_read_only(path)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// Open a database this process cannot write, without migrating it (see [`Store::open`]).
+    ///
+    /// A WAL database read through a plain connection gets a `-wal` and a `-shm` beside it
+    /// when the folder allows, and on Unix SQLite gives them the database's mode: a read-only
+    /// database leaves read-only sidecars, and once it is writable again every connection
+    /// still opens it read-only (no migration, ever). So with no `-wal` to read (all its
+    /// pages are in the database, as after a clean close), the database is opened
+    /// `immutable`: read as a plain file, nothing created beside it. A `-wal` with pages in
+    /// it is read as SQLite reads any WAL database; the sidecars are there already.
+    fn open_read_only(path: &Path) -> Result<Store> {
+        let mut wal = path.as_os_str().to_owned();
+        wal.push("-wal");
+        let pending = std::fs::metadata(&wal).is_ok_and(|m| m.len() > 0);
+        let uri = format!(
+            "{}{}",
+            file_uri(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())),
+            if pending { "" } else { "?immutable=1" }
+        );
+        let conn = Connection::open_with_flags(
+            uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        let store = Store { conn };
+        let found = store.schema_version()?;
+        if found > SCHEMA_VERSION {
+            Err(Error::SchemaTooNew {
+                found,
+                supported: SCHEMA_VERSION,
+            })
+        } else if found >= READABLE_UNMIGRATED {
+            Ok(store)
+        } else {
+            Err(Error::OlderReadOnly {
+                found,
+                dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+            })
         }
     }
 
@@ -2786,7 +2845,9 @@ mod tests {
     /// the comment rows a v15 index kept, its file then made read-only.
     fn read_only_db_at(version: i64) -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("graph.db");
+        // A folder whose name a `file:` URI must encode (`?` is not allowed on Windows).
+        let path = dir.path().join("data 50% #1").join("graph.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         {
             let mut store = Store {
                 conn: Connection::open(&path).unwrap(),
@@ -2831,12 +2892,23 @@ mod tests {
     #[test]
     fn a_read_only_v15_db_is_read_as_it_is() {
         let (_dir, path) = read_only_db_at(15);
+        let sidecars = || {
+            ["-wal", "-shm"].map(|s| {
+                let mut p = path.clone().into_os_string();
+                p.push(s);
+                std::path::PathBuf::from(p).exists()
+            })
+        };
+        assert_eq!(sidecars(), [false, false]);
         let store = Store::open(&path).unwrap();
         // Not migrated (it cannot be written), and answering as a migrated one would.
         assert_eq!(store.schema_version().unwrap(), 15);
         assert_eq!(store.load_graph().unwrap(), sample());
         assert_eq!(store.load_symbols().unwrap(), sample_mentioned());
         drop(store);
+        // Nothing left beside it: on Unix a -wal or -shm made now would take the database's
+        // read-only mode and keep it read-only once the database is writable again.
+        assert_eq!(sidecars(), [false, false]);
         set_read_only(&path, false);
         // Writable again: it migrates.
         let store = Store::open(&path).unwrap();
@@ -2844,9 +2916,53 @@ mod tests {
         assert_eq!(store.load_symbols().unwrap(), sample_mentioned());
     }
 
+    /// A read-only database whose last pages are still in its `-wal` (a writer that did not
+    /// close cleanly) is read with them.
+    #[test]
+    fn a_read_only_db_reads_the_pages_of_its_wal() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let path = src.path().join("graph.db");
+        let mut store = Store::open(&path).unwrap();
+        store
+            .conn
+            .execute_batch("PRAGMA wal_autocheckpoint = 0;")
+            .unwrap();
+        store.replace_graph(&sample()).unwrap();
+        // Copied while the writer is open: the graph is in the -wal only.
+        for f in ["graph.db", "graph.db-wal"] {
+            std::fs::copy(src.path().join(f), dst.path().join(f)).unwrap();
+        }
+        drop(store);
+        let copy = dst.path().join("graph.db");
+        assert!(
+            std::fs::metadata(dst.path().join("graph.db-wal"))
+                .unwrap()
+                .len()
+                > 0
+        );
+        set_read_only(&copy, true);
+        let ro = Store::open(&copy).unwrap();
+        assert_eq!(ro.load_graph().unwrap(), sample());
+        drop(ro);
+        set_read_only(&copy, false);
+    }
+
+    #[test]
+    fn file_uris_encode_what_a_uri_reserves() {
+        assert_eq!(
+            file_uri(Path::new("/data/a b/50%/#1?.db")),
+            "file:/data/a%20b/50%25/%231%3F.db"
+        );
+        assert_eq!(
+            file_uri(Path::new(r"C:\Users\me\graph.db")),
+            "file:/C:/Users/me/graph.db"
+        );
+    }
+
     #[test]
     fn a_read_only_db_older_than_v15_says_to_reindex() {
-        let (dir, path) = read_only_db_at(14);
+        let (_dir, path) = read_only_db_at(14);
         let err = Store::open(&path).err().unwrap();
         assert!(
             matches!(err, Error::OlderReadOnly { found: 14, .. }),
@@ -2860,7 +2976,7 @@ mod tests {
         assert!(
             msg.contains(&format!(
                 "re-index with write access to {}",
-                dir.path().display()
+                path.parent().unwrap().display()
             )),
             "{msg}"
         );
