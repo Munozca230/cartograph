@@ -78,6 +78,9 @@ pub struct ContractRow {
     pub client_only_more: usize,
 }
 
+/// A route and its client and server types.
+type Pair = (String, Option<TypeRef>, Option<TypeRef>);
+
 /// The rows of the bodies whose client or server type is declared in `files`: routes with
 /// a difference first.
 pub fn rows(bodies: &[HttpBody], files: &BTreeSet<String>) -> Vec<ContractRow> {
@@ -87,8 +90,7 @@ pub fn rows(bodies: &[HttpBody], files: &BTreeSet<String>) -> Vec<ContractRow> {
             .is_some_and(|f| files.contains(f))
     };
     // One row per route and pair of types (several call sites may send the same).
-    let mut groups: BTreeMap<(String, Option<TypeRef>, Option<TypeRef>), Vec<&HttpBody>> =
-        BTreeMap::new();
+    let mut groups: BTreeMap<Pair, Vec<&HttpBody>> = BTreeMap::new();
     for b in bodies
         .iter()
         .filter(|b| in_files(&b.client) || in_files(&b.server))
@@ -510,7 +512,7 @@ mod tests {
             "create",
             &[("title", Some(true)), ("team", Some(true))],
         )];
-        let got = breaks(&[before.clone()], &[after], &tb, &th);
+        let got = breaks(std::slice::from_ref(&before), &[after], &tb, &th);
         assert_eq!(
             got,
             vec![
@@ -520,6 +522,7 @@ mod tests {
             ]
         );
         // Nothing changed, nothing broken.
-        assert!(breaks(&[before.clone()], &[before], &tb, &tb).is_empty());
+        let same = std::slice::from_ref(&before);
+        assert!(breaks(same, same, &tb, &tb).is_empty());
     }
 }
