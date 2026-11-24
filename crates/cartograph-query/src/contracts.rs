@@ -65,7 +65,7 @@ pub struct ContractRow {
     pub calls: usize,
     /// Both shapes known and comparable.
     pub compared: bool,
-    /// Server fields the client type lacks: `technology (optional)`, `title (required)`.
+    /// Server fields the client type lacks: `category (optional)`, `label (required)`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub server_only: Vec<String>,
     #[serde(skip_serializing_if = "is_zero")]
@@ -82,7 +82,7 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
-/// A name as a naming strategy would leave it: `projectId`, `project_id` and `ProjectID`
+/// A name as a naming strategy would leave it: `ownerId`, `owner_id` and `OwnerID`
 /// alike.
 fn loose(name: &str) -> String {
     name.chars()
@@ -166,6 +166,26 @@ pub fn rows(bodies: &[HttpBody], files: &BTreeSet<String>) -> Vec<ContractRow> {
         (!differs, !r.compared, r.route.clone())
     });
     out
+}
+
+/// The first `n` rows, each list cut to `fields` names (the rest counted): `(rows, rows
+/// left out)`.
+pub fn cut(rows: &[ContractRow], n: usize, fields: usize) -> (Vec<ContractRow>, usize) {
+    let shown = rows
+        .iter()
+        .take(n)
+        .map(|r| {
+            let mut r = r.clone();
+            let keep = |v: &mut Vec<String>, more: &mut usize| {
+                *more += v.len().saturating_sub(fields);
+                v.truncate(fields);
+            };
+            keep(&mut r.server_only, &mut r.server_only_more);
+            keep(&mut r.client_only, &mut r.client_only_more);
+            r
+        })
+        .collect();
+    (shown, rows.len().saturating_sub(n))
 }
 
 /// Another route the same client type goes to whose server type reads `f`: `UpdateDto of
@@ -358,12 +378,22 @@ pub fn breaks(
     // MCP tools, by member and name.
     let tools = |v: &[McpTool]| -> BTreeMap<(String, String), McpTool> {
         v.iter()
+            .filter(|t| !t.name.is_empty())
             .map(|t| ((member(&t.file), t.name.clone()), t.clone()))
             .collect()
     };
     let (bt, ht) = (tools(tb), tools(th));
+    // Members with a tool whose name is not known: a tool of theirs may have that name.
+    let unnamed: BTreeSet<String> = th
+        .iter()
+        .filter(|t| t.name.is_empty())
+        .map(|t| member(&t.file))
+        .collect();
     for ((m, name), t) in &bt {
         let Some(h) = ht.get(&(m.clone(), name.clone())) else {
+            if unnamed.contains(m) {
+                continue;
+            }
             // Gone from its file and from every file of the member.
             out.insert(format!(
                 "MCP tool `{name}` removed (was {})",
@@ -458,21 +488,21 @@ mod tests {
         let create = ty(
             "CreateDto",
             "api/CreateDto.java",
-            Some(vec![field("title", true), field("tech", false)]),
+            Some(vec![field("label", true), field("category", false)]),
         );
         let update = ty(
             "UpdateDto",
             "api/UpdateDto.java",
-            Some(vec![field("title", false), field("tags", false)]),
+            Some(vec![field("label", false), field("tags", false)]),
         );
         let bodies = vec![
-            body("POST /items", Some(payload(&["title", "tags"])), create),
-            body("PATCH /items/{}", Some(payload(&["title", "tags"])), update),
+            body("POST /items", Some(payload(&["label", "tags"])), create),
+            body("PATCH /items/{}", Some(payload(&["label", "tags"])), update),
         ];
         let files = BTreeSet::from(["api/CreateDto.java".to_string()]);
         let r = rows(&bodies, &files);
         assert_eq!(r.len(), 1);
-        assert_eq!(r[0].server_only, vec!["tech (optional)"]);
+        assert_eq!(r[0].server_only, vec!["category (optional)"]);
         assert_eq!(
             r[0].client_only,
             vec!["tags (UpdateDto of PATCH /items/{} reads it)"]
@@ -489,11 +519,11 @@ mod tests {
         let got = missing_required(std::slice::from_ref(&known));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].2, vec!["name"]);
-        // `project_id` on the server, `projectId` in the client: maybe a naming strategy.
+        // `owner_id` on the server, `ownerId` in the client: maybe a naming strategy.
         let snake = body(
             "POST /p",
-            Some(payload(&["projectId"])),
-            ty("P", "api/P.java", Some(vec![field("project_id", true)])),
+            Some(payload(&["ownerId"])),
+            ty("P", "api/P.java", Some(vec![field("owner_id", true)])),
         );
         assert!(missing_required(&[snake]).is_empty());
         let mut unknown = known.clone();
@@ -502,22 +532,41 @@ mod tests {
         assert!(missing_required(&[known, unknown]).is_empty());
     }
 
+    /// A tool whose name is not known may be the one that seems gone: no removal is
+    /// reported in its member.
+    #[test]
+    fn a_tool_of_unknown_name_hides_removals_in_its_member() {
+        let tool = |name: &str, file: &str| McpTool {
+            name: name.into(),
+            file: file.into(),
+            line: 4,
+            params: None,
+        };
+        let member = |p: &str| p.split('/').next().unwrap_or("").to_string();
+        let tb = vec![tool("archive", "mcp/a.ts"), tool("list", "other/b.ts")];
+        let th = vec![tool("", "mcp/a.ts")];
+        assert_eq!(
+            breaks(&[], &[], &tb, &th, &member),
+            vec!["MCP tool `list` removed (was other/b.ts:4)"]
+        );
+    }
+
     #[test]
     fn breaks_of_fields_and_tools() {
         let before = body(
             "POST /items",
-            Some(payload(&["title", "summary"])),
+            Some(payload(&["label", "notes"])),
             ty(
                 "CreateDto",
                 "api/CreateDto.java",
-                Some(vec![field("title", true), field("summary", false)]),
+                Some(vec![field("label", true), field("notes", false)]),
             ),
         );
         let mut after = before.clone();
         after.server = Some(ty(
             "CreateDto",
             "api/CreateDto.java",
-            Some(vec![field("title", true), field("description", false)]),
+            Some(vec![field("label", true), field("details", false)]),
         ));
         let tool = |name: &str, params: &[(&str, Option<bool>)]| McpTool {
             name: name.into(),
@@ -537,8 +586,8 @@ mod tests {
             tool(
                 "create",
                 &[
-                    ("title", Some(true)),
-                    ("summary", Some(false)),
+                    ("label", Some(true)),
+                    ("notes", Some(false)),
                     ("team", None),
                 ],
             ),
@@ -546,16 +595,16 @@ mod tests {
         ];
         let th = vec![tool(
             "create",
-            &[("title", Some(true)), ("team", Some(true))],
+            &[("label", Some(true)), ("team", Some(true))],
         )];
         let none = |_: &str| String::new();
         let got = breaks(std::slice::from_ref(&before), &[after], &tb, &th, &none);
         assert_eq!(
             got,
             vec![
-                "MCP tool `create`: parameter `summary` removed (mcp/src/tools.ts:4)",
+                "MCP tool `create`: parameter `notes` removed (mcp/src/tools.ts:4)",
                 "MCP tool `list` removed (was mcp/src/tools.ts:4)",
-                "POST /items api/Items.java: CreateDto no longer reads `summary` (now description?), which Payload (web/api.ts:3) still sends",
+                "POST /items api/Items.java: CreateDto no longer reads `notes` (now details?), which Payload (web/api.ts:3) still sends",
             ]
         );
         // Nothing changed, nothing broken.

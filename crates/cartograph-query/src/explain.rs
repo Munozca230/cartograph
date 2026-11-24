@@ -223,7 +223,6 @@ pub fn explain_with(
             crate::contracts::rows(&repo.symbols.bridges.bodies, &paths)
         }
     };
-    let contracts_n = |limit: usize| contracts.len().min(limit.min(3));
     let left_n = |limit: usize| left.len().min(limit.min(4));
     let links_n = |limit: usize| {
         limit
@@ -321,7 +320,7 @@ pub fn explain_with(
             .then(a.cmp(b))
     });
 
-    Ok(fit(
+    let answer = fit(
         limits::EXPLAIN,
         &[10, 8, 6, 5, 4, 3, 2, 1],
         |limit| Explain {
@@ -364,11 +363,37 @@ pub fn explain_with(
             bridges_more: links.len().saturating_sub(links_n(limit)),
             bridges_left: left.iter().take(left_n(limit)).cloned().collect(),
             bridges_left_more: left.len().saturating_sub(left_n(limit)),
-            contracts: contracts.iter().take(contracts_n(limit)).cloned().collect(),
-            contracts_more: contracts.len().saturating_sub(contracts_n(limit)),
+            contracts: Vec::new(),
+            contracts_more: 0,
         },
         render,
-    ))
+    );
+    Ok(with_contracts(answer, &contracts))
+}
+
+/// Add the contracts to an answer already fitted without them, in the room left: fewer
+/// routes and fields first, never at the cost of what the answer shows.
+fn with_contracts(
+    answer: Answer<Explain>,
+    rows: &[crate::contracts::ContractRow],
+) -> Answer<Explain> {
+    if rows.is_empty() {
+        return answer;
+    }
+    for (n, fields) in [(3, 8), (3, 4), (2, 3), (1, 2)] {
+        let mut data = answer.data.clone();
+        let (shown, more) = crate::contracts::cut(rows, n, fields);
+        data.contracts = shown;
+        data.contracts_more = more;
+        let text = render(&data);
+        if crate::budget::tokens(&text) <= limits::EXPLAIN
+            && crate::budget::json_tokens(&data)
+                <= limits::EXPLAIN * crate::budget::JSON_BUDGET_FACTOR
+        {
+            return Answer { data, text };
+        }
+    }
+    answer
 }
 
 /// `part` of `whole` in % (rounded; 0 of nothing).
