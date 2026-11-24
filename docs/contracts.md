@@ -22,7 +22,8 @@ the body passed as an argument or in an options object, `{ body }`, `{ ...init }
 is:
 
 - a parameter with a declared type (`create(dto: CreateUser)`);
-- a local with a declared type (`const p: Payload = …`), or `x as T` / `x satisfies T`;
+- a local with a declared type (`const p: Payload = …`, `const b: { name: string } = …`),
+  or `x as T` / `x satisfies T`;
 - a local made by a function or method of the same file with a declared return type
   (`const payload = this.toPayload(…)`, `Promise<T>` read as `T`), or `new T(…)`.
 

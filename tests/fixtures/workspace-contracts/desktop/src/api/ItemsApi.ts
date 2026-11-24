@@ -61,6 +61,12 @@ export class ItemsApi {
     await this.client.post<void>('/api/items/external', { title } as ItemPayload);
   }
 
+  // A local typed with an object type written in place.
+  async noteText(text: string): Promise<void> {
+    const body: { text: string } = { text };
+    await this.client.put<void>('/api/items/notes', body);
+  }
+
   // An object literal: a body of no known type.
   async raw(text: string): Promise<void> {
     await this.client.post<void>('/api/items/raw', { text });

@@ -69,6 +69,8 @@ fn bodies_pair_client_and_server_types_with_their_shapes() {
         "POST /api/items/tags: Pick<TagInput,'hex'> {hex?} -> TagDto {hex name!}",
         // Not validated: nothing required; a field without accessor is not read.
         "PUT /api/items/notes: NoteInput {extra text} -> NoteDto {text}",
+        // An object type written in place.
+        "PUT /api/items/notes: {text:string} {text} -> NoteDto {text}",
         // A TS class: unknown.
         "PUT /api/items/notes: NoteDraft (unknown) -> NoteDto {text}",
     ];

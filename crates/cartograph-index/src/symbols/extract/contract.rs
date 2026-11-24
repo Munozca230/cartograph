@@ -59,10 +59,27 @@ const NOT_SHAPES: &[&str] = &[
     "JSON",
 ];
 
-/// A type as written, when it may name the shape of an object: whitespace removed; `None`
-/// for a primitive, a union, an inline object type or a library type that is no shape.
+/// A type as written, when it may name the shape of an object or be one (an object type
+/// written in place): whitespace removed; `None` for a primitive, a union or a library type
+/// that is no shape.
 pub(super) fn named_type(t: &str) -> Option<String> {
-    let t: String = t.chars().filter(|c| !c.is_whitespace()).collect();
+    // Whitespace out, except inside quotes (a key or a literal type).
+    let mut quote = None;
+    let t: String = t
+        .chars()
+        .filter(|&c| {
+            match (quote, c) {
+                (None, '\'' | '"' | '`') => quote = Some(c),
+                (Some(q), _) if q == c => quote = None,
+                _ => {}
+            }
+            quote.is_some() || !c.is_whitespace()
+        })
+        .collect();
+    // An object type written in place (`{ name: string; tags?: string[] }`).
+    if t.starts_with('{') && t != "{}" {
+        return Some(t);
+    }
     let mut depth = 0i32;
     for c in t.chars() {
         match c {
@@ -949,7 +966,11 @@ mod tests {
         );
         assert_eq!(named_type("unknown"), None);
         assert_eq!(named_type("Record<string, unknown>"), None);
-        assert_eq!(named_type("{ a: string }"), None);
+        assert_eq!(
+            named_type("{ a: string; 'b c'?: 'x' | 'y' }"),
+            Some("{a:string;'b c'?:'x'|'y'}".into())
+        );
+        assert_eq!(named_type("{}"), None);
     }
 
     /// The body of a wrapper three deep: `fetch` reads the `body` of the options it
