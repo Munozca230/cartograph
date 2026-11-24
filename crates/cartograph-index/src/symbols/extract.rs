@@ -825,6 +825,9 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
     if lang == Lang::Js && contains_bytes(src, b"@modelcontextprotocol/") {
         code.tools = contract::js_tools(tree.root_node(), src);
     }
+    if lang == Lang::Rust && contains_bytes(src, b"rmcp") {
+        code.tools = contract::rust_tools(tree.root_node(), src);
+    }
     code.fields = field_types(lang, tree.root_node(), src);
     match lang {
         Lang::Rust => code.impls = trait_impls(tree.root_node(), src),

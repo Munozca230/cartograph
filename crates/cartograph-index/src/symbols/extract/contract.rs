@@ -744,6 +744,172 @@ fn tool_call(n: Node<'_>, root: Node<'_>, src: &[u8]) -> Option<RawTool> {
     })
 }
 
+/// The attributes written before `n` (`#[tool(…)]`, `#[serde(default)]`), nearest first.
+fn attributes_before(n: Node<'_>) -> Vec<Node<'_>> {
+    let mut out = Vec::new();
+    let mut cur = n.prev_named_sibling();
+    while let Some(p) = cur {
+        match p.kind() {
+            "attribute_item" => out.push(p),
+            "line_comment" | "block_comment" => {}
+            _ => break,
+        }
+        cur = p.prev_named_sibling();
+    }
+    out
+}
+
+/// The attribute `#[name(…)]` among `attrs`: its arguments' text (empty without any).
+fn attribute_args(attrs: &[Node<'_>], name: &str, src: &[u8]) -> Option<String> {
+    attrs.iter().find_map(|a| {
+        let attr = a.named_child(0)?;
+        let path = text(attr.named_child(0)?, src);
+        if path != name && !path.ends_with(&format!("::{name}")) {
+            return None;
+        }
+        Some(
+            attr.child_by_field_name("arguments")
+                .map(|t| text(t, src))
+                .unwrap_or_default(),
+        )
+    })
+}
+
+/// `key = "value"` among an attribute's arguments, at their top level (not inside a
+/// string or a nested list).
+fn attr_value(args: &str, key: &str) -> Option<String> {
+    let b = args.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    if b[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            _ if depth == 1 && args[i..].starts_with(key) => {
+                let before = args[..i].chars().last();
+                let rest = args[i + key.len()..].trim_start();
+                if before.is_some_and(|c| c == '(' || c == ',' || c.is_whitespace())
+                    && let Some(v) = rest.strip_prefix('=')
+                {
+                    let v = v.trim_start().strip_prefix('"')?;
+                    return v.split('"').next().map(str::to_string);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The parameters of an rmcp argument struct of the file: its fields, required unless an
+/// `Option` or `#[serde(default)]`; `None` when the struct is not in the file, or renames
+/// or flattens its fields.
+fn rust_struct_params(root: Node<'_>, name: &str, src: &[u8]) -> Option<Vec<ToolParam>> {
+    let mut stack = vec![root];
+    let mut found = None;
+    while let Some(n) = stack.pop() {
+        if n.kind() == "struct_item"
+            && n.child_by_field_name("name")
+                .is_some_and(|x| text(x, src) == name)
+        {
+            found = Some(n);
+            break;
+        }
+        let mut c = n.walk();
+        stack.extend(n.named_children(&mut c));
+    }
+    let st = found?;
+    let serde = attribute_args(&attributes_before(st), "serde", src).unwrap_or_default();
+    if serde.contains("rename_all") || serde.contains("flatten") {
+        return None;
+    }
+    let all_default = serde.contains("default");
+    let body = st.child_by_field_name("body")?;
+    if body.kind() != "field_declaration_list" {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut c = body.walk();
+    for f in body.named_children(&mut c) {
+        if f.kind() != "field_declaration" {
+            continue;
+        }
+        let fserde = attribute_args(&attributes_before(f), "serde", src).unwrap_or_default();
+        if fserde.contains("flatten") {
+            return None;
+        }
+        if fserde.contains("skip") && !fserde.contains("skip_serializing") {
+            continue;
+        }
+        let field = text(f.child_by_field_name("name")?, src);
+        let ty = text(f.child_by_field_name("type")?, src);
+        let optional = all_default || fserde.contains("default") || ty.starts_with("Option<");
+        out.push(ToolParam {
+            name: attr_value(&fserde, "rename").unwrap_or(field),
+            required: Some(!optional),
+        });
+    }
+    out.sort();
+    Some(out)
+}
+
+/// rmcp tools of a Rust file: methods marked `#[tool(…)]`, named by the method or the
+/// attribute's `name`, their parameters those of the `Parameters<T>` struct of the file.
+pub(super) fn rust_tools(root: Node<'_>, src: &[u8]) -> Vec<RawTool> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        let mut c = n.walk();
+        stack.extend(n.named_children(&mut c));
+        if n.kind() != "function_item" {
+            continue;
+        }
+        let Some(args) = attribute_args(&attributes_before(n), "tool", src) else {
+            continue;
+        };
+        let Some(fname) = n.child_by_field_name("name").map(|x| text(x, src)) else {
+            continue;
+        };
+        let name = attr_value(&args, "name").unwrap_or(fname);
+        // `Parameters(a): Parameters<T>`: the parameters of `T`.
+        let mut params = Some(Vec::new());
+        if let Some(ps) = n.child_by_field_name("parameters") {
+            let mut pc = ps.walk();
+            for p in ps.named_children(&mut pc) {
+                let Some(t) = p.child_by_field_name("type") else {
+                    continue;
+                };
+                if t.kind() == "generic_type"
+                    && t.child_by_field_name("type")
+                        .is_some_and(|x| text(x, src) == "Parameters")
+                {
+                    params = t
+                        .child_by_field_name("type_arguments")
+                        .and_then(|a| a.named_child(0))
+                        .and_then(|a| rust_struct_params(root, &text(a, src), src));
+                }
+            }
+        }
+        out.push(RawTool {
+            line: line(n),
+            name: StrExpr(vec![crate::symbols::strexpr::Part::Lit(name)]),
+            params,
+        });
+    }
+    out.sort_by_key(|t| t.line);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use crate::grammars::{Grammar, parse};
@@ -831,6 +997,63 @@ class Users {
             "{posts:?}"
         );
         assert!(posts[2].contains("Type(\"Payload\")"), "{posts:?}");
+    }
+
+    #[test]
+    fn rmcp_tools_with_their_argument_structs() {
+        let c = code(
+            "rust",
+            r##"
+use rmcp::{tool, tool_router, handler::server::wrapper::Parameters};
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct FindArgs {
+    /// What to find.
+    pub query: String,
+    #[serde(default)]
+    pub limit: u32,
+    pub kind: Option<String>,
+    #[serde(rename = "in")]
+    pub within: String,
+}
+
+#[tool_router]
+impl Server {
+    #[tool(description = "Find (name = \"no\")", annotations(read_only_hint = true))]
+    async fn find(&self, Parameters(a): Parameters<FindArgs>) -> String {
+        String::new()
+    }
+
+    /// Plain.
+    #[tool(name = "list_all", description = "List")]
+    async fn list(&self) -> String {
+        String::new()
+    }
+
+    async fn helper(&self) {}
+}
+"##,
+        );
+        let tools: Vec<String> = c
+            .tools
+            .iter()
+            .map(|t| {
+                let ps: Vec<String> = t
+                    .params
+                    .iter()
+                    .flatten()
+                    .map(|x| format!("{}={:?}", x.name, x.required))
+                    .collect();
+                format!("{:?} {}", t.name.0, ps.join(" "))
+            })
+            .collect();
+        assert_eq!(
+            tools,
+            vec![
+                r#"[Lit("find")] in=Some(true) kind=Some(false) limit=Some(false) query=Some(true)"#,
+                r#"[Lit("list_all")] "#,
+            ]
+        );
     }
 
     #[test]
