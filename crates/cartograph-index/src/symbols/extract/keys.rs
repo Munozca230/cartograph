@@ -1145,6 +1145,7 @@ fn plain_call(name: &str, line: u32, form: Form) -> Call {
         opts: Vec::new(),
         frame: None,
         argc: 0,
+        bodies: Vec::new(),
     }
 }
 

@@ -6,6 +6,7 @@
 //! function) are left out: they are not reachable by name from elsewhere.
 
 mod bridge;
+mod contract;
 mod http;
 mod java_types;
 mod keys;
@@ -115,6 +116,11 @@ fn class_kinds(lang: Lang) -> &'static [&'static str] {
         Lang::C => &[],
         Lang::Cpp => &["class_specifier", "struct_specifier", "union_specifier"],
     }
+}
+
+/// Whether `needle` occurs in `hay`.
+fn contains_bytes(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
 }
 
 fn text(n: Node<'_>, src: &[u8]) -> String {
@@ -707,6 +713,12 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
         .iter()
         .map(|(id, r)| (*id, r.ty.clone()))
         .collect();
+    // TS: declared return types, for a body made by a function of the file.
+    let returns = if lang == Lang::Js {
+        contract::return_types(tree.root_node(), src)
+    } else {
+        HashMap::new()
+    };
     for c in &call_list {
         if let Some(mut call) = call_of(lang, c, src) {
             // `super.m()`, `Type.super.m()`.
@@ -742,6 +754,9 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
                             || matches!(e.0.as_slice(), [Part::Ref(r)] if looks_constant(r))
                     });
                 if keep {
+                    if lang == Lang::Js && !a.args.is_empty() {
+                        call.bodies = contract::arg_bodies(args, src, &returns);
+                    }
                     call.args = a.args;
                     call.handler = a.handler.map(Box::new);
                     call.opts = a.opts;
@@ -789,7 +804,7 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
     }
     // HTTP routes, clients, mounts and instances (the imports tell instances apart).
     let h = match lang {
-        Lang::Js => http::js(&call_list, tree.root_node(), src, &code.bindings),
+        Lang::Js => http::js(&call_list, tree.root_node(), src, &code.bindings, &returns),
         Lang::Java => http::java(&call_list, tree.root_node(), src, &recv_types),
         Lang::Python => http::python(&call_list, src),
         _ => http::Http::default(),
@@ -805,6 +820,10 @@ pub fn extract(grammar: Grammar, tree: &Tree, src: &[u8]) -> Result<Code, String
         code.entities = sp.entities;
         code.repos = sp.repos;
         code.sinks = sp.sinks;
+    }
+    // MCP tools, in files that use the MCP SDK.
+    if lang == Lang::Js && contains_bytes(src, b"@modelcontextprotocol/") {
+        code.tools = contract::js_tools(tree.root_node(), src);
     }
     code.fields = field_types(lang, tree.root_node(), src);
     match lang {
@@ -1493,6 +1512,7 @@ fn call_of(lang: Lang, c: &CallCap<'_>, src: &[u8]) -> Option<Call> {
         opts: Vec::new(),
         frame: None,
         argc: 0,
+        bodies: Vec::new(),
     })
 }
 
@@ -2226,6 +2246,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
             opts: Vec::new(),
             frame: None,
             argc: 0,
+            bodies: Vec::new(),
         }),
         "member_expression"
         | "selector_expression"
@@ -2273,6 +2294,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 opts: Vec::new(),
                 frame: None,
                 argc: 0,
+                bodies: Vec::new(),
             })
         }
         "argument" => n.named_child(0).and_then(|c| handler_ref(lang, c, src)),
@@ -2298,6 +2320,7 @@ fn handler_ref(lang: Lang, n: Node<'_>, src: &[u8]) -> Option<Call> {
                 opts: Vec::new(),
                 frame: None,
                 argc: 0,
+                bodies: Vec::new(),
             })
         }
         _ => None,

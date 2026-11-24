@@ -9,10 +9,12 @@
 use super::bridge::{
     arg_nodes, dotted, frame_of, function_ref, object_opts, str_expr, unwrap_expr,
 };
+use super::contract::{options_body, ts_body};
 use super::{CallCap, Lang, end_line, line, string_value, text};
 use crate::symbols::strexpr::{Part, StrExpr};
 use crate::symbols::{
-    BindKind, Binding, HttpClient, HttpInstance, HttpMount, HttpRoute, MethodExpr, OptArg,
+    BindKind, Binding, BodyExpr, HttpClient, HttpInstance, HttpMount, HttpRoute, MethodExpr,
+    OptArg, RouteBody,
 };
 use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
@@ -118,6 +120,7 @@ fn client(
         recv: None,
         def: None,
         frame,
+        body: None,
     }
 }
 
@@ -244,6 +247,7 @@ fn js_instances(
 
 /// A client call through a library or an instance: `axios.get(url)`,
 /// `axios.request({ url, method })`, `axios(url, { method })`, `got.post(url)`.
+#[allow(clippy::too_many_arguments)]
 fn js_lib_call(
     c: &CallCap<'_>,
     lib: &str,
@@ -252,31 +256,45 @@ fn js_lib_call(
     list: &[Node<'_>],
     src: &[u8],
     base: Option<StrExpr>,
+    rt: &HashMap<String, Option<String>>,
 ) -> Option<HttpClient> {
     let first = list.first().map(|a| unwrap_expr(*a))?;
-    let (url, method) = match method_name.and_then(verb) {
-        Some(v) => (str_expr(Lang::Js, first, src), MethodExpr::Lit(v)),
-        None if first.kind() == "object" => config(first, src)?,
+    // axios takes the body as `data`, got and ky as `json`.
+    let key = if lib == "axios" { "data" } else { "json" };
+    let (url, method, body) = match method_name.and_then(verb) {
+        Some(v) => {
+            let body = match (v.as_str(), list.get(1)) {
+                ("POST" | "PUT" | "PATCH", Some(b)) if lib == "axios" => ts_body(*b, src, rt),
+                ("POST" | "PUT" | "PATCH", Some(b)) => options_body(*b, key, src, rt),
+                _ => None,
+            };
+            (str_expr(Lang::Js, first, src), MethodExpr::Lit(v), body)
+        }
+        None if first.kind() == "object" => {
+            let (u, m) = config(first, src)?;
+            (u, m, options_body(first, key, src, rt))
+        }
         None => (
             str_expr(Lang::Js, first, src),
             init_method(Lang::Js, list.get(1).copied(), src),
+            list.get(1).and_then(|o| options_body(*o, key, src, rt)),
         ),
     };
-    Some(client(
-        Lang::Js,
-        c.name,
-        c.node,
-        lib,
-        what,
-        method,
-        url,
-        base,
-    ))
+    let mut h = client(Lang::Js, c.name, c.node, lib, what, method, url, base);
+    h.body = body;
+    Some(h)
 }
 
 /// HTTP records of a JS/TS file. `bindings` are the file's imports (a receiver imported
-/// from another file may be an instance it creates).
-pub(super) fn js(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8], bindings: &[Binding]) -> Http {
+/// from another file may be an instance it creates); `rt` the declared return types of its
+/// functions (see [`super::contract::return_types`]).
+pub(super) fn js(
+    calls: &[CallCap<'_>],
+    root: Node<'_>,
+    src: &[u8],
+    bindings: &[Binding],
+    rt: &HashMap<String, Option<String>>,
+) -> Http {
     let libs = js_lib_names(bindings);
     let imported: HashSet<&str> = bindings
         .iter()
@@ -299,7 +317,7 @@ pub(super) fn js(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8], bindings: &[
                 let list = arg_nodes(args);
                 if name == "fetch" {
                     let Some(first) = list.first() else { continue };
-                    clients.push(client(
+                    let mut h = client(
                         Lang::Js,
                         c.name,
                         c.node,
@@ -308,9 +326,11 @@ pub(super) fn js(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8], bindings: &[
                         init_method(Lang::Js, list.get(1).copied(), src),
                         str_expr(Lang::Js, *first, src),
                         None,
-                    ));
+                    );
+                    h.body = list.get(1).and_then(|o| options_body(*o, "body", src, rt));
+                    clients.push(h);
                 } else if let Some(lib) = libs.get(&name)
-                    && let Some(h) = js_lib_call(c, lib, name.clone(), None, &list, src, None)
+                    && let Some(h) = js_lib_call(c, lib, name.clone(), None, &list, src, None, rt)
                 {
                     clients.push(h);
                 }
@@ -325,7 +345,7 @@ pub(super) fn js(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8], bindings: &[
                 let client_method = VERBS.contains(&name.as_str()) || name == "request";
                 if name == "fetch" && matches!(r.as_str(), "window" | "globalThis" | "self") {
                     if let Some(first) = list.first() {
-                        clients.push(client(
+                        let mut h = client(
                             Lang::Js,
                             c.name,
                             c.node,
@@ -334,13 +354,16 @@ pub(super) fn js(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8], bindings: &[
                             init_method(Lang::Js, list.get(1).copied(), src),
                             str_expr(Lang::Js, *first, src),
                             None,
-                        ));
+                        );
+                        h.body = list.get(1).and_then(|o| options_body(*o, "body", src, rt));
+                        clients.push(h);
                     }
                     continue;
                 }
                 if let Some(lib) = libs.get(&r) {
                     if client_method
-                        && let Some(h) = js_lib_call(c, lib, what, Some(&name), &list, src, None)
+                        && let Some(h) =
+                            js_lib_call(c, lib, what, Some(&name), &list, src, None, rt)
                     {
                         clients.push(h);
                     }
@@ -348,8 +371,16 @@ pub(super) fn js(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8], bindings: &[
                 }
                 if let Some(i) = inst.get(r.as_str()) {
                     if client_method
-                        && let Some(h) =
-                            js_lib_call(c, &i.lib, what, Some(&name), &list, src, i.base.clone())
+                        && let Some(h) = js_lib_call(
+                            c,
+                            &i.lib,
+                            what,
+                            Some(&name),
+                            &list,
+                            src,
+                            i.base.clone(),
+                            rt,
+                        )
                     {
                         clients.push(h);
                     }
@@ -358,7 +389,7 @@ pub(super) fn js(calls: &[CallCap<'_>], root: Node<'_>, src: &[u8], bindings: &[
                 if client_method
                     && imported.contains(r.as_str())
                     && let Some(mut h) =
-                        js_lib_call(c, "axios", what, Some(&name), &list, src, None)
+                        js_lib_call(c, "axios", what, Some(&name), &list, src, None, rt)
                 {
                     // Confirmed after resolution: the import must lead to an instance.
                     h.recv = Some(r.clone());
@@ -431,6 +462,7 @@ fn js_route(
         recv: Some(recv.to_string()),
         def: None,
         handler: list.last().and_then(|h| function_ref(Lang::Js, *h, src)),
+        body: None,
     });
 }
 
@@ -611,6 +643,7 @@ fn java_type(decl: Node<'_>, src: &[u8], out: &mut Http) {
         let Some(mname) = m.child_by_field_name("name").map(|n| text(n, src)) else {
             continue;
         };
+        let body = request_body(m, src);
         for (aname, args) in annotations(m, src) {
             let Some((methods, paths)) = mapping(&aname, args, src) else {
                 continue;
@@ -635,6 +668,7 @@ fn java_type(decl: Node<'_>, src: &[u8], out: &mut Http) {
                         recv: service.clone(),
                         def: Some(def),
                         frame: None,
+                        body: body.as_ref().map(|b| BodyExpr::Type(b.ty.clone())),
                     });
                 }
                 None => out.routes.push(HttpRoute {
@@ -647,10 +681,36 @@ fn java_type(decl: Node<'_>, src: &[u8], out: &mut Http) {
                     recv: None,
                     def: Some(def),
                     handler: None,
+                    body: body.clone(),
                 }),
             }
         }
     }
+}
+
+/// The `@RequestBody` parameter of a handler or a Feign method: its type as written and
+/// whether `@Valid` / `@Validated` makes Bean Validation run on it.
+fn request_body(m: Node<'_>, src: &[u8]) -> Option<RouteBody> {
+    let ps = m.child_by_field_name("parameters")?;
+    let mut c = ps.walk();
+    for p in ps.named_children(&mut c) {
+        if p.kind() != "formal_parameter" {
+            continue;
+        }
+        let annots = annotations(p, src);
+        if !annots.iter().any(|(a, _)| a == "RequestBody") {
+            continue;
+        }
+        let ty: String = text(p.child_by_field_name("type")?, src)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let valid = annots
+            .iter()
+            .any(|(a, _)| matches!(a.as_str(), "Valid" | "Validated"));
+        return Some(RouteBody { ty, valid });
+    }
+    None
 }
 
 /// RestTemplate methods: the method each one sends (`None`: given as the second argument).

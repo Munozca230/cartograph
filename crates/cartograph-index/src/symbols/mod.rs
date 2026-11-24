@@ -117,6 +117,63 @@ pub struct Code {
     /// `mongoTemplate.find(q, E.class)`, `em.find(E.class, id)`).
     #[serde(rename = "ds", default, skip_serializing_if = "Vec::is_empty")]
     pub sinks: Vec<RawSink>,
+    /// MCP tools the file declares (`server.tool(…)`, `registerTool`, a JSON schema
+    /// literal, rmcp `#[tool]` methods).
+    #[serde(rename = "mt", default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<RawTool>,
+}
+
+/// An MCP tool as declared, before its name is read through constants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawTool {
+    #[serde(rename = "l")]
+    pub line: u32,
+    #[serde(rename = "n")]
+    pub name: StrExpr,
+    /// Its parameters, when the schema is a literal (see
+    /// [`cartograph_core::McpTool::params`]).
+    #[serde(rename = "p", default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Vec<cartograph_core::ToolParam>>,
+}
+
+/// What an HTTP body is where a client or a call passes one (see [`HttpClient::body`],
+/// [`Call::bodies`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BodyExpr {
+    /// The n-th parameter of the function around, with its declared type when it names
+    /// one.
+    #[serde(rename = "p")]
+    Param(u8, Option<String>),
+    /// A property (`body`, `data`, `json`) of the n-th parameter, an options object the
+    /// call passes or spreads.
+    #[serde(rename = "o")]
+    Opts(u8, String),
+    /// A value of this declared type, as written (`CreateUserDto`, `Partial<User>`).
+    #[serde(rename = "t")]
+    Type(String),
+}
+
+/// A body passed in a call's argument: the argument itself (`key` `None`) or a property of
+/// an object literal there (`{ body: JSON.stringify(dto) }`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArgBody {
+    #[serde(rename = "i")]
+    pub arg: u8,
+    #[serde(rename = "k", default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(rename = "v")]
+    pub value: BodyExpr,
+}
+
+/// The body a route reads (Spring `@RequestBody`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteBody {
+    /// The parameter's type as written (`CreateUserDto`, `List<ItemDto>`).
+    #[serde(rename = "t")]
+    pub ty: String,
+    /// `@Valid` / `@Validated`: Bean Validation runs on it.
+    #[serde(rename = "v", default, skip_serializing_if = "std::ops::Not::not")]
+    pub valid: bool,
 }
 
 /// A Spring bean: a class with a stereotype annotation (`@Component`, `@Service`,
@@ -357,6 +414,9 @@ pub struct HttpRoute {
     /// A handler passed by reference.
     #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
     pub handler: Option<Call>,
+    /// The body the handler reads, when it declares one.
+    #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<RouteBody>,
 }
 
 /// An HTTP client call (or a Feign method): its URL and method as written.
@@ -389,6 +449,9 @@ pub struct HttpClient {
     /// parameters belong to (that function is a wrapper only when a definition ends there).
     #[serde(rename = "e", default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<u32>,
+    /// The body it sends, when it can be told.
+    #[serde(rename = "y", default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<BodyExpr>,
 }
 
 /// `recv.use(prefix, target)`: the routes of `target` (a router) under `prefix`.
@@ -741,6 +804,11 @@ pub struct Call {
     /// string-like are left out of `args`, not missing).
     #[serde(rename = "k", default, skip_serializing_if = "is_zero")]
     pub argc: u8,
+    /// TS: with [`Call::args`], what the arguments that may be an HTTP body are (a typed
+    /// value, a parameter with its type, the `body` of an options object), for a wrapper
+    /// that passes one of them on as a body.
+    #[serde(rename = "b", default, skip_serializing_if = "Vec::is_empty")]
+    pub bodies: Vec<ArgBody>,
 }
 
 fn is_zero(n: &u8) -> bool {
@@ -901,8 +969,10 @@ pub const SAME_PACKAGE_META: &str = "same_package_uses";
 /// parameters given another value, names of repository interfaces, Cassandra and R2DBC
 /// repositories; 30: modifiers and parameters of Java methods, `super`
 /// calls; 31: `Outer.Inner x` is not typed again;
-/// 32: [`Call::recv_elem`].
-pub const REVISION: u32 = 32;
+/// 32: [`Call::recv_elem`]; 33: contracts: the body of a route ([`HttpRoute::body`]), of
+/// a client ([`HttpClient::body`]) and of a call ([`Call::bodies`]), MCP tools
+/// ([`Code::tools`]).
+pub const REVISION: u32 = 33;
 
 /// A class name as a Java bean or a Mongo collection takes it by default (`OrderService` →
 /// `orderService`; `URLMaker`, two capitals first, stays as it is).
