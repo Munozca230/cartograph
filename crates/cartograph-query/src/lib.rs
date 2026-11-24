@@ -25,6 +25,7 @@ pub mod bridges;
 pub mod budget;
 pub mod check;
 pub mod config;
+pub mod contracts;
 pub mod deps;
 pub mod diff;
 pub mod dispatch;
@@ -150,6 +151,19 @@ impl Repo {
             ..cartograph_core::Symbols::default()
         };
         self.symbols.bridges = bridges::BridgeTable::build(&s);
+        self.findings = OnceLock::new();
+        self
+    }
+
+    /// Add the contracts (bodies of HTTP bridges, MCP tools) of an index built without its
+    /// symbol layer, as [`Repo::with_bridges`] does for bridges.
+    pub fn with_contracts(
+        mut self,
+        bodies: &[cartograph_core::HttpBody],
+        tools: &[cartograph_core::McpTool],
+    ) -> Repo {
+        self.symbols.bridges.bodies = bodies.to_vec();
+        self.symbols.bridges.tools = tools.to_vec();
         self.findings = OnceLock::new();
         self
     }

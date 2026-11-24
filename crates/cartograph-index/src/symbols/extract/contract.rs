@@ -662,6 +662,36 @@ pub(super) fn js_tools(root: Node<'_>, src: &[u8]) -> Vec<RawTool> {
     out
 }
 
+/// A string, or a module constant of the file holding one (a tool's description).
+fn is_text(a: Node<'_>, root: Node<'_>, src: &[u8]) -> bool {
+    let stringy =
+        |n: Node<'_>| matches!(n.kind(), "string" | "template_string" | "binary_expression");
+    match a.kind() {
+        "identifier" => module_const(root, &text(a, src), src).is_some_and(stringy),
+        _ => stringy(a),
+    }
+}
+
+/// An object whose values are literals (`{ readOnlyHint: true, title: "x" }`): a tool's
+/// annotations, never a schema.
+fn annotations_object(obj: Node<'_>) -> bool {
+    let mut c = obj.walk();
+    let pairs: Vec<Node<'_>> = obj
+        .named_children(&mut c)
+        .filter(|p| p.kind() != "comment")
+        .collect();
+    !pairs.is_empty()
+        && pairs.iter().all(|p| {
+            p.kind() == "pair"
+                && p.child_by_field_name("value").is_some_and(|v| {
+                    matches!(
+                        v.kind(),
+                        "true" | "false" | "string" | "number" | "template_string"
+                    )
+                })
+        })
+}
+
 fn tool_call(n: Node<'_>, root: Node<'_>, src: &[u8]) -> Option<RawTool> {
     let f = n.child_by_field_name("function")?;
     if f.kind() != "member_expression" {
@@ -694,12 +724,18 @@ fn tool_call(n: Node<'_>, root: Node<'_>, src: &[u8]) -> Option<RawTool> {
                 None => Some(Vec::new()),
             })
     } else {
-        // `tool(name, description?, schema?, annotations?, handler)`: the schema is the
-        // first argument after the name that is not a string.
-        match middle.iter().find(|a| !a.kind().contains("string")) {
-            None => Some(Vec::new()),
-            Some(a) => zod_params(*a, root, src),
+        // `tool(name, description?, schema?, annotations?, handler)`: past the description
+        // (a string, or a constant of the file holding one), the schema; an object of
+        // literal values is the annotations.
+        let mut params = Some(Vec::new());
+        for a in middle {
+            if is_text(*a, root, src) || (a.kind() == "object" && annotations_object(*a)) {
+                continue;
+            }
+            params = zod_params(*a, root, src);
+            break;
         }
+        params
     };
     Some(RawTool {
         line: line(n),
@@ -805,6 +841,7 @@ class Users {
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 export const toolName = 'create_user';
+const description = 'Read ' + 'one';
 export const inputSchema = z.object({
   name: z.string().min(1),
   email: z.string().email().optional(),
@@ -813,6 +850,7 @@ export const inputSchema = z.object({
 export function register(server: McpServer) {
   server.tool(toolName, 'Create a user', inputSchema.shape, async (a) => a);
   server.tool('ping', async () => ({}));
+  server.tool('hint', description, { id: z.string() }, { readOnlyHint: true }, async () => ({}));
   server.registerTool('rename', { inputSchema: { id: z.string(), to: z.optional(z.string()) } }, h);
 }
 const list = [{ name: 'raw', inputSchema: { type: 'object', properties: { q: {}, n: {} }, required: ['q'] } }];
@@ -832,7 +870,7 @@ const list = [{ name: 'raw', inputSchema: { type: 'object', properties: { q: {},
                 )
             })
             .collect();
-        assert_eq!(tools.len(), 4, "{tools:#?}");
+        assert_eq!(tools.len(), 5, "{tools:#?}");
         assert!(tools[0].contains("Ref(\"toolName\")"), "{tools:#?}");
         assert!(
             tools[0].contains("[\"email=Some(false)\", \"name=Some(true)\", \"team=None\"]"),
@@ -840,11 +878,15 @@ const list = [{ name: 'raw', inputSchema: { type: 'object', properties: { q: {},
         );
         assert!(tools[1].contains("ping") && tools[1].contains("Some([])"));
         assert!(
-            tools[2].contains("[\"id=Some(true)\", \"to=Some(false)\"]"),
+            tools[2].contains("hint") && tools[2].contains("[\"id=Some(true)\"]"),
             "{tools:#?}"
         );
         assert!(
-            tools[3].contains("[\"n=Some(false)\", \"q=Some(true)\"]"),
+            tools[3].contains("[\"id=Some(true)\", \"to=Some(false)\"]"),
+            "{tools:#?}"
+        );
+        assert!(
+            tools[4].contains("[\"n=Some(false)\", \"q=Some(true)\"]"),
             "{tools:#?}"
         );
     }

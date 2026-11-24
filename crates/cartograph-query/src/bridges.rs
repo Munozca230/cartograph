@@ -35,6 +35,10 @@ pub fn detail_rank(detail: &str) -> u8 {
 pub struct BridgeTable {
     pub endpoints: Vec<BridgeEndpoint>,
     pub bridges: Vec<Bridge>,
+    /// The bodies of HTTP bridges (see [`crate::contracts`]).
+    pub bodies: Vec<cartograph_core::HttpBody>,
+    /// MCP tools declared in the source.
+    pub tools: Vec<cartograph_core::McpTool>,
     /// Destination symbol → bridges.
     into_sym: HashMap<String, Vec<usize>>,
     /// Source file → bridges.
@@ -50,6 +54,8 @@ impl BridgeTable {
         let mut t = BridgeTable {
             endpoints: s.endpoints.clone(),
             bridges: s.bridges.clone(),
+            bodies: s.bodies.clone(),
+            tools: s.tools.clone(),
             ..BridgeTable::default()
         };
         for (i, b) in t.bridges.iter().enumerate() {

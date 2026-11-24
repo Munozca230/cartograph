@@ -136,6 +136,12 @@ pub struct Explain {
     pub bridges_left: Vec<crate::bridges::EndpointRow>,
     #[serde(skip_serializing_if = "crate::explain::is_zero")]
     pub bridges_left_more: usize,
+    /// The HTTP bodies of routes whose client or server type is declared here, compared
+    /// field by field (see [`crate::contracts`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contracts: Vec<crate::contracts::ContractRow>,
+    #[serde(skip_serializing_if = "crate::explain::is_zero")]
+    pub contracts_more: usize,
 }
 
 pub(crate) fn is_zero(n: &usize) -> bool {
@@ -206,6 +212,18 @@ pub fn explain_with(
             crate::bridges::left(&repo.symbols.bridges, &paths)
         }
     };
+    let contracts = match n {
+        NodeRef::Ext(_) => Vec::new(),
+        _ => {
+            let paths: std::collections::BTreeSet<String> = g
+                .files_of(n)
+                .into_iter()
+                .map(|f| g.path(f).to_string())
+                .collect();
+            crate::contracts::rows(&repo.symbols.bridges.bodies, &paths)
+        }
+    };
+    let contracts_n = |limit: usize| contracts.len().min(limit.min(3));
     let left_n = |limit: usize| left.len().min(limit.min(4));
     let links_n = |limit: usize| {
         limit
@@ -346,6 +364,8 @@ pub fn explain_with(
             bridges_more: links.len().saturating_sub(links_n(limit)),
             bridges_left: left.iter().take(left_n(limit)).cloned().collect(),
             bridges_left_more: left.len().saturating_sub(left_n(limit)),
+            contracts: contracts.iter().take(contracts_n(limit)).cloned().collect(),
+            contracts_more: contracts.len().saturating_sub(contracts_n(limit)),
         },
         render,
     ))
@@ -597,6 +617,7 @@ fn render(e: &Explain) -> String {
         }
     }
     crate::bridges::render_left(&mut s, &e.bridges_left, e.bridges_left_more);
+    crate::contracts::render(&mut s, &e.contracts, e.contracts_more);
     crate::bridges::render_links(&mut s, &e.bridges, e.bridges_more);
     if e.node != "external" {
         s.push_str(&crate::symbols::explain_line(&e.id, e.symbols.as_ref()));
