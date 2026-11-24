@@ -185,7 +185,8 @@ exact versions (`workspace:`, `file:` and `*` are not judged).
 | `impact` | "reached over bridges": what reaches the change over one or two bridges, and what imports that |
 | `path` | follows bridges (`bridges: false` keeps imports only); a step over one says so; to a client that calls out over HTTP or IPC, the calls go on past it down to the data (see [spring.md](spring.md) and [mcp.md](mcp.md#slices)) |
 | `entries` | an IPC handler says how many sites reach it over IPC, a route how many call it over HTTP |
-| `diff` | bridges the change adds and removes (both sides are indexed with the same settings) |
+| `diff` | bridges the change adds and removes (both sides are indexed with the same settings), and the contracts it breaks (see [contracts.md](contracts.md)) |
+| `explain` of a body type | the bodies of its routes, client type against server type, field by field (see [contracts.md](contracts.md)) |
 | web map | `GET /api/bridges`, a `bridges` array in `/api/graph` (apart from `edges`), a toolbar toggle that draws them dashed over the plan, the file panel, dashed edges in flows (and from an interface method to the Spring beans that implement it) |
 
 Bridges never count as imports: cycles, folder cycles, stable dependencies, hubs, god

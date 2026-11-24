@@ -24,7 +24,11 @@ Within 1.5k tokens, every list ending in `+N more`:
   `cartograph.toml` when the file is in one; otherwise the package (a manifest below the
   root) that holds it; otherwise its top folder, where a folder with half the repo's files
   or more is split into its subfolders;
-- **unresolved imports** new and fixed, matched by file, specifier and reason (not line).
+- **unresolved imports** new and fixed, matched by file, specifier and reason (not line);
+- **contract breaks**: a DTO field a client type still sends, an HTTP call that reached a
+  route in the base and reaches none now, an MCP tool or parameter removed or newly
+  required (see [contracts.md](contracts.md)). A break a new finding already reports is
+  not repeated; `check --base` lists them without failing.
 
 Example on this repository (`cartograph diff HEAD~20`, at an earlier point of its history):
 

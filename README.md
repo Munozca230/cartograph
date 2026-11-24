@@ -51,6 +51,12 @@ offline, and writes nothing inside the analyzed repository unless you let it.
   the client to the controller, the service bean, the repository and the collection or
   table it writes (`→ collection orders (Mongo, via Order)`). See
   [docs/spring.md](docs/spring.md).
+- **Contracts.** The body a client sends over an HTTP bridge and the DTO the route reads,
+  compared field by field in `explain` of either type (a client type shared by a create
+  and an update route says which route reads what); a required field no client sends is a
+  finding; `diff` lists what a change breaks: a DTO field a client still sends, a route a
+  client still calls, an MCP tool or parameter removed or newly required. See
+  [docs/contracts.md](docs/contracts.md).
 - **String keys and tests to run.** `find` of a string key (an action or step name, a
   channel, a registry key) traces it across repositories: where it is defined, what runs
   it, which catalogs list it and where it is missing. `impact` ranks the tests to run by
@@ -204,6 +210,8 @@ base. See [docs/workspace.md](docs/workspace.md).
   and repositories.
 - [docs/spring.md](docs/spring.md): Spring beans, injection points and slices down to the
   data.
+- [docs/contracts.md](docs/contracts.md): HTTP bodies compared across a bridge, MCP tool
+  schemas, and the contract breaks `diff` reports.
 - [docs/api-f2.md](docs/api-f2.md): the HTTP API behind the web UI.
 - [docs/release.md](docs/release.md): building release archives and publishing to npm.
 - [web/README.md](web/README.md) and [web/DESIGN.md](web/DESIGN.md): the web UI.
