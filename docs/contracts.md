@@ -85,12 +85,16 @@ Tools declared in the source of a file that imports the MCP SDK
   `z.object({…})` written as a literal, in the call or as a module constant of the file
   (`inputSchema.shape`); a name is a literal or a constant (also imported);
 - tool lists written as `{ name: "x", inputSchema: { type: "object", properties: {…},
-  required: [...] } }` (JSON schema literals).
+  required: [...] } }` (JSON schema literals);
+- Rust (rmcp, in files that use it): methods marked `#[tool(…)]`, named by the method or
+  the attribute's `name`, their parameters the fields of the `Parameters<T>` struct when
+  it is in the same file (`Option<…>` or `#[serde(default)]` optional, `#[serde(rename)]`
+  read; a struct that renames all its fields or flattens one is unknown).
 
 A zod field is required unless its chain has `.optional()`, `.nullish()`, `.default()` or
 `.catch()`, or is `z.optional(…)`; a field built by a helper (`summaryField()`) has an
 unknown requiredness. A schema that is not a literal (`spec.schema.shape`) leaves the
-tool's parameters unknown. rmcp (`#[tool]` in Rust) is not read.
+tool's parameters unknown.
 
 ## diff and check --base
 
