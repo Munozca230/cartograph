@@ -567,6 +567,9 @@ pub struct Symbols {
     /// Where string keys are defined, run, listed and used (see [`crate::key`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<crate::key::KeySite>,
+    /// The files whose comments name a key (see [`crate::key::KeyMention`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentions: Vec<crate::key::KeyMention>,
     /// The indexer looked for string keys (an index written before them has none, which is
     /// not the same as a repo without any).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -620,6 +623,8 @@ impl Symbols {
         self.bridges.dedup();
         self.keys.sort();
         self.keys.dedup();
+        self.mentions.sort();
+        self.mentions.dedup();
         self.beans.sort();
         self.beans.dedup();
         self.injections.sort();

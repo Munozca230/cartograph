@@ -65,6 +65,8 @@ pub struct KeyTable {
     by_name: HashMap<String, Vec<usize>>,
     /// [`squash`] of each key → the keys.
     by_squash: HashMap<String, BTreeSet<String>>,
+    /// Key → the files whose comments name it.
+    mentions: HashMap<String, BTreeSet<String>>,
 }
 
 /// Lower case, letters and digits only: `READ-FILE`, `read_file` and `readFile` are alike.
@@ -94,6 +96,12 @@ impl KeyTable {
                 .entry(squash(&k.key))
                 .or_default()
                 .insert(k.key.clone());
+        }
+        for m in &s.mentions {
+            t.mentions
+                .entry(m.key.clone())
+                .or_default()
+                .insert(m.file.clone());
         }
         t
     }
@@ -310,14 +318,16 @@ fn missing(t: &KeyTable, key: &str) -> Vec<Missing> {
     }
     let all = containers(t);
     let sq = squash(key);
-    // Files where the key (or a variant) is written at all.
-    let with_key: BTreeSet<&str> = t
-        .by_squash
-        .get(&sq)
-        .into_iter()
-        .flatten()
+    // Files where the key (or a variant) is written at all, comments included.
+    let variants = || t.by_squash.get(&sq).into_iter().flatten();
+    let with_key: BTreeSet<&str> = variants()
         .flat_map(|k| t.by_key.get(k).into_iter().flatten())
         .map(|&i| t.sites[i].file.as_str())
+        .chain(
+            variants()
+                .flat_map(|k| t.mentions.get(k).into_iter().flatten())
+                .map(String::as_str),
+        )
         .collect();
     let file_of = |c: &(&str, u32, &str)| -> String {
         if c.0.is_empty() {
@@ -445,19 +455,19 @@ pub fn trace(repo: &crate::Repo, query: &str) -> Option<Trace> {
     let idx = t.by_key.get(&key)?;
     let mut members: BTreeSet<String> = BTreeSet::new();
     let (mut defined, mut runs, mut lists, mut uses) = (vec![], vec![], vec![], vec![]);
-    let mut comments: BTreeSet<&str> = BTreeSet::new();
-    for &i in idx {
-        let k = &t.sites[i];
-        if let Some(m) = repo.graph.members.member_of(&k.file) {
+    let comments = t.mentions.get(&key).cloned().unwrap_or_default();
+    let files = idx.iter().map(|&i| &t.sites[i].file).chain(&comments);
+    for f in files {
+        if let Some(m) = repo.graph.members.member_of(f) {
             members.insert(m.to_string());
         }
+    }
+    for &i in idx {
+        let k = &t.sites[i];
         match k.role {
             KeyRole::Define => defined.push(site(k)),
             KeyRole::Provide => runs.push(site(k)),
             KeyRole::List => lists.push(site(k)),
-            KeyRole::Use if k.form == "comment" => {
-                comments.insert(k.file.as_str());
-            }
             KeyRole::Use => uses.push(site(k)),
         }
     }
@@ -491,7 +501,7 @@ pub fn trace(repo: &crate::Repo, query: &str) -> Option<Trace> {
         lists_more: 0,
         uses_files,
         uses_tests,
-        comments: comments.into_iter().map(str::to_string).collect(),
+        comments: comments.into_iter().collect(),
         comments_more: 0,
         also,
     })

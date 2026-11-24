@@ -6,7 +6,8 @@
 //! A site's [`KeyRole`] comes from its form: an enum constant or a string constant
 //! *defines* the key; a switch case, a registration that binds it to code or an annotation
 //! that names a class *provides* (runs) it; an entry of a catalog (an array, a map keyed
-//! by strings, `List.of`) *lists* it; anything else *uses* it. Sites belong to the symbol
+//! by strings, `List.of`) *lists* it; anything else *uses* it. A comment that names a key
+//! is a [`KeyMention`]: only its file is kept. Sites and mentions belong to the symbol
 //! layer and are cleared with it.
 
 use crate::Confidence;
@@ -98,6 +99,15 @@ impl KeySite {
     pub fn container_key(&self) -> (&str, u32, &str) {
         (&self.container_file, self.container_line, &self.container)
     }
+}
+
+/// A file whose comments name a key (written like a key: `READ-FILE`, `ARCHIVE`). Only
+/// the file is kept: a trace lists these files, and a container in such a file is never
+/// said to miss the key (it may be left out there on purpose, and said so).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct KeyMention {
+    pub key: String,
+    pub file: String,
 }
 
 #[cfg(test)]

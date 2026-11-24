@@ -55,6 +55,45 @@ fn a_key_missing_from_the_registry_that_holds_its_siblings() {
     assert!(a.data.hits.is_empty());
 }
 
+/// A comment that names the key: the trace lists its file, and a container of that file is
+/// not said to miss the key (it may be left out there on purpose, and said so).
+#[test]
+fn a_comment_naming_the_key_is_listed_and_no_claim_in_its_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("workspace-keys");
+    common::copy_dir(
+        &common::repo_root().join("tests/fixtures/workspace-keys"),
+        &root,
+    );
+    let rel = "server/app/src/main/java/com/acme/server/actions/FileActionBindings.java";
+    let p = root.join(rel);
+    let text = std::fs::read_to_string(&p).unwrap().replace(
+        "(zipping a folder is not supported yet)",
+        "(ZIP-DIR is not supported yet)",
+    );
+    std::fs::write(&p, text).unwrap();
+    let out = cartograph_index::index(&root, &cartograph_index::IndexOptions::default()).unwrap();
+    assert!(
+        out.symbols
+            .mentions
+            .iter()
+            .any(|m| m.key == "ZIP-DIR" && m.file == rel),
+        "{:?}",
+        out.symbols.mentions
+    );
+    assert!(out.symbols.keys.iter().all(|k| k.form != "comment"));
+    let config = cartograph_query::Config::load(&root).unwrap();
+    let r = Repo::with_symbols(&out.graph, &out.symbols, config);
+    let a = find(&r, "ZIP-DIR", None).unwrap();
+    let t = &a.text;
+    assert!(!t.contains("missing from"), "{t}");
+    assert!(
+        t.contains(&format!("named in comments of 1 file: {rel}\n")),
+        "{t}"
+    );
+    assert_eq!(a.data.trace.as_ref().unwrap().comments, [rel]);
+}
+
 #[test]
 fn what_runs_a_key_names_the_code_it_runs() {
     let r = repo();

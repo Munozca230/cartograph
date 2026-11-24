@@ -29,7 +29,7 @@ pub use history::{
     AuthorShare, ChangeKind, CoChange, FileHistory, GitAuthor, GitChange, GitCommit, GitRaw,
     GitState, GitStatus, History,
 };
-pub use key::{KeyRole, KeySite};
+pub use key::{KeyMention, KeyRole, KeySite};
 pub use model::{
     CallStats, Confidence, Diagnostic, Edge, EdgeKind, EntryKind, EntryPoint, Graph, ImportSite,
     Node, NodeKind, SkipReason, SkippedFile, SuperType, Symbol, SymbolCall, SymbolKind, Symbols,

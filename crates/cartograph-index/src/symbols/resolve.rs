@@ -952,7 +952,7 @@ pub fn resolve(
     out.bridges = found.bridges;
     out.bodies = found.bodies;
     out.tools = contract::tools(&ctx, &binds);
-    out.keys = keys::run(&ctx, &binds, &hier, rust_paths, graph, &out.calls);
+    (out.keys, out.mentions) = keys::run(&ctx, &binds, &hier, rust_paths, graph, &out.calls);
     out.keys_indexed = true;
     (out.beans, out.injections, out.sinks) = spring::run(&ctx, &binds);
     if out.beans.is_empty() {

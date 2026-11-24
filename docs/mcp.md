@@ -128,7 +128,9 @@ knows. A word (`width1`) or a variant gives way to the symbols that hold it, and
 after them names the key; with no such symbol, the key (or its closest variant, labelled
 so) is traced. A query that some path holds keeps the path answer, with that line too.
 `kind: "key"` always traces. Key sites (TS/JS,
-Java, Python) are stored with the symbol layer (`key_sites`, schema v13).
+Java, Python) are stored with the symbol layer (`key_sites`, schema v13). A comment that
+names a key keeps only the key and the file (`key_mentions`, schema v16): that is all the
+trace reads of it.
 
 ### Tests to run
 

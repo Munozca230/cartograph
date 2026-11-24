@@ -349,6 +349,40 @@ const MIGRATIONS: &[&str] = &[
         params TEXT
     );
     "#,
+    // v16: less stored for the same answers.
+    // - No reader looks rows up by kind, destination, file, target or reason (each table
+    //   is loaded whole), so those indexes only cost space and write time.
+    // - `edges` keeps its primary key as its only B-tree (no rowid table beside it).
+    // - A comment that names a key keeps only `(key, file)`, all a trace reads of it (see
+    //   `crate::key::KeyMention`); the comment rows of `key_sites` move there.
+    r#"
+    DROP INDEX idx_nodes_kind;
+    DROP INDEX idx_edges_dst;
+    DROP INDEX idx_import_sites_file;
+    DROP INDEX idx_import_sites_target;
+    DROP INDEX idx_unresolved_file;
+    DROP INDEX idx_unresolved_reason;
+    CREATE TABLE edges_v16 (
+        src        TEXT NOT NULL,
+        dst        TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        weight     INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (src, dst, kind)
+    ) WITHOUT ROWID;
+    INSERT INTO edges_v16 (src, dst, kind, confidence, weight)
+        SELECT src, dst, kind, confidence, weight FROM edges;
+    DROP TABLE edges;
+    ALTER TABLE edges_v16 RENAME TO edges;
+    CREATE TABLE key_mentions (
+        key  TEXT NOT NULL,
+        file TEXT NOT NULL,
+        PRIMARY KEY (key, file)
+    ) WITHOUT ROWID;
+    INSERT OR IGNORE INTO key_mentions (key, file)
+        SELECT key, file FROM key_sites WHERE form = 'comment';
+    DELETE FROM key_sites WHERE form = 'comment';
+    "#,
 ];
 
 /// One row of the SCIP cache: the decoded form (`data`, opaque to the store) of the SCIP
@@ -1199,6 +1233,9 @@ fn clear_symbols(conn: &Connection) -> Result<()> {
     if has_table(conn, "key_sites")? {
         conn.execute("DELETE FROM key_sites", [])?;
     }
+    if has_table(conn, "key_mentions")? {
+        conn.execute("DELETE FROM key_mentions", [])?;
+    }
     if has_table(conn, "spring_beans")? {
         conn.execute_batch(
             "DELETE FROM spring_beans; DELETE FROM spring_injections; DELETE FROM data_sinks;
@@ -1356,6 +1393,13 @@ fn insert_symbols(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
                 k.target,
                 k.confidence.as_str()
             ])?;
+        }
+    }
+    if !s.mentions.is_empty() && has_table(tx, "key_mentions")? {
+        let mut stmt =
+            tx.prepare("INSERT OR IGNORE INTO key_mentions (key, file) VALUES (?1, ?2)")?;
+        for m in &s.mentions {
+            stmt.execute(params![m.key, m.file])?;
         }
     }
     if has_table(tx, "spring_beans")? {
@@ -1529,6 +1573,17 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
     out.scip.stats = stats.map(|v| serde_json::from_str(&v)).transpose()?;
     if has_table(conn, "bridges")? {
         read_bridges(conn, &mut out)?;
+    }
+    if has_table(conn, "key_mentions")? {
+        let mut stmt = conn.prepare("SELECT key, file FROM key_mentions")?;
+        out.mentions = stmt
+            .query_map([], |r| {
+                Ok(crate::key::KeyMention {
+                    key: r.get(0)?,
+                    file: r.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
     }
     if has_table(conn, "key_sites")? {
         read_keys(conn, &mut out)?;
@@ -2525,6 +2580,7 @@ mod tests {
             endpoints: Vec::new(),
             bridges: Vec::new(),
             keys: Vec::new(),
+            mentions: Vec::new(),
             keys_indexed: false,
             beans: Vec::new(),
             injections: Vec::new(),
@@ -2602,6 +2658,90 @@ mod tests {
         assert_eq!(store.load_symbols().unwrap(), sample_keyed());
         store.replace_graph(&other()).unwrap();
         assert_eq!(store.load_symbols().unwrap(), Symbols::default());
+    }
+
+    /// [`sample_keyed`] with files whose comments name a key (schema v16).
+    fn sample_mentioned() -> Symbols {
+        let mut s = Symbols {
+            mentions: vec![
+                crate::KeyMention {
+                    key: "READ-FILE".into(),
+                    file: "src/Runner.java".into(),
+                },
+                crate::KeyMention {
+                    key: "READ-FILE".into(),
+                    file: "src/Files.java".into(),
+                },
+            ],
+            ..sample_keyed()
+        };
+        s.normalize();
+        s
+    }
+
+    #[test]
+    fn key_mentions_round_trip_and_clear_with_the_symbol_layer() {
+        let mut store = Store::open_in_memory().unwrap();
+        let tx = store.begin_replace().unwrap();
+        tx.write_graph(&sample()).unwrap();
+        tx.write_symbols(&sample_mentioned()).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(store.load_symbols().unwrap(), sample_mentioned());
+        store.replace_graph(&other()).unwrap();
+        assert_eq!(store.load_symbols().unwrap(), Symbols::default());
+    }
+
+    #[test]
+    fn migrates_a_v15_db_to_v16_with_comment_rows_as_mentions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let mut store = Store { conn };
+            store.migrate_to(15).unwrap();
+            let tx = store.begin_replace().unwrap();
+            tx.write_graph(&sample()).unwrap();
+            tx.write_symbols(&sample_keyed()).unwrap();
+            tx.commit().unwrap();
+            // A v15 index kept a comment that names a key as a site of its own, one per
+            // comment (two in one file here).
+            store
+                .conn
+                .execute_batch(
+                    "INSERT INTO key_sites (key, role, form, container, container_file,
+                         container_line, file, line, confidence)
+                     VALUES ('READ-FILE', 'use', 'comment', '', '', 0, 'src/Files.java', 2,
+                             'exact'),
+                            ('READ-FILE', 'use', 'comment', '', '', 0, 'src/Files.java', 9,
+                             'exact'),
+                            ('READ-FILE', 'use', 'comment', '', '', 0, 'src/Runner.java', 1,
+                             'exact');",
+                )
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        // The same answers: the graph whole, the comments as mentions, the other sites kept.
+        assert_eq!(store.load_graph().unwrap(), sample());
+        assert_eq!(store.load_symbols().unwrap(), sample_mentioned());
+        let indexes: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexes, 0);
+        let edges_sql: String = store
+            .conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'edges'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(edges_sql.contains("WITHOUT ROWID"), "{edges_sql}");
     }
 
     /// [`sample_symbols`] with Spring beans, injection points and data sinks (schema v14).

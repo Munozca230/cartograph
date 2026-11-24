@@ -15,9 +15,9 @@ use super::bridge::{Consts, callables, member_of};
 use super::{Bindings, Ctx, Hier, Out, caller_of, resolve_call};
 use crate::symbols::strexpr::{Part, key_like};
 use crate::symbols::{KeyForm, RustCallPaths};
-use cartograph_core::{Confidence, Graph, KeyRole, KeySite, NodeKind, SymbolCall};
+use cartograph_core::{Confidence, Graph, KeyMention, KeyRole, KeySite, NodeKind, SymbolCall};
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Fewest keys a registering or listing container needs for its sites to count as such.
 pub const MIN_CONTAINER: usize = 3;
@@ -97,7 +97,7 @@ fn is_identifier(s: &str) -> bool {
 /// Resolved calls of each file, by line.
 type CallsByFile<'s> = HashMap<&'s str, Vec<(u32, &'s str)>>;
 
-/// Every key site of the repo.
+/// Every key site of the repo, and the files whose comments name a key.
 pub(super) fn run(
     ctx: &Ctx<'_>,
     binds: &[Bindings<'_>],
@@ -105,13 +105,13 @@ pub(super) fn run(
     rust_paths: &RustCallPaths,
     graph: &Graph,
     calls: &[SymbolCall],
-) -> Vec<KeySite> {
+) -> (Vec<KeySite>, Vec<KeyMention>) {
     if ctx
         .files
         .iter()
         .all(|f| f.code.keys.is_empty() && f.code.consts.is_empty())
     {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let members: HashSet<&str> = graph
         .nodes_of(NodeKind::Dir)
@@ -346,7 +346,17 @@ pub(super) fn run(
         .map(|s| s.key.clone())
         .collect();
     out.retain(|s| s.role != KeyRole::Use || (known.contains(&s.key) && !plain_word(&s.key)));
-    out
+    // A comment keeps only its file: all a trace reads of it.
+    let (comments, sites): (Vec<KeySite>, Vec<KeySite>) =
+        out.into_iter().partition(|s| s.form == "comment");
+    let mentions: BTreeSet<KeyMention> = comments
+        .into_iter()
+        .map(|s| KeyMention {
+            key: s.key,
+            file: s.file,
+        })
+        .collect();
+    (sites, mentions.into_iter().collect())
 }
 
 /// A plain lower-case word (`text`, `value`): as a string, every file uses it.
