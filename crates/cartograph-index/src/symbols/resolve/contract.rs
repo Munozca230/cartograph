@@ -367,7 +367,12 @@ impl<'c, 'a> Shapes<'c, 'a> {
                     .filter(|(a, _)| a == "JsonAlias")
                     .flat_map(|(_, args)| annotation_strings(*args, src))
                     .collect(),
-                required: validation && has(fa, &["NotNull", "NotBlank", "NotEmpty"]),
+                // A constraint of a validation group does not run by default.
+                required: validation
+                    && fa.iter().any(|(a, args)| {
+                        matches!(a.as_str(), "NotNull" | "NotBlank" | "NotEmpty")
+                            && !args.is_some_and(|x| text(x, src).contains("groups"))
+                    }),
                 optional: false,
             }
         };

@@ -451,7 +451,14 @@ fn unresolved_keys(repo: &Repo) -> BTreeMap<(&str, &str, &'static str), u32> {
 pub fn contract_breaks(base: &Repo, head: &Repo, compared: &Compared<'_>) -> Vec<String> {
     use cartograph_core::{BridgeKind, BridgeRole};
     let (bt, ht) = (&base.symbols.bridges, &head.symbols.bridges);
-    let mut out = crate::contracts::breaks(&bt.bodies, &ht.bodies, &bt.tools, &ht.tools);
+    let member = |p: &str| {
+        head.graph
+            .members
+            .member_of(p)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mut out = crate::contracts::breaks(&bt.bodies, &ht.bodies, &bt.tools, &ht.tools, &member);
     // Keys a new finding already reports a call of.
     let reported: HashSet<&str> = compared
         .head
@@ -480,7 +487,15 @@ pub fn contract_breaks(base: &Repo, head: &Repo, compared: &Compared<'_>) -> Vec
         else {
             continue;
         };
-        let Some(detail) = now.detail.as_deref() else {
+        // A call left without a route; not one that became ambiguous or dynamic.
+        let Some(detail) = now.detail.as_deref().filter(|d| {
+            matches!(
+                *d,
+                crate::bridges::NO_SERVER
+                    | crate::bridges::UNMATCHED
+                    | crate::bridges::METHOD_MISMATCH
+            )
+        }) else {
             continue;
         };
         let member = head.graph.members.member_of(&now.file).unwrap_or("");

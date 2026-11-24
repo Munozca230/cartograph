@@ -105,16 +105,30 @@ pub(super) fn return_types(root: Node<'_>, src: &[u8]) -> HashMap<String, Option
     let mut out: HashMap<String, Option<String>> = HashMap::new();
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
+        // Methods as `this.m` (what `this.m()` calls), functions by their name.
         let found = match n.kind() {
-            "function_declaration" | "method_definition" => n
+            "function_declaration" => n
                 .child_by_field_name("name")
                 .map(|x| (text(x, src), n.child_by_field_name("return_type"))),
+            "method_definition" => n.child_by_field_name("name").map(|x| {
+                (
+                    format!("this.{}", text(x, src)),
+                    n.child_by_field_name("return_type"),
+                )
+            }),
             "variable_declarator" | "public_field_definition" => n
                 .child_by_field_name("name")
                 .or_else(|| n.child_by_field_name("property"))
                 .zip(n.child_by_field_name("value"))
                 .filter(|(_, v)| matches!(v.kind(), "arrow_function" | "function_expression"))
-                .map(|(x, v)| (text(x, src), v.child_by_field_name("return_type"))),
+                .map(|(x, v)| {
+                    let name = if n.kind() == "public_field_definition" {
+                        format!("this.{}", text(x, src))
+                    } else {
+                        text(x, src)
+                    };
+                    (name, v.child_by_field_name("return_type"))
+                }),
             _ => None,
         };
         if let Some((name, rt)) = found {
@@ -219,7 +233,7 @@ fn value_body(v: Node<'_>, src: &[u8], rt: &HashMap<String, Option<String>>) -> 
                     if f.child_by_field_name("object")
                         .is_some_and(|o| o.kind() == "this") =>
                 {
-                    text(f.child_by_field_name("property")?, src)
+                    format!("this.{}", text(f.child_by_field_name("property")?, src))
                 }
                 _ => return None,
             };
@@ -435,7 +449,7 @@ pub(super) fn arg_bodies(
 const ZOD_OPTIONAL: &[&str] = &["optional", "nullish", "default", "catch"];
 
 /// Whether a zod schema expression is required: `z.string()` yes, `z.string().optional()`
-/// no, a helper (`summaryField()`, `nameSchema`) not known.
+/// no, a helper (`labelField()`, `nameSchema`) not known.
 fn zod_required(v: Node<'_>, src: &[u8]) -> Option<bool> {
     // Walk the method chain from the outside in.
     let mut cur = v;
@@ -794,9 +808,9 @@ fn attr_value(args: &str, key: &str) -> Option<String> {
                     i += 1;
                 }
             }
-            _ if depth == 1 && args[i..].starts_with(key) => {
-                let before = args[..i].chars().last();
-                let rest = args[i + key.len()..].trim_start();
+            _ if depth == 1 && args.get(i..).is_some_and(|r| r.starts_with(key)) => {
+                let before = args.get(..i).and_then(|b| b.chars().last());
+                let rest = args.get(i + key.len()..).unwrap_or("").trim_start();
                 if before.is_some_and(|c| c == '(' || c == ',' || c.is_whitespace())
                     && let Some(v) = rest.strip_prefix('=')
                 {
@@ -1054,6 +1068,67 @@ impl Server {
                 r#"[Lit("list_all")] "#,
             ]
         );
+    }
+
+    /// axios takes the body as its second argument or `data`, got and ky as `json`; a
+    /// Feign method sends its `@RequestBody`; `@Validated(Group.class)` is not the default
+    /// validation.
+    #[test]
+    fn bodies_of_client_libraries_and_feign() {
+        let c = code(
+            "typescript",
+            r#"
+import axios from 'axios';
+import ky from 'ky';
+import got from 'got';
+interface User { name: string }
+export async function save(user: User, raw: User) {
+  await axios.post('/users', user);
+  await axios({ url: '/users', method: 'put', data: raw });
+  await ky.post('/users', { json: user });
+  await got.patch('/users/1', { json: user });
+}
+"#,
+        );
+        let bodies: Vec<String> = c
+            .clients
+            .iter()
+            .map(|h| format!("{} {:?}", h.what, h.body))
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![
+                r#"axios.post Some(Param(0, Some("User")))"#,
+                r#"axios Some(Param(1, Some("User")))"#,
+                r#"ky.post Some(Param(0, Some("User")))"#,
+                r#"got.patch Some(Param(0, Some("User")))"#,
+            ]
+        );
+        let j = code(
+            "java",
+            r#"
+package a;
+@FeignClient(name = "api")
+interface Users {
+    @PostMapping("/users") String create(@RequestBody CreateUser body);
+}
+@RestController
+class UsersController {
+    @PostMapping("/users") String create(@Validated(Strict.class) @RequestBody CreateUser body) { return ""; }
+    @PutMapping("/users") String put(@Validated @RequestBody List<CreateUser> body) { return ""; }
+}
+"#,
+        );
+        assert_eq!(j.clients[0].body, Some(BodyExpr::Type("CreateUser".into())));
+        let routes: Vec<String> = j
+            .routes
+            .iter()
+            .map(|r| {
+                let b = r.body.as_ref().unwrap();
+                format!("{} {}", b.ty, b.valid)
+            })
+            .collect();
+        assert_eq!(routes, vec!["CreateUser false", "List<CreateUser> true"]);
     }
 
     #[test]

@@ -705,9 +705,10 @@ fn request_body(m: Node<'_>, src: &[u8]) -> Option<RouteBody> {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        let valid = annots
-            .iter()
-            .any(|(a, _)| matches!(a.as_str(), "Valid" | "Validated"));
+        // `@Validated(Group.class)` runs only that group's constraints: not the default.
+        let valid = annots.iter().any(|(a, args)| {
+            a == "Valid" || (a == "Validated" && args.is_none_or(|x| x.named_child_count() == 0))
+        });
         return Some(RouteBody { ty, valid });
     }
     None

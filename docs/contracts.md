@@ -94,8 +94,8 @@ Tools declared in the source of a file that imports the MCP SDK
   read; a struct that renames all its fields or flattens one is unknown).
 
 A zod field is required unless its chain has `.optional()`, `.nullish()`, `.default()` or
-`.catch()`, or is `z.optional(…)`; a field built by a helper (`summaryField()`) has an
-unknown requiredness. A schema that is not a literal (`spec.schema.shape`) leaves the
+`.catch()`, or is `z.optional(…)`; a field built by a helper (`labelField()`) has an
+unknown requiredness. A schema that is not a literal (`config.input.shape`) leaves the
 tool's parameters unknown.
 
 ## diff and check --base

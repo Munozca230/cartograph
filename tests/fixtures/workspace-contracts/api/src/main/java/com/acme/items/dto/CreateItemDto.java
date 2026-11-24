@@ -22,5 +22,9 @@ public class CreateItemDto extends BaseDto {
     @JsonAlias({"color", "colour"})
     private String shade;
 
+    // A constraint of a validation group: not checked by default.
+    @NotBlank(groups = Strict.class)
     private String technology;
+
+    public interface Strict {}
 }

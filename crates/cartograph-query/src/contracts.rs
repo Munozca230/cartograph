@@ -68,14 +68,27 @@ pub struct ContractRow {
     /// Server fields the client type lacks: `technology (optional)`, `title (required)`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub server_only: Vec<String>,
-    #[serde(skip_serializing_if = "crate::explain::is_zero")]
+    #[serde(skip_serializing_if = "is_zero")]
     pub server_only_more: usize,
     /// Client fields the server type does not read, with the route that does when the
     /// client type goes to several: `tags (UpdateItemDto of PATCH /api/items/{} reads it)`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub client_only: Vec<String>,
-    #[serde(skip_serializing_if = "crate::explain::is_zero")]
+    #[serde(skip_serializing_if = "is_zero")]
     pub client_only_more: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// A name as a naming strategy would leave it: `projectId`, `project_id` and `ProjectID`
+/// alike.
+fn loose(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// A route and its client and server types.
@@ -261,12 +274,21 @@ pub fn missing_required(
         let Some(fields) = server.fields.as_ref() else {
             continue;
         };
+        // A client field that differs only in case or separators may be the same one under
+        // a naming strategy Cartograph does not read: not certain, not reported.
+        let near: BTreeSet<String> = bs
+            .iter()
+            .filter_map(|b| b.client.as_ref()?.fields.as_ref())
+            .flatten()
+            .map(|f| loose(&f.name))
+            .collect();
         let missing: Vec<String> = fields
             .iter()
             .filter(|f| f.required)
             .filter(|f| {
                 cmps.iter()
                     .all(|c| c.server_only.iter().any(|x| x.name == f.name))
+                    && !near.contains(&loose(&f.name))
             })
             .map(|f| f.name.clone())
             .collect();
@@ -280,7 +302,15 @@ pub fn missing_required(
 /// What a change breaks in the contracts, against the base: a field the server type no
 /// longer reads that a client type still sends, an MCP tool or parameter gone, a parameter
 /// newly required.
-pub fn breaks(base: &[HttpBody], head: &[HttpBody], tb: &[McpTool], th: &[McpTool]) -> Vec<String> {
+/// `member` gives the workspace member of a path (`""` in a single repo): a tool is the
+/// same tool anywhere in its member.
+pub fn breaks(
+    base: &[HttpBody],
+    head: &[HttpBody],
+    tb: &[McpTool],
+    th: &[McpTool],
+    member: &dyn Fn(&str) -> String,
+) -> Vec<String> {
     let mut out = BTreeSet::new();
     // Bodies: the same bridge (client file, route, server file) on both sides.
     let key = |b: &HttpBody| (b.src_file.clone(), b.key.clone(), b.dst_file.clone());
@@ -326,7 +356,6 @@ pub fn breaks(base: &[HttpBody], head: &[HttpBody], tb: &[McpTool], th: &[McpToo
         }
     }
     // MCP tools, by member and name.
-    let member = |f: &str| f.split('/').next().unwrap_or("").to_string();
     let tools = |v: &[McpTool]| -> BTreeMap<(String, String), McpTool> {
         v.iter()
             .map(|t| ((member(&t.file), t.name.clone()), t.clone()))
@@ -460,6 +489,13 @@ mod tests {
         let got = missing_required(std::slice::from_ref(&known));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].2, vec!["name"]);
+        // `project_id` on the server, `projectId` in the client: maybe a naming strategy.
+        let snake = body(
+            "POST /p",
+            Some(payload(&["projectId"])),
+            ty("P", "api/P.java", Some(vec![field("project_id", true)])),
+        );
+        assert!(missing_required(&[snake]).is_empty());
         let mut unknown = known.clone();
         unknown.src_line = 7;
         unknown.client = None;
@@ -512,7 +548,8 @@ mod tests {
             "create",
             &[("title", Some(true)), ("team", Some(true))],
         )];
-        let got = breaks(std::slice::from_ref(&before), &[after], &tb, &th);
+        let none = |_: &str| String::new();
+        let got = breaks(std::slice::from_ref(&before), &[after], &tb, &th, &none);
         assert_eq!(
             got,
             vec![
@@ -523,6 +560,6 @@ mod tests {
         );
         // Nothing changed, nothing broken.
         let same = std::slice::from_ref(&before);
-        assert!(breaks(same, same, &tb, &tb).is_empty());
+        assert!(breaks(same, same, &tb, &tb, &none).is_empty());
     }
 }
