@@ -3,8 +3,8 @@ import type { BaseInput, TagInput } from './types';
 
 /** What the client posts and patches: one type for the create and the update routes. */
 interface ItemPayload extends BaseInput {
-  title?: string;
-  summary?: string;
+  label?: string;
+  notes?: string;
   kind?: string;
   colour?: string;
   tags?: string[];
@@ -15,6 +15,17 @@ interface NoteInput {
   extra: string;
 }
 
+// Declaration merging: a second declaration adds to the first; the shape is not read.
+interface NoteInput {
+  mood?: string;
+}
+
+interface RenameInput {
+  ref: string;
+}
+
+declare function pickMethod(): string;
+
 // A class: its shape is not read.
 class NoteDraft {
   text = '';
@@ -23,19 +34,19 @@ class NoteDraft {
 export class ItemsApi {
   constructor(private readonly client: ApiClient) {}
 
-  private toPayload(title: string, tags: string[] | undefined): ItemPayload {
-    const payload: ItemPayload = { title };
+  private toPayload(label: string, tags: string[] | undefined): ItemPayload {
+    const payload: ItemPayload = { label };
     if (tags) payload.tags = tags;
     return payload;
   }
 
-  async create(title: string): Promise<void> {
-    const payload = this.toPayload(title, undefined);
+  async create(label: string): Promise<void> {
+    const payload = this.toPayload(label, undefined);
     await this.client.post<void>('/api/items', payload);
   }
 
-  async update(id: string, title: string, tags: string[]): Promise<void> {
-    const payload = this.toPayload(title, tags);
+  async update(id: string, label: string, tags: string[]): Promise<void> {
+    const payload = this.toPayload(label, tags);
     await this.client.patch<void>(`/api/items/${id}`, payload);
   }
 
@@ -57,14 +68,24 @@ export class ItemsApi {
     await this.client.post<void>('/api/items/tags', tag);
   }
 
-  async external(title: string): Promise<void> {
-    await this.client.post<void>('/api/items/external', { title } as ItemPayload);
+  async external(label: string): Promise<void> {
+    await this.client.post<void>('/api/items/external', { label } as ItemPayload);
   }
 
   // A local typed with an object type written in place.
   async noteText(text: string): Promise<void> {
     const body: { text: string } = { text };
     await this.client.put<void>('/api/items/notes', body);
+  }
+
+  async rename(input: RenameInput): Promise<void> {
+    await this.client.post<void>('/api/items/rename', input);
+  }
+
+  // A method known only at run time: a heuristic bridge, whose bodies are not kept.
+  async guess(input: RenameInput): Promise<void> {
+    const method = pickMethod();
+    await this.client.request<void>(method, '/api/items/external', input);
   }
 
   // An object literal: a body of no known type.

@@ -3,6 +3,7 @@ package com.acme.items;
 import com.acme.items.dto.CreateItemDto;
 import com.acme.items.dto.ExternalDto;
 import com.acme.items.dto.NoteDto;
+import com.acme.items.dto.RenameDto;
 import com.acme.items.dto.TagDto;
 import com.acme.items.dto.UpdateItemDto;
 import jakarta.validation.Valid;
@@ -42,6 +43,11 @@ public class ItemController {
     @PostMapping("/external")
     public String external(@Valid @RequestBody ExternalDto dto) {
         return "external";
+    }
+
+    @PostMapping("/rename")
+    public String rename(@Valid @RequestBody RenameDto dto) {
+        return "renamed";
     }
 
     @PostMapping("/raw")

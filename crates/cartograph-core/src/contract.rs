@@ -129,6 +129,7 @@ pub struct ToolParam {
 /// An MCP tool a server declares in its source.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct McpTool {
+    /// Empty when it is not known (a name built at run time).
     pub name: String,
     pub file: String,
     pub line: u32,

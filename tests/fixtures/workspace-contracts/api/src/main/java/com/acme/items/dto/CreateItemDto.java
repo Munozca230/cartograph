@@ -9,9 +9,9 @@ import lombok.Data;
 @Data
 public class CreateItemDto extends BaseDto {
     @NotBlank
-    private String title;
+    private String label;
 
-    private String summary;
+    private String notes;
 
     @JsonProperty("kind")
     private String type;
@@ -24,7 +24,7 @@ public class CreateItemDto extends BaseDto {
 
     // A constraint of a validation group: not checked by default.
     @NotBlank(groups = Strict.class)
-    private String technology;
+    private String category;
 
     public interface Strict {}
 }

@@ -306,6 +306,14 @@ impl<'c, 'a> Shapes<'c, 'a> {
         self.memo.insert(sid, None);
         let fi = self.ctx.owner[sid as usize];
         let sym = self.ctx.symbols[sid as usize].clone();
+        // TS declaration merging (two `interface X` in the file, or an interface and a
+        // namespace or class of that name): only one would be read.
+        if self.ctx.files[fi].fam == super::Fam::Js
+            && sym.container.is_none()
+            && self.ctx.top(fi, &sym.name).len() > 1
+        {
+            return None;
+        }
         let out = (|| {
             let p = self.parsed(fi)?;
             let decl = find_decl(p.tree.root_node(), &sym.name, sym.line, &p.src)?;
@@ -353,7 +361,13 @@ impl<'c, 'a> Shapes<'c, 'a> {
             .flat_map(|(_, args)| annotation_strings(*args, src))
             .collect();
         let validation = String::from_utf8_lossy(src).contains("validation.constraints");
-        let field = |name: String, fa: &[(String, Option<Node<'_>>)]| -> ContractField {
+        // `ty`: the declared type; a primitive is never missing (Jackson sets its default),
+        // so a constraint on one does not make it required.
+        let field = |name: String, ty: &str, fa: &[(String, Option<Node<'_>>)]| -> ContractField {
+            let primitive = matches!(
+                ty,
+                "int" | "long" | "short" | "byte" | "boolean" | "char" | "float" | "double"
+            );
             let json = fa
                 .iter()
                 .find(|(a, _)| a == "JsonProperty")
@@ -369,6 +383,7 @@ impl<'c, 'a> Shapes<'c, 'a> {
                     .collect(),
                 // A constraint of a validation group does not run by default.
                 required: validation
+                    && !primitive
                     && fa.iter().any(|(a, args)| {
                         matches!(a.as_str(), "NotNull" | "NotBlank" | "NotEmpty")
                             && !args.is_some_and(|x| text(x, src).contains("groups"))
@@ -389,7 +404,8 @@ impl<'c, 'a> Shapes<'c, 'a> {
                     continue;
                 }
                 let name = text(p.child_by_field_name("name")?, src);
-                own.push(field(name, &fa));
+                let ty = text(p.child_by_field_name("type")?, src);
+                own.push(field(name, &ty, &fa));
             }
         }
         let body = decl.child_by_field_name("body")?;
@@ -401,7 +417,20 @@ impl<'c, 'a> Shapes<'c, 'a> {
                 continue;
             }
             let ma = annotations(m, src);
-            if has(&ma, &["JsonAnySetter", "JsonCreator"]) {
+            // An annotated accessor may name or hide a property: not read, so the shape is
+            // not known.
+            if has(
+                &ma,
+                &[
+                    "JsonAnySetter",
+                    "JsonCreator",
+                    "JsonProperty",
+                    "JsonSetter",
+                    "JsonGetter",
+                    "JsonIgnore",
+                    "JsonAlias",
+                ],
+            ) {
                 return None;
             }
             if let Some(n) = m.child_by_field_name("name") {
@@ -422,7 +451,7 @@ impl<'c, 'a> Shapes<'c, 'a> {
                 continue;
             }
             let fa = annotations(f, src);
-            if has(&fa, &["JsonUnwrapped", "JsonAnySetter"]) {
+            if has(&fa, &["JsonUnwrapped", "JsonAnySetter", "JsonSetter"]) {
                 return None;
             }
             if has(&fa, &["JsonIgnore"]) {
@@ -446,7 +475,11 @@ impl<'c, 'a> Shapes<'c, 'a> {
                 let visible =
                     lombok || public || accessor || has(&fa, &["Getter", "Setter", "JsonProperty"]);
                 if visible {
-                    own.push(field(name, &fa));
+                    let ty = f
+                        .child_by_field_name("type")
+                        .map(|t| text(t, src))
+                        .unwrap_or_default();
+                    own.push(field(name, &ty, &fa));
                 }
             }
         }
@@ -677,11 +710,14 @@ pub(super) fn tools(ctx: &Ctx<'_>, binds: &[Bindings<'_>]) -> Vec<McpTool> {
     for (fi, f) in ctx.files.iter().enumerate() {
         for t in &f.code.tools {
             let v = consts.eval(fi, &t.name, 0);
-            if !v.known() || v.key.contains('*') {
-                continue;
-            }
+            // A name not known: kept without one, so a diff never takes the tool for gone.
+            let name = if !v.known() || v.key.contains('*') {
+                String::new()
+            } else {
+                v.key
+            };
             out.push(McpTool {
-                name: v.key,
+                name,
                 file: f.path.to_string(),
                 line: t.line,
                 params: t.params.clone(),

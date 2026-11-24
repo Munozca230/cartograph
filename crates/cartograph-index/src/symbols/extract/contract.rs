@@ -63,19 +63,29 @@ const NOT_SHAPES: &[&str] = &[
 /// written in place): whitespace removed; `None` for a primitive, a union or a library type
 /// that is no shape.
 pub(super) fn named_type(t: &str) -> Option<String> {
-    // Whitespace out, except inside quotes (a key or a literal type).
+    // Whitespace out, except inside quotes (a key or a literal type) and one space between
+    // two words (`readonly id`, `keyof T`).
+    let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
     let mut quote = None;
-    let t: String = t
-        .chars()
-        .filter(|&c| {
-            match (quote, c) {
-                (None, '\'' | '"' | '`') => quote = Some(c),
-                (Some(q), _) if q == c => quote = None,
-                _ => {}
-            }
-            quote.is_some() || !c.is_whitespace()
-        })
-        .collect();
+    let mut out = String::new();
+    let mut gap = false;
+    for c in t.chars() {
+        if quote.is_none() && c.is_whitespace() {
+            gap = true;
+            continue;
+        }
+        if gap && out.chars().last().is_some_and(word) && word(c) {
+            out.push(' ');
+        }
+        gap = false;
+        match (quote, c) {
+            (None, '\'' | '"' | '`') => quote = Some(c),
+            (Some(q), _) if q == c => quote = None,
+            _ => {}
+        }
+        out.push(c);
+    }
+    let t = out;
     // An object type written in place (`{ name: string; tags?: string[] }`).
     if t.starts_with('{') && t != "{}" {
         return Some(t);
@@ -703,7 +713,7 @@ fn is_text(a: Node<'_>, root: Node<'_>, src: &[u8]) -> bool {
     }
 }
 
-/// An object whose values are literals (`{ readOnlyHint: true, title: "x" }`): a tool's
+/// An object whose values are literals (`{ readOnlyHint: true, label: "x" }`): a tool's
 /// annotations, never a schema.
 fn annotations_object(obj: Node<'_>) -> bool {
     let mut c = obj.walk();
@@ -735,13 +745,18 @@ fn tool_call(n: Node<'_>, root: Node<'_>, src: &[u8]) -> Option<RawTool> {
     let list = arg_nodes(n.child_by_field_name("arguments"));
     let (first, rest) = list.split_first()?;
     let name = super::bridge::str_expr(Lang::Js, *first, src);
-    // A literal or a name (read through the file's constants after resolution).
-    if !name.0.iter().any(|p| {
+    // A literal or a name (read through the file's constants after resolution); a name
+    // built at run time counts when a handler is written last (it stays unknown).
+    let named = name.0.iter().any(|p| {
         matches!(
             p,
             crate::symbols::strexpr::Part::Lit(_) | crate::symbols::strexpr::Part::Ref(_)
         )
-    }) {
+    });
+    let handler = rest
+        .last()
+        .is_some_and(|h| matches!(h.kind(), "arrow_function" | "function_expression"));
+    if !named && !handler {
         return None;
     }
     // The handler is last; a schema is an object (or names one) among the middle ones.
@@ -971,6 +986,10 @@ mod tests {
             Some("{a:string;'b c'?:'x'|'y'}".into())
         );
         assert_eq!(named_type("{}"), None);
+        assert_eq!(
+            named_type("{ readonly id: string; label?: string }"),
+            Some("{readonly id:string;label?:string}".into())
+        );
     }
 
     /// The body of a wrapper three deep: `fetch` reads the `body` of the options it
@@ -981,7 +1000,7 @@ mod tests {
         let c = code(
             "typescript",
             r#"
-interface Payload { title?: string }
+interface Payload { label?: string }
 export class ApiClient {
   constructor(private readonly baseUrl: string) {}
   private async send(url: string, init: RequestInit) {
@@ -999,12 +1018,12 @@ export class ApiClient {
 }
 class Users {
   constructor(private api: ApiClient) {}
-  private toPayload(name: string): Payload { return { title: name }; }
+  private toPayload(name: string): Payload { return { label: name }; }
   async save(name: string, dto: Payload) {
     const payload = this.toPayload(name);
     await this.api.post(`/users`, payload);
     await this.api.post(`/users/raw`, dto);
-    await this.api.post(`/users/cast`, { title: name } as Payload);
+    await this.api.post(`/users/cast`, { label: name } as Payload);
   }
 }
 "#,

@@ -5,8 +5,8 @@ import lombok.Data;
 
 @Data
 public class UpdateItemDto {
-    private String projectId;
-    private String title;
-    private String summary;
+    private String ownerId;
+    private String label;
+    private String notes;
     private List<String> tags;
 }

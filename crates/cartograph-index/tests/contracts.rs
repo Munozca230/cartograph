@@ -56,19 +56,24 @@ fn bodies_pair_client_and_server_types_with_their_shapes() {
     let mut want = vec![
         // One client type for the update and the create: the alias reads `colour`,
         // `@JsonProperty` renames `type`, `@JsonIgnore` leaves `internal` out, the
-        // superclass brings `projectId`.
-        "PATCH /api/items/{}: ItemPayload {colour? kind? projectId? summary? tags? title?} -> UpdateItemDto {projectId summary tags title}",
-        "POST /api/items: ItemPayload {colour? kind? projectId? summary? tags? title?} -> CreateItemDto {kind projectId! shade|color|colour summary technology title!}",
+        // superclass brings `ownerId`, a constraint of a group requires nothing.
+        "PATCH /api/items/{}: ItemPayload {colour? kind? label? notes? ownerId? tags?} -> UpdateItemDto {label notes ownerId tags}",
+        "POST /api/items: ItemPayload {colour? kind? label? notes? ownerId? tags?} -> CreateItemDto {category kind label! notes ownerId! shade|color|colour}",
         // A list: its element's fields are never required.
-        "POST /api/items/batch: ItemPayload[] {colour? kind? projectId? summary? tags? title?} -> CreateItemDto[] {kind projectId shade|color|colour summary technology title}",
-        // A superclass outside the repo: unknown.
-        "POST /api/items/external: ItemPayload {colour? kind? projectId? summary? tags? title?} -> ExternalDto (unknown)",
+        "POST /api/items/batch: ItemPayload[] {colour? kind? label? notes? ownerId? tags?} -> CreateItemDto[] {category kind label notes ownerId shade|color|colour}",
+        // A superclass outside the repo: unknown. (The call through a method known only
+        // at run time is a heuristic bridge: no row.)
+        "POST /api/items/external: ItemPayload {colour? kind? label? notes? ownerId? tags?} -> ExternalDto (unknown)",
         // An object literal: no known type.
         "POST /api/items/raw: ? -> String (unknown)",
-        // `import type` and `Pick` with literal keys; a record with `@JsonProperty`.
-        "POST /api/items/tags: Pick<TagInput,'hex'> {hex?} -> TagDto {hex name!}",
-        // Not validated: nothing required; a field without accessor is not read.
-        "PUT /api/items/notes: NoteInput {extra text} -> NoteDto {text}",
+        // Accessors that name the property: unknown.
+        "POST /api/items/rename: RenameInput {ref} -> RenameDto (unknown)",
+        // `import type` and `Pick` with literal keys; a record with `@JsonProperty`; a
+        // primitive is never required.
+        "POST /api/items/tags: Pick<TagInput,'hex'> {hex?} -> TagDto {hex name! weight}",
+        // Declaration merging: unknown. (Not validated: nothing required; a field without
+        // accessor is not read.)
+        "PUT /api/items/notes: NoteInput (unknown) -> NoteDto {text}",
         // An object type written in place.
         "PUT /api/items/notes: {text:string} {text} -> NoteDto {text}",
         // A TS class: unknown.
@@ -93,8 +98,10 @@ fn bodies_pair_client_and_server_types_with_their_shapes() {
     assert_eq!(
         tools,
         [
-            "create_item mcp/src/tools.ts:13 [projectId=Some(true) summary=Some(false) title=Some(true)]",
-            "list_items mcp/src/tools.ts:16 [projectId=Some(true)]",
+            // A name known only at run time: kept without one.
+            " mcp/src/tools.ts:18 [id=Some(true)]",
+            "create_item mcp/src/tools.ts:14 [label=Some(true) notes=Some(false) ownerId=Some(true)]",
+            "list_items mcp/src/tools.ts:19 [ownerId=Some(true)]",
         ]
     );
 }

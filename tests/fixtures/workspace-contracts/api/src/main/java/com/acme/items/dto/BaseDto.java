@@ -8,5 +8,5 @@ public abstract class BaseDto {
     private static final long serialVersionUID = 1L;
 
     @NotBlank
-    private String projectId;
+    private String ownerId;
 }

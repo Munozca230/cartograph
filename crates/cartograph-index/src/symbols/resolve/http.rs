@@ -1413,7 +1413,8 @@ fn best(
     (ties, mismatch)
 }
 
-/// Match sites to routes; returns `(site, route)` of every bridge pushed.
+/// Match sites to routes; returns `(site, route)` of every bridge pushed that is not
+/// heuristic.
 fn matching(
     routes: &[Route],
     sites: &[Site],
@@ -1560,7 +1561,10 @@ fn matching(
             } else {
                 Confidence::Resolved
             };
-            pairs.push((si, *i));
+            // Bodies only of a bridge that is no guess (one route, a known method and base).
+            if confidence != Confidence::Heuristic {
+                pairs.push((si, *i));
+            }
             found.bridges.push(Bridge {
                 kind: BridgeKind::Http,
                 subtype: s.subtype.clone(),

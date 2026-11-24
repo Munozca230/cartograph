@@ -1,5 +1,5 @@
 export interface BaseInput {
-  projectId?: string;
+  ownerId?: string;
 }
 
 export type TagInput = {
