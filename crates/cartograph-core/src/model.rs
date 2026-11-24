@@ -585,6 +585,12 @@ pub struct Symbols {
     pub java_methods: Vec<crate::spring::JavaMethod>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub java_sites: Vec<crate::spring::JavaSite>,
+    /// The bodies of HTTP bridges, client's and server's (see [`crate::contract`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bodies: Vec<crate::contract::HttpBody>,
+    /// MCP tools declared in the source.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<crate::contract::McpTool>,
 }
 
 impl Symbols {
@@ -624,6 +630,10 @@ impl Symbols {
         self.java_methods.dedup();
         // Two alike are two calls of a line.
         self.java_sites.sort();
+        self.bodies.sort();
+        self.bodies.dedup();
+        self.tools.sort();
+        self.tools.dedup();
     }
 }
 

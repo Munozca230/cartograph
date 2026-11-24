@@ -13,6 +13,7 @@
 )]
 
 pub mod bridge;
+pub mod contract;
 pub mod history;
 pub mod key;
 pub mod manifest_entry;
@@ -23,6 +24,7 @@ pub mod store;
 pub mod workspace;
 
 pub use bridge::{Bridge, BridgeEndpoint, BridgeKind, BridgeRole, BridgeSettings, Bridges};
+pub use contract::{BodyType, ContractField, HttpBody, McpTool, ToolParam};
 pub use history::{
     AuthorShare, ChangeKind, CoChange, FileHistory, GitAuthor, GitChange, GitCommit, GitRaw,
     GitState, GitStatus, History,

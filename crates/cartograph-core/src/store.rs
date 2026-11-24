@@ -329,6 +329,26 @@ const MIGRATIONS: &[&str] = &[
         confidence TEXT NOT NULL
     );
     "#,
+    // v15: contracts (see `crate::contract`): the bodies of HTTP bridges and the MCP tools
+    // a server declares. They belong to the symbol layer and are cleared with it.
+    // Self-contained. Types and parameters are JSON (`BodyType`, `ToolParam`).
+    r#"
+    CREATE TABLE http_bodies (
+        src_file TEXT NOT NULL,
+        src_line INTEGER NOT NULL,
+        dst_file TEXT NOT NULL,
+        dst_line INTEGER NOT NULL,
+        key      TEXT NOT NULL,
+        client   TEXT,
+        server   TEXT
+    );
+    CREATE TABLE mcp_tools (
+        name   TEXT NOT NULL,
+        file   TEXT NOT NULL,
+        line   INTEGER NOT NULL,
+        params TEXT
+    );
+    "#,
 ];
 
 /// One row of the SCIP cache: the decoded form (`data`, opaque to the store) of the SCIP
@@ -1185,6 +1205,9 @@ fn clear_symbols(conn: &Connection) -> Result<()> {
              DELETE FROM java_methods; DELETE FROM java_sites;",
         )?;
     }
+    if has_table(conn, "http_bodies")? {
+        conn.execute_batch("DELETE FROM http_bodies; DELETE FROM mcp_tools;")?;
+    }
     Ok(())
 }
 
@@ -1337,6 +1360,9 @@ fn insert_symbols(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
     }
     if has_table(tx, "spring_beans")? {
         insert_spring(tx, s)?;
+    }
+    if has_table(tx, "http_bodies")? {
+        insert_contracts(tx, s)?;
     }
     if bridges && !s.bridges.is_empty() {
         let mut stmt = tx.prepare(
@@ -1516,8 +1542,93 @@ fn read_symbols(conn: &Connection) -> Result<Symbols> {
     if has_table(conn, "spring_beans")? {
         read_spring(conn, &mut out)?;
     }
+    if has_table(conn, "http_bodies")? {
+        read_contracts(conn, &mut out)?;
+    }
     out.normalize();
     Ok(out)
+}
+
+/// The bodies of HTTP bridges and the MCP tools (schema v15).
+fn insert_contracts(tx: &Transaction<'_>, s: &Symbols) -> Result<()> {
+    let mut stmt = tx.prepare(
+        "INSERT INTO http_bodies (src_file, src_line, dst_file, dst_line, key, client, server)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    for b in &s.bodies {
+        stmt.execute(params![
+            b.src_file,
+            b.src_line,
+            b.dst_file,
+            b.dst_line,
+            b.key,
+            b.client.as_ref().map(serde_json::to_string).transpose()?,
+            b.server.as_ref().map(serde_json::to_string).transpose()?
+        ])?;
+    }
+    let mut stmt =
+        tx.prepare("INSERT INTO mcp_tools (name, file, line, params) VALUES (?1, ?2, ?3, ?4)")?;
+    for t in &s.tools {
+        stmt.execute(params![
+            t.name,
+            t.file,
+            t.line,
+            t.params.as_ref().map(serde_json::to_string).transpose()?
+        ])?;
+    }
+    Ok(())
+}
+
+fn read_contracts(conn: &Connection, out: &mut Symbols) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT src_file, src_line, dst_file, dst_line, key, client, server FROM http_bodies",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            (
+                r.get::<_, String>(0)?,
+                r.get::<_, u32>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, u32>(3)?,
+            ),
+            (
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            ),
+        ))
+    })?;
+    for row in rows {
+        let ((src_file, src_line, dst_file, dst_line), (key, client, server)) = row?;
+        out.bodies.push(crate::contract::HttpBody {
+            src_file,
+            src_line,
+            dst_file,
+            dst_line,
+            key,
+            client: client.map(|c| serde_json::from_str(&c)).transpose()?,
+            server: server.map(|c| serde_json::from_str(&c)).transpose()?,
+        });
+    }
+    let mut stmt = conn.prepare("SELECT name, file, line, params FROM mcp_tools")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, u32>(2)?,
+            r.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    for row in rows {
+        let (name, file, line, params) = row?;
+        out.tools.push(crate::contract::McpTool {
+            name,
+            file,
+            line,
+            params: params.map(|p| serde_json::from_str(&p)).transpose()?,
+        });
+    }
+    Ok(())
 }
 
 /// Spring beans, injection points and data sinks (schema v14).
@@ -2420,6 +2531,8 @@ mod tests {
             sinks: Vec::new(),
             java_methods: Vec::new(),
             java_sites: Vec::new(),
+            bodies: Vec::new(),
+            tools: Vec::new(),
         };
         s.normalize();
         s
@@ -2576,6 +2689,87 @@ mod tests {
         assert_eq!(store.load_symbols().unwrap(), sample_spring());
         store.replace_graph(&other()).unwrap();
         assert_eq!(store.load_symbols().unwrap(), Symbols::default());
+    }
+
+    /// [`sample_spring`] with HTTP bodies and MCP tools (schema v15).
+    fn sample_contracts() -> Symbols {
+        let ty = |name: &str, file: &str| crate::BodyType {
+            written: name.into(),
+            name: Some(name.into()),
+            file: Some(file.into()),
+            line: 3,
+            array: false,
+            fields: Some(vec![crate::ContractField {
+                name: "title".into(),
+                aliases: vec!["name".into()],
+                required: true,
+                optional: false,
+            }]),
+        };
+        let mut s = Symbols {
+            bodies: vec![crate::HttpBody {
+                src_file: "web/src/users.ts".into(),
+                src_line: 7,
+                dst_file: "api/src/Users.java".into(),
+                dst_line: 12,
+                key: "POST /users".into(),
+                client: Some(ty("UserPayload", "web/src/users.ts")),
+                server: Some(ty("CreateUserDto", "api/src/CreateUserDto.java")),
+            }],
+            tools: vec![
+                crate::McpTool {
+                    name: "create_user".into(),
+                    file: "mcp/src/tools.ts".into(),
+                    line: 4,
+                    params: Some(vec![crate::ToolParam {
+                        name: "title".into(),
+                        required: Some(true),
+                    }]),
+                },
+                crate::McpTool {
+                    name: "list_users".into(),
+                    file: "mcp/src/tools.ts".into(),
+                    line: 9,
+                    params: None,
+                },
+            ],
+            ..sample_spring()
+        };
+        s.normalize();
+        s
+    }
+
+    #[test]
+    fn migrates_v13_and_v14_dbs_to_v15_with_no_contracts() {
+        for from in [13, 14] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("graph.db");
+            let before = if from == 13 {
+                sample_symbols()
+            } else {
+                sample_spring()
+            };
+            {
+                let conn = Connection::open(&path).unwrap();
+                let mut store = Store { conn };
+                store.migrate_to(from).unwrap();
+                let tx = store.begin_replace().unwrap();
+                tx.write_graph(&sample()).unwrap();
+                tx.write_symbols(&sample_contracts()).unwrap();
+                tx.commit().unwrap();
+                // Written before the tables existed: nothing of them kept.
+                assert_eq!(store.load_symbols().unwrap(), before);
+            }
+            let mut store = Store::open(&path).unwrap();
+            assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+            assert_eq!(store.load_symbols().unwrap(), before);
+            let tx = store.begin_replace().unwrap();
+            tx.write_symbols(&sample_contracts()).unwrap();
+            tx.commit().unwrap();
+            assert_eq!(store.load_symbols().unwrap(), sample_contracts());
+            store.replace_graph(&other()).unwrap();
+            assert_eq!(store.load_symbols().unwrap(), Symbols::default());
+        }
     }
 
     /// [`sample_symbols`] with bridges (schema v12).
