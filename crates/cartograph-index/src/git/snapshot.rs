@@ -61,7 +61,7 @@ pub const LEGACY_SNAPSHOT_DIR: &str = "base";
 /// refreshes) are deleted.
 pub const KEEP: usize = 8;
 /// Bump when a cached snapshot no longer matches what [`snapshot`] would build.
-const SNAPSHOT_VERSION: &str = "4";
+const SNAPSHOT_VERSION: &str = "5";
 const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/";
 
 /// A revision resolved to a commit.
@@ -145,6 +145,11 @@ pub struct BridgeRows {
     pub endpoints: Vec<cartograph_core::BridgeEndpoint>,
     #[serde(default)]
     pub bridges: Vec<cartograph_core::Bridge>,
+    /// The bodies of its HTTP bridges and its MCP tools (see [`cartograph_core::contract`]).
+    #[serde(default)]
+    pub bodies: Vec<cartograph_core::HttpBody>,
+    #[serde(default)]
+    pub tools: Vec<cartograph_core::McpTool>,
 }
 
 impl BridgeRows {
@@ -152,6 +157,8 @@ impl BridgeRows {
         BridgeRows {
             endpoints: s.endpoints.clone(),
             bridges: s.bridges.clone(),
+            bodies: s.bodies.clone(),
+            tools: s.tools.clone(),
         }
     }
 }

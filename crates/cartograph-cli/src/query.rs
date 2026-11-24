@@ -123,7 +123,8 @@ pub enum Tool {
         /// Only these kinds (repeatable): cycle, folder_cycle, layer_violation, fan_out_limit,
         /// god_module, hub, sdp, orphan, deep_chain, hidden_coupling; of bridges
         /// ipc_no_handler, ipc_unexposed, ipc_unused_handler, http_unmatched_call,
-        /// http_method_mismatch, http_unused_route, undeclared_member_dependency, version_skew.
+        /// http_method_mismatch, http_unused_route, contract_missing_field,
+        /// undeclared_member_dependency, version_skew.
         #[arg(long)]
         kind: Vec<String>,
         /// At least this severity: error, warning or info.
@@ -465,6 +466,7 @@ fn open_sides(
     Ok(Sides {
         head: Repo::new(&head.graph, cfg)
             .with_bridges(&head.symbols.endpoints, &head.symbols.bridges)
+            .with_contracts(&head.symbols.bodies, &head.symbols.tools)
             .with_history(&history),
         base,
     })

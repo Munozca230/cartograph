@@ -179,6 +179,58 @@ pub(super) fn http_unused_route(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
     )
 }
 
+/// Required fields of a route's body type that no client type sent to it declares, every
+/// client shape of the route known whole (see [`crate::contracts::missing_required`]).
+pub(super) fn contract_missing_field(cx: &Ctx<'_>, b: &BridgeTable) -> Vec<Finding> {
+    let active = |p: &str| cx.g.file_by_path(p).is_some_and(|f| cx.active[f as usize]);
+    let mut out = Vec::new();
+    for (key, server, missing, bodies) in crate::contracts::missing_required(&b.bodies) {
+        let dst = &bodies[0].dst_file;
+        if !active(dst) || !bodies.iter().any(|x| active(&x.src_file)) {
+            continue;
+        }
+        let member = member_of(cx, dst);
+        let id = if member.is_empty() {
+            key.clone()
+        } else {
+            format!("{member}:{key}")
+        };
+        let names: Vec<String> = missing.iter().map(|m| format!("`{m}`")).collect();
+        let mut f = Finding::new(
+            FindingKind::ContractMissingField,
+            Severity::Warning,
+            &id,
+            format!(
+                "{key}: {} requires {}, which no client type sent to it declares ({})",
+                server.label(),
+                names.join(", "),
+                sites(bodies.len())
+            ),
+        );
+        for x in &bodies {
+            let client = x.client.as_ref().map_or("?", |c| c.label());
+            f.line(format!("{}:{} sends {client}", x.src_file, x.src_line));
+            if let Some(fx) = cx.g.file_by_path(&x.src_file) {
+                f.node(cx.g.id(NodeRef::File(fx)));
+            }
+            if let Some(fx) = x
+                .client
+                .as_ref()
+                .and_then(|c| c.file.as_deref())
+                .and_then(|p| cx.g.file_by_path(p))
+            {
+                f.node(cx.g.id(NodeRef::File(fx)));
+            }
+        }
+        if let Some(fx) = server.file.as_deref().and_then(|p| cx.g.file_by_path(p)) {
+            f.node(cx.g.id(NodeRef::File(fx)));
+        }
+        f.metric("fields", missing.len() as f64);
+        out.push(f);
+    }
+    out
+}
+
 /// Endpoint detail of a dependency on another version than its member builds (written by
 /// `cartograph_index::resolve::packages`): `version_skew <the producer's version>`.
 const VERSION_SKEW: &str = "version_skew";

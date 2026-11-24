@@ -205,10 +205,11 @@ pub fn render(s: &mut String, rows: &[ContractRow], more: usize) {
             x
         };
         if !r.compared {
-            if r.client.as_ref().is_some_and(|c| c.known)
-                || r.server.as_ref().is_some_and(|c| c.known)
-            {
-                s.push_str("    not compared: a shape is not known whole, or one side is a list\n");
+            if r.client.is_some() && r.server.is_some() {
+                s.push_str(
+                    "    not compared: a shape is not known whole, or one side is a list
+",
+                );
             }
             continue;
         }

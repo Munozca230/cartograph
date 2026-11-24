@@ -131,6 +131,8 @@ export function findingLabel(f: Finding): string {
       return `Llamada HTTP con otro método que el de su ruta: ${httpRoute(f.id)}`;
     case "http_unused_route":
       return `Ruta HTTP que ningún repositorio llama: ${httpRoute(f.id)}`;
+    case "contract_missing_field":
+      return `El cuerpo de la ruta exige un campo que ningún cliente envía: ${httpRoute(f.id)}`;
     default:
       return f.title;
   }

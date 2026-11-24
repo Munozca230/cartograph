@@ -17,6 +17,12 @@
 //!   subfolders (so `src/` becomes `src/a/`, `src/b/`).
 //! - **Unresolved imports** are matched by file, specifier and reason (not line).
 //! - **Files** added and removed, by path.
+//! - **Contract breaks** ([`contract_breaks`]): a field a route's body type no longer reads
+//!   that a client type sent to it still declares, a client call that reached a route in
+//!   the base and reaches none now, an MCP tool or parameter removed, a parameter newly
+//!   required. A break a new finding already reports (`http_unmatched_call`,
+//!   `http_method_mismatch`; an IPC channel that lost its handler is `ipc_no_handler`) is
+//!   not repeated.
 
 use crate::Repo;
 use crate::algo::Adj;
@@ -288,6 +294,11 @@ pub struct DiffResult {
     pub bridges_removed: Vec<String>,
     #[serde(skip_serializing_if = "is_zero")]
     pub bridges_removed_more: usize,
+    /// What the change breaks in the contracts (see [`contract_breaks`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contract_breaks: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub contract_breaks_more: usize,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -324,6 +335,7 @@ impl DiffResult {
             && self.unresolved_removed.is_empty()
             && self.bridges_new.is_empty()
             && self.bridges_removed.is_empty()
+            && self.contract_breaks.is_empty()
     }
 }
 
@@ -434,6 +446,69 @@ fn unresolved_keys(repo: &Repo) -> BTreeMap<(&str, &str, &'static str), u32> {
     out
 }
 
+/// What the change breaks in the contracts between `base` and `head` (see the module docs),
+/// leaving out what a new finding of `compared` already says.
+pub fn contract_breaks(base: &Repo, head: &Repo, compared: &Compared<'_>) -> Vec<String> {
+    use cartograph_core::{BridgeKind, BridgeRole};
+    let (bt, ht) = (&base.symbols.bridges, &head.symbols.bridges);
+    let mut out = crate::contracts::breaks(&bt.bodies, &ht.bodies, &bt.tools, &ht.tools);
+    // Keys a new finding already reports a call of.
+    let reported: HashSet<&str> = compared
+        .head
+        .iter()
+        .filter(|(f, c)| {
+            matches!(c, Change::New)
+                && matches!(
+                    f.kind,
+                    FindingKind::HttpUnmatchedCall | FindingKind::HttpMethodMismatch
+                )
+        })
+        .filter_map(|(f, _)| f.id.split_once(':').map(|(_, rest)| rest))
+        .collect();
+    fn calls(t: &crate::bridges::BridgeTable) -> Vec<&cartograph_core::BridgeEndpoint> {
+        t.endpoints
+            .iter()
+            .filter(|e| e.kind == BridgeKind::Http && e.role == BridgeRole::Consume)
+            .collect()
+    }
+    let head_calls = calls(ht);
+    for e in calls(bt).into_iter().filter(|e| e.detail.is_none()) {
+        // The same call in the head (by file, function and URL), now reaching no route.
+        let Some(now) = head_calls
+            .iter()
+            .find(|h| h.file == e.file && h.symbol == e.symbol && h.key == e.key)
+        else {
+            continue;
+        };
+        let Some(detail) = now.detail.as_deref() else {
+            continue;
+        };
+        let member = head.graph.members.member_of(&now.file).unwrap_or("");
+        let id = if member.is_empty() {
+            now.key.clone()
+        } else {
+            format!("{member}:{}", now.key)
+        };
+        if reported.contains(id.as_str()) {
+            continue;
+        }
+        let routes: BTreeSet<&str> = bt
+            .from_file(&e.file)
+            .filter(|b| b.kind == BridgeKind::Http && b.src_line == e.line)
+            .map(|b| b.key.as_str())
+            .collect();
+        let was = routes.into_iter().collect::<Vec<_>>().join(", ");
+        out.push(format!(
+            "HTTP call {} ({}) reached {was} in the base; no route serves it now ({detail})",
+            now.key,
+            crate::bridges::at(&now.file, now.line)
+        ));
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Items tried by [`fit`], largest first.
 const STEPS: &[usize] = &[12, 10, 8, 6, 5, 4, 3, 2, 1];
 
@@ -461,6 +536,8 @@ pub fn diff(base: &Repo, head: &Repo, base_label: &str, head_label: &str) -> Ans
             .entry(f.kind.as_str().to_string())
             .or_default() += 1;
     }
+
+    let breaks = contract_breaks(base, head, &compared);
 
     // Bridges.
     let (bb, hb) = (bridge_set(base), bridge_set(head));
@@ -593,6 +670,8 @@ pub fn diff(base: &Repo, head: &Repo, base_label: &str, head_label: &str) -> Ans
                     .map(|b| clip(b, 300))
                     .collect(),
                 bridges_removed_more: bridges_removed.len().saturating_sub(limit),
+                contract_breaks: breaks.iter().take(limit).map(|b| clip(b, 300)).collect(),
+                contract_breaks_more: breaks.len().saturating_sub(limit),
             }
         },
         render,
@@ -746,7 +825,21 @@ fn render(r: &DiffResult) -> String {
         }
         s.push_str(&more(r.bridges_removed_more));
     }
+    render_breaks(&mut s, &r.contract_breaks, r.contract_breaks_more);
     s
+}
+
+/// The lines of [`contract_breaks`] for an answer.
+pub fn render_breaks(s: &mut String, breaks: &[String], more_n: usize) {
+    let n = breaks.len() + more_n;
+    if n == 0 {
+        return;
+    }
+    s.push_str(&format!("contract breaks: {n}\n"));
+    for b in breaks {
+        s.push_str(&format!("  ! {b}\n"));
+    }
+    s.push_str(&more(more_n));
 }
 
 #[cfg(test)]

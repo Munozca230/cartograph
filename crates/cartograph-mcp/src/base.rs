@@ -91,6 +91,7 @@ pub fn open(
     );
     let repo = Repo::new(&snap.graph, config.clone())
         .with_bridges(&snap.bridges.endpoints, &snap.bridges.bridges)
+        .with_contracts(&snap.bridges.bodies, &snap.bridges.tools)
         .with_history(history);
     Ok(Base {
         repo,

@@ -253,7 +253,8 @@ export interface Finding {
     | "version_skew"
     | "http_unmatched_call"
     | "http_method_mismatch"
-    | "http_unused_route";
+    | "http_unused_route"
+    | "contract_missing_field";
   severity: Severity;
   /** Breaks a rule of cartograph.toml. */
   violation: boolean;

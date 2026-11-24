@@ -179,6 +179,9 @@ describe("findings on the plan", () => {
     expect(findingLabel(finding({ kind: "http_unused_route", severity: "info", id: "http_unused_route:DELETE /users/{}" }))).toBe(
       "Ruta HTTP que ningún repositorio llama: DELETE /users/{}",
     );
+    expect(findingLabel(finding({ kind: "contract_missing_field", id: "contract_missing_field:api:POST /api/items/tags" }))).toBe(
+      "El cuerpo de la ruta exige un campo que ningún cliente envía: POST /api/items/tags",
+    );
     const lines = findingLines(
       [finding({ kind: "hub", severity: "info", metrics: { share: 0.1 } }), finding({ metrics: { files: 3 } }), finding({ kind: "deep_chain", severity: "info", metrics: { depth: 12 } }), finding({ kind: "sdp", severity: "info" })],
       2,

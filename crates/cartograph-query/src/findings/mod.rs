@@ -348,6 +348,9 @@ pub fn analyze_with(
     if on(FindingKind::HttpMethodMismatch) {
         out.extend(bridges::http_method_mismatch(&cx, bridged));
     }
+    if on(FindingKind::ContractMissingField) {
+        out.extend(bridges::contract_missing_field(&cx, bridged));
+    }
     if on(FindingKind::HttpUnusedRoute) {
         out.extend(bridges::http_unused_route(&cx, bridged));
     }

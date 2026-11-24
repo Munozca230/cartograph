@@ -39,6 +39,11 @@ pub struct CheckResult {
     pub fixed: usize,
     /// Counts of the other findings (informational).
     pub informational: Summary,
+    /// What the change breaks in the contracts (with a base; never fails the check).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contract_breaks: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub contract_breaks_more: usize,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -70,7 +75,7 @@ pub fn check_with(
         .partition(|f| old.contains(f.id.as_str()));
     let new_v: Vec<Brief> = new_v.iter().map(|f| Brief::of(f, 4)).collect();
     let informational = summarize(rest.iter().copied());
-    build(repo, None, &new_v, &old_v, 0, informational)
+    build(repo, None, &new_v, &old_v, 0, informational, &[])
 }
 
 /// `check --base`: only the violations that `repo` (the working tree) introduces relative
@@ -91,6 +96,7 @@ pub fn check_base(repo: &Repo, base: &Repo, base_label: &str) -> Answer<CheckRes
         .collect();
     let fixed = compared.resolved.iter().filter(|f| f.violation).count();
     let informational = summarize(repo.findings().iter().filter(|f| !f.violation));
+    let breaks = diff::contract_breaks(base, repo, &compared);
     build(
         repo,
         Some(base_label.to_string()),
@@ -98,6 +104,7 @@ pub fn check_base(repo: &Repo, base: &Repo, base_label: &str) -> Answer<CheckRes
         &existing,
         fixed,
         informational,
+        &breaks,
     )
 }
 
@@ -108,6 +115,7 @@ fn build(
     old_v: &[&Finding],
     fixed: usize,
     informational: Summary,
+    breaks: &[String],
 ) -> Answer<CheckResult> {
     let config = repo.config.origin.clone();
     let rules = repo.config.has_rules();
@@ -138,6 +146,12 @@ fn build(
             },
             fixed,
             informational: informational.clone(),
+            contract_breaks: breaks
+                .iter()
+                .take(limit.min(6))
+                .map(|b| clip(b, 300))
+                .collect(),
+            contract_breaks_more: breaks.len().saturating_sub(limit.min(6)),
         },
         render,
     )
@@ -206,5 +220,9 @@ fn render(r: &CheckResult) -> String {
         "informational: {}\n",
         summary_line(&r.informational)
     ));
+    if !r.contract_breaks.is_empty() {
+        s.push_str("not failing: ");
+        diff::render_breaks(&mut s, &r.contract_breaks, r.contract_breaks_more);
+    }
     s
 }

@@ -44,10 +44,13 @@ pub enum FindingKind {
     HttpMethodMismatch,
     /// A route no member calls, in a member other members do call.
     HttpUnusedRoute,
+    /// A route's body type requires a field that no client type sent to it declares (both
+    /// shapes known whole).
+    ContractMissingField,
 }
 
 impl FindingKind {
-    pub const ALL: [FindingKind; 18] = [
+    pub const ALL: [FindingKind; 19] = [
         FindingKind::LayerViolation,
         FindingKind::FanOutLimit,
         FindingKind::Cycle,
@@ -66,6 +69,7 @@ impl FindingKind {
         FindingKind::HttpUnmatchedCall,
         FindingKind::HttpMethodMismatch,
         FindingKind::HttpUnusedRoute,
+        FindingKind::ContractMissingField,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -88,6 +92,7 @@ impl FindingKind {
             FindingKind::HttpUnmatchedCall => "http_unmatched_call",
             FindingKind::HttpMethodMismatch => "http_method_mismatch",
             FindingKind::HttpUnusedRoute => "http_unused_route",
+            FindingKind::ContractMissingField => "contract_missing_field",
         }
     }
 }
