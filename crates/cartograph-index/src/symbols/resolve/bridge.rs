@@ -27,6 +27,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub(super) struct Found {
     pub endpoints: Vec<BridgeEndpoint>,
     pub bridges: Vec<Bridge>,
+    /// The bodies of HTTP bridges (see [`super::contract`]).
+    pub bodies: Vec<cartograph_core::HttpBody>,
 }
 
 /// Rounds of constant references followed (a constant built from another…).

@@ -52,6 +52,7 @@
 //! different ids are *ambiguous*; nothing is guessed.
 
 mod bridge;
+mod contract;
 mod hier;
 mod http;
 mod keys;
@@ -867,7 +868,8 @@ pub fn bridges_only(
             .iter()
             .any(|f| !f.code.ipc.is_empty() || !f.code.exposes.is_empty());
     let http = bridges.http && http::has_inputs(files.iter().map(|f| f.code));
-    if !ipc && !http {
+    let tools = files.iter().any(|f| !f.code.tools.is_empty());
+    if !ipc && !http && !tools {
         return Symbols::default();
     }
     let manifests: HashSet<&str> = graph
@@ -891,6 +893,8 @@ pub fn bridges_only(
     let mut out = Symbols {
         endpoints: found.endpoints,
         bridges: found.bridges,
+        bodies: found.bodies,
+        tools: contract::tools(&ctx, &binds),
         ..Symbols::default()
     };
     out.normalize();
@@ -946,6 +950,8 @@ pub fn resolve(
     }
     out.endpoints = found.endpoints;
     out.bridges = found.bridges;
+    out.bodies = found.bodies;
+    out.tools = contract::tools(&ctx, &binds);
     out.keys = keys::run(&ctx, &binds, &hier, rust_paths, graph, &out.calls);
     out.keys_indexed = true;
     (out.beans, out.injections, out.sinks) = spring::run(&ctx, &binds);

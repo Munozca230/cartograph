@@ -1,0 +1,19 @@
+# Contracts between members: an Electron-style client whose ApiClient wraps fetch three
+# deep posts and patches typed bodies to a Spring API (one client type for the create and
+# the update routes, a list, a type imported with `import type`, a `Pick` that leaves out
+# a required field, a body of no known type), and an MCP server whose tools declare zod
+# schemas.
+[workspace]
+name = "contracts"
+
+[[member]]
+name = "api"
+path = "api"
+
+[[member]]
+name = "desktop"
+path = "desktop"
+
+[[member]]
+name = "mcp"
+path = "mcp"

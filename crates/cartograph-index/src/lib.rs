@@ -520,7 +520,14 @@ fn index_layout(layout: &Layout, opts: &IndexOptions) -> Result<IndexOutput, Ind
 /// (`<module>/src/main/resources/application.{properties,yml,yaml}`), for that module's
 /// files.
 fn http_servers(src: &Source<'_>, configs: &[(String, String)]) -> symbols::resolve::HttpServers {
-    let mut out = symbols::resolve::HttpServers::default();
+    let mut out = symbols::resolve::HttpServers {
+        sources: src
+            .mounts
+            .iter()
+            .map(|m| (m.prefix.to_string(), m.walk_root.to_path_buf()))
+            .collect(),
+        ..Default::default()
+    };
     for m in &src.mounts {
         let declared: cartograph_core::MemberHttp = m
             .meta

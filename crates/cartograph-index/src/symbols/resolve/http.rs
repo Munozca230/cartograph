@@ -31,7 +31,7 @@ use super::bridge::{
 };
 use super::{Bindings, Ctx, GraphIx, Hier, Out, Sid, caller_of, gate_matches, resolve_call};
 use crate::symbols::strexpr::{Part, StrExpr};
-use crate::symbols::{BindKind, Call, Def, Form, MethodExpr, RustCallPaths};
+use crate::symbols::{BindKind, BodyExpr, Call, Def, Form, MethodExpr, RustCallPaths};
 use cartograph_core::{
     Bridge, BridgeEndpoint, BridgeKind, BridgeRole, Confidence, EntryKind, Graph, NodeKind,
     symbol_id,
@@ -249,6 +249,8 @@ struct Route {
     symbol: Option<String>,
     /// Through a constant, a class prefix, a mount or a context path.
     resolved: bool,
+    /// The body it reads: its type as written, validated, and the file it is written in.
+    body: Option<(String, bool, usize)>,
 }
 
 impl Route {
@@ -292,6 +294,8 @@ struct Site {
     /// A member the call is known to target (a Feign client named after it).
     target: Option<String>,
     dynamic: bool,
+    /// The type of the body it sends, and the file that type is written in.
+    body: Option<(String, usize)>,
 }
 
 impl Site {
@@ -332,6 +336,9 @@ pub struct HttpServers {
     /// at the root) and its `server.servlet.context-path`. A member's declared
     /// `context_path` wins over them.
     pub contexts: Vec<(String, String)>,
+    /// Where the files of each mount are on disk, `(prefix, folder)`: the shapes of body
+    /// types are read from there (see [`super::contract`]).
+    pub sources: Vec<(String, std::path::PathBuf)>,
 }
 
 impl HttpServers {
@@ -470,6 +477,69 @@ struct Wrap {
     method: MethodExpr,
     lib: String,
     target: Option<String>,
+    body: Option<RBody>,
+}
+
+/// A body on its way through wrappers (see [`BodyExpr`]), types with the file they are
+/// written in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RBody {
+    Param(u8, Option<(String, usize)>),
+    Opts(u8, String),
+    Type(String, usize),
+}
+
+impl RBody {
+    fn of(b: &BodyExpr, fi: usize) -> RBody {
+        match b {
+            BodyExpr::Param(i, t) => RBody::Param(*i, t.clone().map(|t| (t, fi))),
+            BodyExpr::Opts(i, k) => RBody::Opts(*i, k.clone()),
+            BodyExpr::Type(t) => RBody::Type(t.clone(), fi),
+        }
+    }
+
+    /// The type of a body at a call site: a type, or a parameter's declared one.
+    fn ty(&self) -> Option<(String, usize)> {
+        match self {
+            RBody::Type(t, f) => Some((t.clone(), *f)),
+            RBody::Param(_, t) => t.clone(),
+            RBody::Opts(..) => None,
+        }
+    }
+}
+
+/// A wrapper's body with call `c` (in file `fi`) in place: what the call passes there.
+fn substitute_body(b: &RBody, c: &Call, fi: usize) -> Option<RBody> {
+    let param_of = |i: u8| match c.args.get(i as usize).and_then(|a| a.as_ref()) {
+        Some(e) => match e.0.as_slice() {
+            [Part::Param(k)] => Some(*k),
+            _ => None,
+        },
+        None => None,
+    };
+    match b {
+        RBody::Type(..) => Some(b.clone()),
+        RBody::Param(i, _) => match c.bodies.iter().find(|x| x.arg == *i && x.key.is_none()) {
+            Some(x) => Some(RBody::of(&x.value, fi)),
+            None => param_of(*i).map(|k| RBody::Param(k, None)),
+        },
+        RBody::Opts(i, key) => {
+            if let Some(x) = c
+                .bodies
+                .iter()
+                .find(|x| x.arg == *i && x.key.as_deref() == Some(key.as_str()))
+            {
+                return Some(RBody::of(&x.value, fi));
+            }
+            let spread = c.opts.iter().find_map(|o| match o.value.0.as_slice() {
+                [Part::Param(k)] if o.arg == *i && o.key == "..." => Some(*k),
+                _ => None,
+            });
+            spread
+                .or_else(|| param_of(*i))
+                .map(|k| RBody::Opts(k, key.clone()))
+        }
+    }
 }
 
 /// A concrete call before its URL is split: `(file, line, caller sid, label, subtype, url,
@@ -485,6 +555,7 @@ struct Raw {
     method: MethodExpr,
     guessed: bool,
     target: Option<String>,
+    body: Option<RBody>,
 }
 
 /// `e` read as a method.
@@ -631,7 +702,29 @@ pub(super) fn run(
     let routes = routes(&cx);
     let raws = clients(&cx);
     let sites: Vec<Site> = raws.iter().map(|r| site(&cx, r)).collect();
-    matching(&routes, &sites, servers, found);
+    let pairs = matching(&routes, &sites, servers, found);
+    // The bodies of the bridges: the client's type and the route's.
+    let mut shapes = super::contract::Shapes::new(ctx, binds, &servers.sources);
+    for (si, ri) in pairs {
+        let (s, r) = (&sites[si], &routes[ri]);
+        if s.body.is_none() && r.body.is_none() {
+            continue;
+        }
+        let client = s.body.as_ref().map(|(t, fi)| shapes.body(*fi, t, false));
+        let server = r
+            .body
+            .as_ref()
+            .map(|(t, valid, fi)| shapes.body(*fi, t, *valid));
+        found.bodies.push(cartograph_core::HttpBody {
+            src_file: s.file.clone(),
+            src_line: s.line,
+            dst_file: r.file.clone(),
+            dst_line: r.line,
+            key: r.key(),
+            client,
+            server,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -670,7 +763,8 @@ fn routes(cx: &Cx<'_, '_>) -> Vec<Route> {
                         mut url: Url,
                         line: u32,
                         label: String,
-                        symbol: Option<String>| {
+                        symbol: Option<String>,
+                        body: Option<(String, bool, usize)>| {
             if !context.is_empty() {
                 let mut c = Url {
                     parts: vec![RPart::Lit(context.clone())],
@@ -704,6 +798,7 @@ fn routes(cx: &Cx<'_, '_>) -> Vec<Route> {
                     label: label.clone(),
                     symbol: symbol.clone(),
                     resolved: url.resolved,
+                    body: body.clone(),
                 });
             }
         };
@@ -745,6 +840,7 @@ fn routes(cx: &Cx<'_, '_>) -> Vec<Route> {
                 r.methods.iter().cloned().map(Some).collect()
             };
             let label = r.what.clone();
+            let body = r.body.as_ref().map(|b| (b.ty.clone(), b.valid, fi));
             for pre in &prefixes {
                 for path in &paths {
                     let mut url = Url {
@@ -761,6 +857,7 @@ fn routes(cx: &Cx<'_, '_>) -> Vec<Route> {
                             r.line,
                             label.clone(),
                             symbol.clone(),
+                            body.clone(),
                         );
                     }
                 }
@@ -792,7 +889,7 @@ fn routes(cx: &Cx<'_, '_>) -> Vec<Route> {
             }
             url.push(RPart::Lit(path.to_string()));
             let symbol = route_symbol(cx, fi, e.def.as_deref(), e.handler.as_ref(), e.line);
-            push(method, url, e.line, "route".to_string(), symbol);
+            push(method, url, e.line, "route".to_string(), symbol, None);
         }
     }
     out
@@ -999,6 +1096,7 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                         method: h.method.clone(),
                         lib,
                         target,
+                        body: h.body.as_ref().map(|b| RBody::of(b, fi)),
                     },
                 );
                 continue;
@@ -1023,6 +1121,7 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                 method: h.method.clone(),
                 guessed: false,
                 target,
+                body: h.body.as_ref().map(|b| RBody::of(b, fi)),
             });
         }
     }
@@ -1128,6 +1227,7 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                         continue;
                     }
                     let (url, method) = substitute(&cx.consts, fi, w, c);
+                    let body = w.body.as_ref().and_then(|b| substitute_body(b, c, fi));
                     let wraps = url.wraps() || method_has_param(&method);
                     if wraps
                         && let Some((d, csid)) = caller
@@ -1140,6 +1240,7 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                                 method,
                                 lib: w.lib.clone(),
                                 target: w.target.clone(),
+                                body,
                             });
                         }
                         continue;
@@ -1154,6 +1255,7 @@ fn clients(cx: &Cx<'_, '_>) -> Vec<Raw> {
                         method,
                         guessed,
                         target: w.target.clone(),
+                        body,
                     });
                 }
             }
@@ -1199,6 +1301,7 @@ fn site(cx: &Cx<'_, '_>, r: &Raw) -> Site {
         guessed: r.guessed,
         target,
         dynamic,
+        body: r.body.as_ref().and_then(RBody::ty),
     }
 }
 
@@ -1310,7 +1413,14 @@ fn best(
     (ties, mismatch)
 }
 
-fn matching(routes: &[Route], sites: &[Site], servers: &HttpServers, found: &mut Found) {
+/// Match sites to routes; returns `(site, route)` of every bridge pushed.
+fn matching(
+    routes: &[Route],
+    sites: &[Site],
+    servers: &HttpServers,
+    found: &mut Found,
+) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
     let all: Vec<usize> = (0..routes.len()).collect();
     let mut by_member: HashMap<&str, Vec<usize>> = HashMap::new();
     for (i, r) in routes.iter().enumerate() {
@@ -1450,6 +1560,7 @@ fn matching(routes: &[Route], sites: &[Site], servers: &HttpServers, found: &mut
             } else {
                 Confidence::Resolved
             };
+            pairs.push((si, *i));
             found.bridges.push(Bridge {
                 kind: BridgeKind::Http,
                 subtype: s.subtype.clone(),
@@ -1491,6 +1602,7 @@ fn matching(routes: &[Route], sites: &[Site], servers: &HttpServers, found: &mut
             detail: detail.map(str::to_string),
         });
     }
+    pairs
 }
 
 #[cfg(test)]
@@ -1618,6 +1730,7 @@ mod tests {
             label: String::new(),
             symbol: None,
             resolved: false,
+            body: None,
         }
     }
 
@@ -1635,6 +1748,7 @@ mod tests {
             guessed: false,
             target: None,
             dynamic: false,
+            body: None,
         }
     }
 
